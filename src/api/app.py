@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.config.settings import settings
 from src.storage.database import init_db, close_db
-from src.api.routes import organizations, alerts, crawlers, scan
+from src.api.routes import organizations, alerts, crawlers, scan, webhooks, reports
 
 
 @asynccontextmanager
@@ -36,6 +36,8 @@ app.include_router(organizations.router, prefix="/api/v1")
 app.include_router(alerts.router, prefix="/api/v1")
 app.include_router(crawlers.router, prefix="/api/v1")
 app.include_router(scan.router, prefix="/api/v1")
+app.include_router(webhooks.router, prefix="/api/v1")
+app.include_router(reports.router, prefix="/api/v1")
 
 
 @app.get("/health")

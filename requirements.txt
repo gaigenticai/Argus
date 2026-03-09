@@ -22,5 +22,11 @@ playwright>=1.49.0
 # LLM (all optional — only install what you need)
 # ollama is accessed via HTTP, no package needed
 
+# PDF Reports
+reportlab>=4.1.0
+
+# Notifications
+aiosmtplib>=3.0.0
+
 # Utils
 python-dotenv>=1.0.0

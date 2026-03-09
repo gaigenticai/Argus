@@ -54,10 +54,23 @@ class TorSettings(BaseSettings):
 class LLMSettings(BaseSettings):
     model_config = {"env_prefix": "ARGUS_LLM_"}
 
-    provider: str = "ollama"  # ollama | openai | anthropic
-    base_url: str = "http://localhost:11434"
-    model: str = "llama3.1:8b"
+    provider: str = "openai"  # ollama | openai | anthropic (z.ai uses openai-compatible)
+    base_url: str = "https://api.z.ai/api/coding/paas/v4"
+    model: str = "glm-5"
     api_key: Optional[str] = None
+
+
+class NotificationSettings(BaseSettings):
+    model_config = {"env_prefix": "ARGUS_NOTIFY_"}
+
+    slack_webhook_url: Optional[str] = None
+    email_smtp_host: Optional[str] = None
+    email_smtp_port: int = 587
+    email_smtp_user: Optional[str] = None
+    email_smtp_password: Optional[str] = None
+    email_from: str = "argus@localhost"
+    email_to: list[str] = []
+    pagerduty_routing_key: Optional[str] = None
 
 
 class CrawlerSettings(BaseSettings):
@@ -85,6 +98,7 @@ class Settings(BaseSettings):
     tor: TorSettings = Field(default_factory=TorSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     crawler: CrawlerSettings = Field(default_factory=CrawlerSettings)
+    notify: NotificationSettings = Field(default_factory=NotificationSettings)
 
 
 settings = Settings()

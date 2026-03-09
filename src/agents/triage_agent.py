@@ -155,13 +155,20 @@ Analyze whether this intelligence represents a threat to this organization."""
     async def _call_openai(self, system_prompt: str, user_prompt: str) -> str:
         import aiohttp
 
+        # z.ai and OpenAI-compatible APIs: base_url may already include path
+        base = self.base_url.rstrip("/")
+        if base.endswith("/v4") or base.endswith("/v1"):
+            url = f"{base}/chat/completions"
+        else:
+            url = f"{base}/v1/chat/completions"
+
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
         async with aiohttp.ClientSession() as session:
             async with session.post(
-                f"{self.base_url}/v1/chat/completions",
+                url,
                 headers=headers,
                 json={
                     "model": self.model,

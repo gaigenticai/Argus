@@ -191,3 +191,20 @@ class Alert(Base, UUIDMixin, TimestampMixin):
         Index("ix_alerts_org_severity", "organization_id", "severity"),
         Index("ix_alerts_status", "status"),
     )
+
+
+class Report(Base, UUIDMixin, TimestampMixin):
+    """Generated threat intelligence PDF report."""
+
+    __tablename__ = "reports"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    date_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    date_to: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text)
+
+    organization = relationship("Organization")
