@@ -1,0 +1,90 @@
+"""Argus configuration — all settings from environment variables."""
+
+from pydantic_settings import BaseSettings
+from pydantic import Field
+from typing import Optional
+
+
+class DatabaseSettings(BaseSettings):
+    model_config = {"env_prefix": "ARGUS_DB_"}
+
+    host: str = "localhost"
+    port: int = 5432
+    name: str = "argus"
+    user: str = "argus"
+    password: str = "argus"
+
+    @property
+    def url(self) -> str:
+        return f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+
+    @property
+    def sync_url(self) -> str:
+        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+
+
+class RedisSettings(BaseSettings):
+    model_config = {"env_prefix": "ARGUS_REDIS_"}
+
+    host: str = "localhost"
+    port: int = 6379
+    password: Optional[str] = None
+
+    @property
+    def url(self) -> str:
+        if self.password:
+            return f"redis://:{self.password}@{self.host}:{self.port}"
+        return f"redis://{self.host}:{self.port}"
+
+
+class TorSettings(BaseSettings):
+    model_config = {"env_prefix": "ARGUS_TOR_"}
+
+    socks_host: str = "localhost"
+    socks_port: int = 9050
+    control_port: int = 9051
+    control_password: str = "argus"
+    circuit_rotate_interval: int = 300  # seconds
+
+    @property
+    def socks_proxy(self) -> str:
+        return f"socks5h://{self.socks_host}:{self.socks_port}"
+
+
+class LLMSettings(BaseSettings):
+    model_config = {"env_prefix": "ARGUS_LLM_"}
+
+    provider: str = "ollama"  # ollama | openai | anthropic
+    base_url: str = "http://localhost:11434"
+    model: str = "llama3.1:8b"
+    api_key: Optional[str] = None
+
+
+class CrawlerSettings(BaseSettings):
+    model_config = {"env_prefix": "ARGUS_CRAWLER_"}
+
+    max_concurrent: int = 5
+    request_delay_min: float = 2.0  # seconds
+    request_delay_max: float = 8.0  # seconds
+    max_retries: int = 3
+    timeout: int = 60  # seconds
+    user_agent_rotate: bool = True
+
+
+class Settings(BaseSettings):
+    model_config = {"env_prefix": "ARGUS_"}
+
+    app_name: str = "Argus"
+    debug: bool = False
+    log_level: str = "INFO"
+    api_host: str = "0.0.0.0"
+    api_port: int = 8000
+
+    db: DatabaseSettings = Field(default_factory=DatabaseSettings)
+    redis: RedisSettings = Field(default_factory=RedisSettings)
+    tor: TorSettings = Field(default_factory=TorSettings)
+    llm: LLMSettings = Field(default_factory=LLMSettings)
+    crawler: CrawlerSettings = Field(default_factory=CrawlerSettings)
+
+
+settings = Settings()

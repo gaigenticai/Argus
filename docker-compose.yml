@@ -1,0 +1,104 @@
+services:
+  # --- Infrastructure ---
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: argus
+      POSTGRES_USER: argus
+      POSTGRES_PASSWORD: argus
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U argus"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  tor:
+    image: dperson/torproxy:latest
+    ports:
+      - "9050:9050"
+      - "9051:9051"
+    environment:
+      PASSWORD: argus
+    restart: unless-stopped
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    ports:
+      - "7700:7700"
+    environment:
+      MEILI_ENV: development
+      MEILI_NO_ANALYTICS: "true"
+    volumes:
+      - meilidata:/meili_data
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    # Pull default model on first run:
+    # docker exec argus-ollama-1 ollama pull llama3.1:8b
+
+  # --- Application ---
+
+  argus-api:
+    build: .
+    command: python -m src.main api
+    ports:
+      - "8000:8000"
+    env_file: .env
+    environment:
+      ARGUS_DB_HOST: postgres
+      ARGUS_REDIS_HOST: redis
+      ARGUS_TOR_SOCKS_HOST: tor
+      ARGUS_LLM_BASE_URL: http://ollama:11434
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      tor:
+        condition: service_started
+
+  argus-scheduler:
+    build: .
+    command: python -m src.main scheduler
+    env_file: .env
+    environment:
+      ARGUS_DB_HOST: postgres
+      ARGUS_REDIS_HOST: redis
+      ARGUS_TOR_SOCKS_HOST: tor
+      ARGUS_LLM_BASE_URL: http://ollama:11434
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      tor:
+        condition: service_started
+      ollama:
+        condition: service_started
+
+volumes:
+  pgdata:
+  redisdata:
+  meilidata:
+  ollama_models:

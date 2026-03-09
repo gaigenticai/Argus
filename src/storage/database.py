@@ -1,0 +1,48 @@
+"""Database connection management."""
+
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from src.config.settings import settings
+from src.models.base import Base
+
+engine: AsyncEngine | None = None
+async_session_factory: async_sessionmaker[AsyncSession] | None = None
+
+
+async def init_db() -> None:
+    """Initialize database engine and create tables."""
+    global engine, async_session_factory
+
+    engine = create_async_engine(
+        settings.db.url,
+        echo=settings.debug,
+        pool_size=20,
+        max_overflow=10,
+    )
+
+    async_session_factory = async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False
+    )
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+async def get_session() -> AsyncSession:
+    """Get a database session."""
+    if async_session_factory is None:
+        await init_db()
+    async with async_session_factory() as session:
+        yield session
+
+
+async def close_db() -> None:
+    """Close database connections."""
+    global engine
+    if engine:
+        await engine.dispose()
