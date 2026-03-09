@@ -19,8 +19,14 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Enable pgvector extension
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    # Enable pgvector extension (skip if not available)
+    from sqlalchemy import text
+    conn = op.get_bind()
+    has_vector = conn.execute(
+        text("SELECT 1 FROM pg_available_extensions WHERE name = 'vector'")
+    ).scalar()
+    if has_vector:
+        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     # Enum types
     source_type = postgresql.ENUM(
@@ -191,8 +197,9 @@ def upgrade() -> None:
         ),
     )
 
-    # pgvector column — use raw SQL since alembic doesn't natively know the vector type
-    op.execute("ALTER TABLE raw_intel ADD COLUMN IF NOT EXISTS embedding vector(1536)")
+    # pgvector column — skip if extension not available
+    if has_vector:
+        op.execute("ALTER TABLE raw_intel ADD COLUMN IF NOT EXISTS embedding vector(1536)")
 
     op.create_index("ix_raw_intel_source", "raw_intel", ["source_type", "is_processed"])
     op.create_index("ix_raw_intel_hash", "raw_intel", ["content_hash"])
@@ -240,8 +247,38 @@ def upgrade() -> None:
     op.create_index("ix_alerts_org_severity", "alerts", ["organization_id", "severity"])
     op.create_index("ix_alerts_status", "alerts", ["status"])
 
+    # --- reports ---
+    op.create_table(
+        "reports",
+        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "organization_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("organizations.id"),
+            nullable=False,
+        ),
+        sa.Column("title", sa.String(500), nullable=False),
+        sa.Column("date_from", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("date_to", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("file_path", sa.String(500), nullable=False),
+        sa.Column("summary", sa.Text, nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+    )
+
 
 def downgrade() -> None:
+    op.drop_table("reports")
     op.drop_table("alerts")
     op.drop_table("raw_intel")
     op.drop_table("assets")

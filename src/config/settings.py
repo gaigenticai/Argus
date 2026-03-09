@@ -1,8 +1,15 @@
 """Argus configuration — all settings from environment variables."""
 
+from pathlib import Path
+
+from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
 from pydantic import Field
 from typing import Optional
+
+# Load .env from project root
+_env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(_env_path)
 
 
 class DatabaseSettings(BaseSettings):
@@ -12,15 +19,21 @@ class DatabaseSettings(BaseSettings):
     port: int = 5432
     name: str = "argus"
     user: str = "argus"
-    password: str = "argus"
+    password: Optional[str] = "argus"
+
+    @property
+    def _credentials(self) -> str:
+        if self.password:
+            return f"{self.user}:{self.password}"
+        return self.user
 
     @property
     def url(self) -> str:
-        return f"postgresql+asyncpg://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+        return f"postgresql+asyncpg://{self._credentials}@{self.host}:{self.port}/{self.name}"
 
     @property
     def sync_url(self) -> str:
-        return f"postgresql://{self.user}:{self.password}@{self.host}:{self.port}/{self.name}"
+        return f"postgresql://{self._credentials}@{self.host}:{self.port}/{self.name}"
 
 
 class RedisSettings(BaseSettings):

@@ -39,9 +39,11 @@ class IngestionPipeline:
 
                     alerts = await self._triage_against_all_orgs(raw_intel, result)
                     alert_count += len(alerts)
+                    await self.db.commit()
 
                 except Exception as e:
                     logger.error(f"[pipeline] Error processing result from {crawler.name}: {e}")
+                    await self.db.rollback()
 
         return alert_count
 
@@ -110,7 +112,6 @@ class IngestionPipeline:
             await self.db.flush()
 
         raw.is_processed = True
-        await self.db.commit()
 
         return alerts
 

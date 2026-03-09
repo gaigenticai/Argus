@@ -73,7 +73,11 @@ class TriageAgent:
 
         try:
             response = await self._call_llm(TRIAGE_SYSTEM_PROMPT, user_prompt)
-            result = json.loads(response)
+            result = self._parse_json_response(response)
+
+            if result is None:
+                logger.warning(f"[triage] Could not parse LLM response: {response[:200]}")
+                return None
 
             if not result.get("is_threat", False):
                 return None
@@ -88,13 +92,38 @@ class TriageAgent:
             result["confidence"] = max(0.0, min(1.0, float(result.get("confidence", 0.5))))
 
             return result
-
-        except json.JSONDecodeError:
-            logger.error(f"[triage] LLM returned invalid JSON")
-            return None
         except Exception as e:
             logger.error(f"[triage] Analysis failed: {e}")
             return None
+
+    def _parse_json_response(self, response: str) -> dict | None:
+        """Parse JSON from LLM response, handling markdown wrapping."""
+        import re
+
+        # Try direct parse first
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError:
+            pass
+
+        # Strip markdown code blocks: ```json ... ``` or ``` ... ```
+        cleaned = re.sub(r"^```(?:json)?\s*", "", response.strip())
+        cleaned = re.sub(r"\s*```$", "", cleaned.strip())
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            pass
+
+        # Find the first { and last } to extract JSON object
+        first_brace = response.find("{")
+        last_brace = response.rfind("}")
+        if first_brace != -1 and last_brace > first_brace:
+            try:
+                return json.loads(response[first_brace : last_brace + 1])
+            except json.JSONDecodeError:
+                pass
+
+        return None
 
     def _build_prompt(
         self,
@@ -176,11 +205,23 @@ Analyze whether this intelligence represents a threat to this organization."""
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    "response_format": {"type": "json_object"},
                 },
             ) as resp:
                 data = await resp.json()
-                return data["choices"][0]["message"]["content"]
+                logger.debug(f"[triage] LLM response keys: {list(data.keys())}")
+
+                # Handle both OpenAI and z.ai response formats
+                if "choices" in data:
+                    return data["choices"][0]["message"]["content"]
+                elif "data" in data and "choices" in data["data"]:
+                    return data["data"]["choices"][0]["message"]["content"]
+                elif "result" in data:
+                    return data["result"]
+                elif "output" in data:
+                    return data["output"]
+                else:
+                    logger.error(f"[triage] Unexpected LLM response format: {list(data.keys())} — {str(data)[:500]}")
+                    raise ValueError(f"Unexpected response format: {list(data.keys())}")
 
     async def _call_anthropic(self, system_prompt: str, user_prompt: str) -> str:
         import aiohttp

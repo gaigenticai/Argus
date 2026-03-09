@@ -17,7 +17,10 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID, ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from pgvector.sqlalchemy import Vector
+try:
+    from pgvector.sqlalchemy import Vector
+except ImportError:
+    Vector = None
 
 from .base import Base, TimestampMixin, UUIDMixin
 
@@ -142,7 +145,8 @@ class RawIntel(Base, UUIDMixin, TimestampMixin):
     raw_data: Mapped[dict | None] = mapped_column(JSONB)
     content_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     is_processed: Mapped[bool] = mapped_column(Boolean, default=False)
-    embedding = mapped_column(Vector(1536), nullable=True)
+    # embedding column requires pgvector PostgreSQL extension
+    # Uncomment when pgvector is installed: embedding = mapped_column(Vector(1536), nullable=True)
 
     __table_args__ = (
         Index("ix_raw_intel_source", "source_type", "is_processed"),
