@@ -9,6 +9,10 @@ from sqlalchemy.ext.asyncio import (
 
 from src.config.settings import settings
 from src.models.base import Base
+import src.models.threat  # noqa: F401 — register threat models with Base.metadata
+import src.models.auth  # noqa: F401 — register auth models with Base.metadata
+import src.models.intel  # noqa: F401 — register intel models with Base.metadata
+import src.models.feeds  # noqa: F401 — register feed models with Base.metadata
 
 engine: AsyncEngine | None = None
 async_session_factory: async_sessionmaker[AsyncSession] | None = None

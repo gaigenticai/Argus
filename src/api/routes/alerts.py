@@ -3,11 +3,13 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.auth import AnalystUser, audit_log
+from src.models.auth import AuditAction
 from src.models.threat import Alert, AlertStatus, ThreatCategory, ThreatSeverity
 from src.storage.database import get_session
 
@@ -109,7 +111,7 @@ async def alert_stats(
         .group_by(Alert.status)
     )
     if org_id:
-        stat_q = stat_q.where(Alert.status == org_id)
+        stat_q = stat_q.where(Alert.organization_id == org_id)
     stat_result = await db.execute(stat_q)
     by_status = {row[0]: row[1] for row in stat_result}
 
@@ -119,6 +121,26 @@ async def alert_stats(
         by_category=by_category,
         by_status=by_status,
     )
+
+
+@router.get("/search", response_model=list[AlertResponse])
+async def search_alerts(
+    q: str = Query("", min_length=1),
+    limit: int = Query(20, le=50),
+    db: AsyncSession = Depends(get_session),
+):
+    """Full-text search across alert titles and summaries."""
+    pattern = f"%{q}%"
+    query = (
+        select(Alert)
+        .where(
+            (Alert.title.ilike(pattern)) | (Alert.summary.ilike(pattern))
+        )
+        .order_by(desc(Alert.created_at))
+        .limit(limit)
+    )
+    result = await db.execute(query)
+    return result.scalars().all()
 
 
 @router.get("/{alert_id}", response_model=AlertResponse)
@@ -136,22 +158,41 @@ async def get_alert(
 async def update_alert(
     alert_id: uuid.UUID,
     body: AlertUpdate,
+    request: Request,
+    analyst: AnalystUser,
     db: AsyncSession = Depends(get_session),
 ):
     alert = await db.get(Alert, alert_id)
     if not alert:
         raise HTTPException(404, "Alert not found")
 
+    changes: dict = {}
+
     if body.status:
         try:
             AlertStatus(body.status)
         except ValueError:
             raise HTTPException(400, f"Invalid status: {body.status}")
+        changes["status"] = {"from": alert.status, "to": body.status}
         alert.status = body.status
 
     if body.analyst_notes is not None:
+        changes["analyst_notes"] = "updated"
         alert.analyst_notes = body.analyst_notes
 
+    forwarded = request.headers.get("X-Forwarded-For")
+    ip = forwarded.split(",")[0].strip() if forwarded else (request.client.host if request.client else "unknown")
+
+    await audit_log(
+        db,
+        AuditAction.ALERT_UPDATE,
+        user=analyst,
+        resource_type="alert",
+        resource_id=str(alert_id),
+        details=changes,
+        ip_address=ip,
+        user_agent=request.headers.get("User-Agent", "unknown")[:500],
+    )
     await db.commit()
     await db.refresh(alert)
     return alert

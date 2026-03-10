@@ -84,17 +84,53 @@ async def scan_exposures(
 
 
 async def _run_exposure_scan(org_id: uuid.UUID, domains: list[str]):
-    """Background task for exposure scanning."""
+    """Background task for exposure scanning — stores findings as alerts."""
+    import logging
+    from src.models.threat import Alert, AlertStatus, ThreatCategory, ThreatSeverity
+    from src.storage.database import get_session
+
+    log = logging.getLogger("argus.scan")
     scanner = SurfaceScanner()
     try:
-        for domain in domains:
-            results = await scanner.check_common_exposures(domain)
-            # Results would be fed into the ingestion pipeline
-            # For now just log them
-            for r in results:
-                import logging
-                logging.getLogger("argus").warning(
-                    f"Exposure found for {domain}: {r.title}"
-                )
+        async for session in get_session():
+            for domain in domains:
+                results = await scanner.check_common_exposures(domain)
+                for r in results:
+                    raw_data = r.raw_data or {}
+                    alert = Alert(
+                        organization_id=org_id,
+                        category=ThreatCategory.VULNERABILITY.value,
+                        severity=ThreatSeverity.HIGH.value,
+                        status=AlertStatus.NEW.value,
+                        title=f"Exposure: {r.title} on {domain}",
+                        summary=(
+                            f"An exposed resource was discovered at {r.source_url}. "
+                            f"This may leak sensitive configuration, credentials, or internal service details."
+                        ),
+                        confidence=0.90,
+                        details={
+                            "url": r.source_url,
+                            "exposure_type": r.title,
+                            "domain": domain,
+                            "status_code": raw_data.get("status_code"),
+                            "response_size": raw_data.get("response_size"),
+                            "check_path": raw_data.get("check"),
+                        },
+                        matched_entities={"domain": domain, "exposure": r.title},
+                        recommended_actions=[
+                            f"Verify the exposure at {r.source_url}",
+                            "Restrict access or remove the exposed resource",
+                            "Review server configuration for similar issues",
+                        ],
+                        agent_reasoning=(
+                            f"Surface scanner detected an exposed {r.title} on {domain}. "
+                            f"This may leak sensitive configuration, source code, or internal paths."
+                        ),
+                    )
+                    session.add(alert)
+                    log.warning(
+                        "[scan] Exposure alert created: %s on %s", r.title, domain
+                    )
+            await session.commit()
     finally:
         await scanner.close()

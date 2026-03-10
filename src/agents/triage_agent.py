@@ -8,8 +8,14 @@ import json
 import logging
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.config.settings import settings
-from src.models.threat import ThreatCategory, ThreatSeverity
+from src.models.threat import Alert, ThreatCategory, ThreatSeverity
+from src.models.intel import TriageFeedback
+
+from src.core.activity import ActivityType, emit as activity_emit
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +28,7 @@ You must respond ONLY with valid JSON. No markdown, no explanation outside JSON.
 Analyze the provided intelligence against the organization's profile and respond with:
 {
   "is_threat": true/false,
-  "category": "one of: credential_leak, data_breach, vulnerability, exploit, ransomware, phishing, impersonation, doxxing, insider_threat, brand_abuse, dark_web_mention, paste_leak, code_leak",
+  "category": "one of: credential_leak, data_breach, stealer_log, ransomware, ransomware_victim, access_sale, exploit, phishing, impersonation, doxxing, insider_threat, brand_abuse, dark_web_mention, underground_chatter, initial_access",
   "severity": "one of: critical, high, medium, low, info",
   "confidence": 0.0-1.0,
   "title": "concise alert title",
@@ -33,11 +39,11 @@ Analyze the provided intelligence against the organization's profile and respond
 }
 
 Severity guidelines:
-- CRITICAL: Active exploitation, confirmed data breach, leaked credentials actively sold
-- HIGH: PoC exploit for vuln in org's stack, VIP credential found, ransomware targeting org's industry
-- MEDIUM: Mention on dark web forums, potential phishing infrastructure, unconfirmed leaks
-- LOW: Generic vulnerability not specific to org's stack, general industry threat chatter
-- INFO: Background noise, general security news, no direct org relevance
+- CRITICAL: Active exploitation, confirmed data breach, stolen credentials actively sold, org named on ransomware leak site, initial access to org being auctioned
+- HIGH: Stealer logs containing org domain credentials, VIP credential found, ransomware group targeting org's industry, access broker listing mentioning org
+- MEDIUM: Mention on dark web/underground forums, potential phishing infrastructure, unconfirmed leaks, chatter about org's industry on I2P/Lokinet
+- LOW: General underground chatter not specific to org, industry threat intelligence, forum discussions about org's tech stack
+- INFO: Background noise, general dark web activity, no direct org relevance
 
 Be precise. False positives waste analyst time. Only flag as threat if there's a real connection."""
 
@@ -45,11 +51,90 @@ Be precise. False positives waste analyst time. Only flag as threat if there's a
 class TriageAgent:
     """LLM-powered threat triage agent."""
 
-    def __init__(self):
+    def __init__(self, db: AsyncSession | None = None):
         self.provider = settings.llm.provider
         self.model = settings.llm.model
         self.base_url = settings.llm.base_url
         self.api_key = settings.llm.api_key
+        self._db = db
+
+    async def _build_system_prompt(self) -> str:
+        """Build system prompt, enriched with recent analyst feedback when available."""
+        if self._db is None:
+            return TRIAGE_SYSTEM_PROMPT
+
+        try:
+            # Fetch up to 3 true-positive feedback records (most recent first)
+            tp_query = (
+                select(TriageFeedback, Alert)
+                .join(Alert, TriageFeedback.alert_id == Alert.id)
+                .where(TriageFeedback.is_true_positive == True)  # noqa: E712
+                .order_by(TriageFeedback.created_at.desc())
+                .limit(3)
+            )
+            tp_result = await self._db.execute(tp_query)
+            tp_rows = tp_result.all()
+
+            # Fetch up to 3 false-positive feedback records (most recent first)
+            fp_query = (
+                select(TriageFeedback, Alert)
+                .join(Alert, TriageFeedback.alert_id == Alert.id)
+                .where(TriageFeedback.is_true_positive == False)  # noqa: E712
+                .order_by(TriageFeedback.created_at.desc())
+                .limit(3)
+            )
+            fp_result = await self._db.execute(fp_query)
+            fp_rows = fp_result.all()
+
+            if not tp_rows and not fp_rows:
+                return TRIAGE_SYSTEM_PROMPT
+
+            # Build the feedback section
+            lines = [
+                "",
+                "---",
+                "## Historical Analyst Feedback",
+                "Use these real analyst corrections to calibrate your analysis.",
+                "",
+            ]
+
+            if tp_rows:
+                lines.append("### True Positives (correctly flagged threats)")
+                for feedback, alert in tp_rows:
+                    correction = ""
+                    if feedback.corrected_category or feedback.corrected_severity:
+                        parts = []
+                        if feedback.corrected_category:
+                            parts.append(f"category should be {feedback.corrected_category}")
+                        if feedback.corrected_severity:
+                            parts.append(f"severity should be {feedback.corrected_severity}")
+                        correction = f" Analyst correction: {'; '.join(parts)}."
+                    notes = f' Notes: "{feedback.feedback_notes}"' if feedback.feedback_notes else ""
+                    lines.append(
+                        f"- Alert: \"{alert.title}\" | Category: {feedback.original_category} | "
+                        f"Severity: {feedback.original_severity} | Confidence: {feedback.original_confidence:.2f} "
+                        f"→ TRUE POSITIVE.{correction}{notes}"
+                    )
+                lines.append("")
+
+            if fp_rows:
+                lines.append("### False Positives (incorrectly flagged — should NOT have been alerts)")
+                for feedback, alert in fp_rows:
+                    notes = f' Notes: "{feedback.feedback_notes}"' if feedback.feedback_notes else ""
+                    lines.append(
+                        f"- Alert: \"{alert.title}\" | Category: {feedback.original_category} | "
+                        f"Severity: {feedback.original_severity} | Confidence: {feedback.original_confidence:.2f} "
+                        f"→ FALSE POSITIVE.{notes}"
+                    )
+                lines.append("")
+
+            lines.append("Learn from these examples to reduce false positives and improve severity/category accuracy.")
+
+            return TRIAGE_SYSTEM_PROMPT + "\n".join(lines)
+
+        except Exception as e:
+            logger.warning(f"[triage] Failed to load feedback for prompt enrichment: {e}")
+            return TRIAGE_SYSTEM_PROMPT
 
     async def analyze(
         self,
@@ -62,7 +147,7 @@ class TriageAgent:
 
         Args:
             raw_content: The raw intelligence text
-            source_type: Where this came from (tor_forum, paste_site, etc.)
+            source_type: Where this came from (tor_forum, i2p, stealer_log, etc.)
             source_name: Specific source name
             org_profile: Organization data including domains, keywords, VIPs, tech stack
 
@@ -70,9 +155,24 @@ class TriageAgent:
             Triage result dict or None if not a threat
         """
         user_prompt = self._build_prompt(raw_content, source_type, source_name, org_profile)
+        org_name = org_profile.get("name", "Unknown")
+
+        await activity_emit(
+            ActivityType.TRIAGE_START,
+            "triage_agent",
+            f"Analyzing intel from {source_name} against {org_name}",
+            {"source_type": source_type, "source_name": source_name, "org": org_name},
+        )
 
         try:
-            response = await self._call_llm(TRIAGE_SYSTEM_PROMPT, user_prompt)
+            system_prompt = await self._build_system_prompt()
+            await activity_emit(
+                ActivityType.TRIAGE_LLM_CALL,
+                "triage_agent",
+                f"Calling {self.provider}/{self.model} for threat classification",
+                {"provider": self.provider, "model": self.model, "org": org_name},
+            )
+            response = await self._call_llm(system_prompt, user_prompt)
             result = self._parse_json_response(response)
 
             if result is None:
@@ -80,6 +180,12 @@ class TriageAgent:
                 return None
 
             if not result.get("is_threat", False):
+                await activity_emit(
+                    ActivityType.TRIAGE_NO_THREAT,
+                    "triage_agent",
+                    f"No threat detected for {org_name} from {source_name}",
+                    {"org": org_name, "source": source_name},
+                )
                 return None
 
             # Validate enums
@@ -90,6 +196,20 @@ class TriageAgent:
                 result.get("severity"), ThreatSeverity, ThreatSeverity.LOW
             )
             result["confidence"] = max(0.0, min(1.0, float(result.get("confidence", 0.5))))
+
+            await activity_emit(
+                ActivityType.TRIAGE_RESULT,
+                "triage_agent",
+                f"Threat detected: [{result['severity'].upper()}] {result.get('title', 'Unknown')}",
+                {
+                    "severity": result["severity"],
+                    "category": result["category"],
+                    "confidence": result["confidence"],
+                    "org": org_name,
+                    "title": result.get("title"),
+                },
+                severity="warning" if result["severity"] in ("critical", "high") else "info",
+            )
 
             return result
         except Exception as e:

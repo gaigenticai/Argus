@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import "./globals.css";
-import { Sidebar } from "@/components/layout/sidebar";
-import { Header } from "@/components/layout/header";
+import { ToastProvider } from "@/components/shared/toast";
+import { AuthProvider } from "@/components/auth/auth-provider";
+import { AppShell } from "@/components/layout/app-shell";
 
 export const metadata: Metadata = {
   title: "Argus — Threat Intelligence",
@@ -22,11 +23,11 @@ export default function RootLayout({
         />
       </head>
       <body className="antialiased">
-        <Sidebar />
-        <main className="ml-[260px]">
-          <Header />
-          <div className="p-6">{children}</div>
-        </main>
+        <ToastProvider>
+          <AuthProvider>
+            <AppShell>{children}</AppShell>
+          </AuthProvider>
+        </ToastProvider>
       </body>
     </html>
   );

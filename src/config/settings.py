@@ -97,6 +97,42 @@ class CrawlerSettings(BaseSettings):
     user_agent_rotate: bool = True
 
 
+class I2PSettings(BaseSettings):
+    model_config = {"env_prefix": "ARGUS_I2P_"}
+
+    proxy_host: str = "127.0.0.1"
+    proxy_port: int = 4444  # I2P HTTP proxy default
+    timeout: int = 120  # I2P is slow — longer timeout
+    enabled: bool = False  # disabled until I2P router is running
+
+    @property
+    def proxy_url(self) -> str:
+        return f"http://{self.proxy_host}:{self.proxy_port}"
+
+
+class LokinetSettings(BaseSettings):
+    model_config = {"env_prefix": "ARGUS_LOKINET_"}
+
+    timeout: int = 90
+    enabled: bool = False  # disabled until lokinet daemon is running
+
+
+class FeedSettings(BaseSettings):
+    model_config = {"env_prefix": "ARGUS_FEED_"}
+
+    enabled: bool = True
+    maxmind_license_key: Optional[str] = None
+    maxmind_db_path: str = "data/GeoLite2-City.mmdb"
+    ipapi_batch_size: int = 100
+    ipapi_rate_limit: int = 15
+    dedup_window_hours: int = 24
+    cleanup_expired_hours: int = 6
+    otx_api_key: Optional[str] = None
+    greynoise_api_key: Optional[str] = None
+    abuseipdb_api_key: Optional[str] = None
+    abuse_ch_api_key: Optional[str] = None
+
+
 class Settings(BaseSettings):
     model_config = {"env_prefix": "ARGUS_"}
 
@@ -105,13 +141,18 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
+    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8000"]
+    jwt_secret: str = ""  # MUST be set via ARGUS_JWT_SECRET env var
 
     db: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
     tor: TorSettings = Field(default_factory=TorSettings)
+    i2p: I2PSettings = Field(default_factory=I2PSettings)
+    lokinet: LokinetSettings = Field(default_factory=LokinetSettings)
     llm: LLMSettings = Field(default_factory=LLMSettings)
     crawler: CrawlerSettings = Field(default_factory=CrawlerSettings)
     notify: NotificationSettings = Field(default_factory=NotificationSettings)
+    feeds: FeedSettings = Field(default_factory=FeedSettings)
 
 
 settings = Settings()

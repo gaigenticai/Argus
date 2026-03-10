@@ -1,12 +1,17 @@
-"""Crawl scheduler — orchestrates periodic crawler runs."""
+"""Crawl scheduler — orchestrates periodic crawler runs across all underground sources."""
 
 import asyncio
 import logging
 from datetime import datetime, timezone
 
-from src.crawlers.cve_crawler import CVECrawler
-from src.crawlers.github_crawler import GitHubCrawler
-from src.crawlers.paste_crawler import PasteCrawler
+from src.crawlers.tor_crawler import TorForumCrawler, TorMarketplaceCrawler
+from src.crawlers.telegram_crawler import TelegramCrawler
+from src.crawlers.i2p_crawler import I2PEepsiteCrawler
+from src.crawlers.lokinet_crawler import LokinetCrawler
+from src.crawlers.stealer_crawler import StealerLogCrawler
+from src.crawlers.ransomware_crawler import RansomwareLeakCrawler
+from src.crawlers.forum_crawler import ForumCrawler
+from src.crawlers.matrix_crawler import MatrixCrawler
 from src.ingestion.pipeline import IngestionPipeline
 from src.storage.database import get_session
 
@@ -23,11 +28,32 @@ class CrawlSchedule:
         self.last_run: datetime | None = None
 
 
-# Default crawl schedules
+# Default crawl schedules — underground sources only
 DEFAULT_SCHEDULES = [
-    CrawlSchedule(CVECrawler, interval_minutes=30),
-    CrawlSchedule(PasteCrawler, interval_minutes=15),
-    CrawlSchedule(GitHubCrawler, interval_minutes=60),
+    # Dark web forums & marketplaces (Tor)
+    CrawlSchedule(TorForumCrawler, interval_minutes=30),
+    CrawlSchedule(TorMarketplaceCrawler, interval_minutes=30),
+
+    # Telegram threat channels — fast-moving, check frequently
+    CrawlSchedule(TelegramCrawler, interval_minutes=10),
+
+    # I2P eepsites — slow network, less frequent
+    CrawlSchedule(I2PEepsiteCrawler, interval_minutes=60),
+
+    # Lokinet — emerging, moderate frequency
+    CrawlSchedule(LokinetCrawler, interval_minutes=60),
+
+    # Stealer log markets — time-critical, check often
+    CrawlSchedule(StealerLogCrawler, interval_minutes=15),
+
+    # Ransomware leak sites — check for new victims
+    CrawlSchedule(RansomwareLeakCrawler, interval_minutes=20),
+
+    # Underground forums (RU/CN/EN)
+    CrawlSchedule(ForumCrawler, interval_minutes=30),
+
+    # Matrix rooms — moderate frequency
+    CrawlSchedule(MatrixCrawler, interval_minutes=30),
 ]
 
 

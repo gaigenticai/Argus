@@ -7,6 +7,7 @@ import { api, type Alert } from "@/lib/api";
 import { SeverityBadge } from "@/components/shared/severity-badge";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { categoryLabels, formatDate } from "@/lib/utils";
+import { useToast } from "@/components/shared/toast";
 
 const SEVERITIES = ["all", "critical", "high", "medium", "low", "info"];
 const STATUSES = ["all", "new", "triaged", "investigating", "confirmed", "false_positive", "resolved"];
@@ -16,6 +17,7 @@ export default function AlertsPage() {
   const [loading, setLoading] = useState(true);
   const [severity, setSeverity] = useState("all");
   const [status, setStatus] = useState("all");
+  const { toast } = useToast();
 
   const load = async () => {
     setLoading(true);
@@ -27,7 +29,7 @@ export default function AlertsPage() {
       });
       setAlerts(data);
     } catch {
-      // API not reachable
+      toast("error", "Failed to load alerts");
     } finally {
       setLoading(false);
     }
@@ -41,14 +43,14 @@ export default function AlertsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-[24px] font-bold text-[#1C252E]">Alerts</h2>
-          <p className="text-[14px] text-[#637381] mt-0.5">
+          <h2 className="text-[22px] font-bold text-grey-900">Alerts</h2>
+          <p className="text-[14px] text-grey-500 mt-0.5">
             {alerts.length} alerts found
           </p>
         </div>
         <button
           onClick={load}
-          className="flex items-center gap-2 px-4 py-2 bg-white rounded-xl text-[13px] font-semibold text-[#1C252E] shadow-[0_0_2px_0_rgba(145,158,171,0.2)] hover:shadow-[0_0_2px_0_rgba(145,158,171,0.4)] transition-shadow"
+          className="flex items-center gap-2 h-10 px-4 rounded-lg text-[14px] font-bold border border-grey-300 text-grey-700 hover:bg-grey-100 transition-colors"
         >
           <RefreshCw className="w-4 h-4" />
           Refresh
@@ -57,12 +59,12 @@ export default function AlertsPage() {
 
       {/* Filters */}
       <div className="flex gap-3 flex-wrap">
-        <div className="flex items-center gap-2 bg-white rounded-xl px-3 py-2 shadow-[0_0_2px_0_rgba(145,158,171,0.2)]">
-          <Filter className="w-4 h-4 text-[#919EAB]" />
+        <div className="flex items-center gap-2">
+          <Filter className="w-4 h-4 text-grey-500" />
           <select
             value={severity}
             onChange={(e) => setSeverity(e.target.value)}
-            className="text-[13px] text-[#1C252E] bg-transparent outline-none cursor-pointer"
+            className="h-10 px-3 rounded-lg border border-grey-300 text-[14px] outline-none focus:border-primary bg-white"
           >
             {SEVERITIES.map((s) => (
               <option key={s} value={s}>
@@ -71,72 +73,68 @@ export default function AlertsPage() {
             ))}
           </select>
         </div>
-        <div className="flex items-center gap-2 bg-white rounded-xl px-3 py-2 shadow-[0_0_2px_0_rgba(145,158,171,0.2)]">
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="text-[13px] text-[#1C252E] bg-transparent outline-none cursor-pointer"
-          >
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s === "all" ? "All statuses" : s.replace("_", " ").replace(/\b\w/g, (l) => l.toUpperCase())}
-              </option>
-            ))}
-          </select>
-        </div>
+        <select
+          value={status}
+          onChange={(e) => setStatus(e.target.value)}
+          className="h-10 px-3 rounded-lg border border-grey-300 text-[14px] outline-none focus:border-primary bg-white"
+        >
+          {STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {s === "all" ? "All statuses" : s.replace("_", " ").replace(/\b\w/g, (l) => l.toUpperCase())}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Alerts table */}
-      <div className="bg-white rounded-2xl shadow-[0_0_2px_0_rgba(145,158,171,0.2),0_12px_24px_-4px_rgba(145,158,171,0.12)] overflow-hidden">
+      <div className="bg-white rounded-xl border border-grey-200 overflow-hidden">
         {loading ? (
           <div className="flex items-center justify-center h-[300px]">
-            <div className="w-8 h-8 border-3 border-[#00A76F] border-t-transparent rounded-full animate-spin" />
+            <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
           </div>
         ) : alerts.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-[300px] text-[#919EAB]">
+          <div className="flex flex-col items-center justify-center h-[300px] text-grey-500">
             <p className="text-[14px]">No alerts match your filters</p>
           </div>
         ) : (
           <table className="w-full">
             <thead>
-              <tr className="border-b border-[#F4F6F8]">
-                <th className="text-left px-6 py-3 text-[12px] font-bold text-[#637381] uppercase">Severity</th>
-                <th className="text-left px-6 py-3 text-[12px] font-bold text-[#637381] uppercase">Title</th>
-                <th className="text-left px-6 py-3 text-[12px] font-bold text-[#637381] uppercase">Category</th>
-                <th className="text-left px-6 py-3 text-[12px] font-bold text-[#637381] uppercase">Status</th>
-                <th className="text-left px-6 py-3 text-[12px] font-bold text-[#637381] uppercase">Confidence</th>
-                <th className="text-left px-6 py-3 text-[12px] font-bold text-[#637381] uppercase">Date</th>
+              <tr className="bg-grey-100">
+                <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Severity</th>
+                <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Title</th>
+                <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Category</th>
+                <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Status</th>
+                <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Confidence</th>
+                <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Date</th>
               </tr>
             </thead>
             <tbody>
-              {alerts.map((alert, i) => (
+              {alerts.map((alert) => (
                 <tr
                   key={alert.id}
-                  className={`border-b border-[#F4F6F8] last:border-b-0 hover:bg-[#F9FAFB] transition-colors ${
-                    i % 2 === 0 ? "" : "bg-[#FCFDFD]"
-                  }`}
+                  className="h-[52px] border-b border-grey-200 last:border-b-0 hover:bg-grey-50 transition-colors"
                 >
-                  <td className="px-6 py-3">
+                  <td className="px-4">
                     <SeverityBadge severity={alert.severity} />
                   </td>
-                  <td className="px-6 py-3">
+                  <td className="px-4">
                     <Link
                       href={`/alerts/${alert.id}`}
-                      className="text-[14px] font-semibold text-[#1C252E] hover:text-[#00A76F] transition-colors line-clamp-1"
+                      className="text-[14px] font-semibold text-grey-800 hover:text-primary transition-colors line-clamp-1"
                     >
                       {alert.title}
                     </Link>
                   </td>
-                  <td className="px-6 py-3 text-[13px] text-[#637381]">
+                  <td className="px-4 text-[13px] text-grey-600">
                     {categoryLabels[alert.category] || alert.category}
                   </td>
-                  <td className="px-6 py-3">
+                  <td className="px-4">
                     <StatusBadge status={alert.status} />
                   </td>
-                  <td className="px-6 py-3 text-[13px] text-[#637381]">
+                  <td className="px-4 text-[13px] text-grey-600">
                     {Math.round(alert.confidence * 100)}%
                   </td>
-                  <td className="px-6 py-3 text-[13px] text-[#919EAB] whitespace-nowrap">
+                  <td className="px-4 text-[13px] text-grey-500 whitespace-nowrap">
                     {formatDate(alert.created_at)}
                   </td>
                 </tr>

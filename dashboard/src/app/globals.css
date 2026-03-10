@@ -1,15 +1,8 @@
 @import "tailwindcss";
 
-@font-face {
-  font-family: "Public Sans";
-  font-style: normal;
-  font-weight: 400 800;
-  font-display: swap;
-  src: url("https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&display=swap");
-}
-
 @theme inline {
   --font-sans: "Public Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", ui-monospace, monospace;
 
   /* Primary (Teal) */
   --color-primary-lighter: #C8FAD6;
@@ -23,26 +16,35 @@
   --color-secondary-light: #C684FF;
   --color-secondary: #8E33FF;
   --color-secondary-dark: #5119B7;
+  --color-secondary-darker: #27097A;
 
-  /* Severity colors */
-  --color-critical: #FF5630;
-  --color-critical-light: #FFE9D5;
-  --color-high: #FFAB00;
-  --color-high-light: #FFF5CC;
-  --color-medium: #FFC107;
-  --color-medium-light: #FFF8D6;
-  --color-low: #00BBD9;
-  --color-low-light: #CAFDF5;
-  --color-info: #919EAB;
-  --color-info-light: #F4F6F8;
+  /* Info */
+  --color-info-lighter: #CAFDF5;
+  --color-info-light: #61F3F3;
+  --color-info: #00BBD9;
+  --color-info-dark: #006C9C;
+  --color-info-darker: #003768;
 
-  /* Semantic */
+  /* Success */
+  --color-success-lighter: #D3FCD2;
+  --color-success-light: #77ED8B;
   --color-success: #22C55E;
-  --color-success-light: #D3FCD2;
+  --color-success-dark: #118D57;
+  --color-success-darker: #065E49;
+
+  /* Warning */
+  --color-warning-lighter: #FFF5CC;
+  --color-warning-light: #FFD666;
   --color-warning: #FFAB00;
-  --color-warning-light: #FFF5CC;
+  --color-warning-dark: #B76E00;
+  --color-warning-darker: #7A4100;
+
+  /* Error */
+  --color-error-lighter: #FFE9D5;
+  --color-error-light: #FFAC82;
   --color-error: #FF5630;
-  --color-error-light: #FFE9D5;
+  --color-error-dark: #B71D18;
+  --color-error-darker: #7A0916;
 
   /* Grey scale */
   --color-grey-0: #FFFFFF;
@@ -57,11 +59,20 @@
   --color-grey-800: #1C252E;
   --color-grey-900: #141A21;
 
-  /* Surface */
+  /* Semantic surfaces */
   --color-surface: #FFFFFF;
   --color-surface-variant: #F9FAFB;
-  --color-background: #F4F6F8;
+  --color-background: #F9FAFB;
   --color-foreground: #1C252E;
+
+  /* Shadows — Airaa z-depth system */
+  --shadow-z1: 0 1px 2px rgba(145,158,171,0.16);
+  --shadow-z4: 0 0 2px rgba(145,158,171,0.2), 0 2px 4px -1px rgba(145,158,171,0.12);
+  --shadow-z8: 0 0 2px rgba(145,158,171,0.2), 0 4px 8px -2px rgba(145,158,171,0.12);
+  --shadow-z12: 0 0 2px rgba(145,158,171,0.2), 0 6px 12px -3px rgba(145,158,171,0.12);
+  --shadow-z16: 0 0 2px rgba(145,158,171,0.2), 0 8px 16px -4px rgba(145,158,171,0.12);
+  --shadow-z20: 0 0 2px rgba(145,158,171,0.2), 0 10px 20px -5px rgba(145,158,171,0.14);
+  --shadow-z24: 0 0 2px rgba(145,158,171,0.2), 0 12px 24px -6px rgba(145,158,171,0.16);
 }
 
 * {
@@ -72,6 +83,8 @@ body {
   background: var(--color-background);
   color: var(--color-foreground);
   font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 22px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -90,4 +103,10 @@ body {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-grey-500);
+}
+
+/* Selection */
+::selection {
+  background: var(--color-primary-lighter);
+  color: var(--color-primary-darker);
 }

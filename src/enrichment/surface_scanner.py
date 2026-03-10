@@ -16,6 +16,8 @@ import aiohttp
 from src.models.threat import SourceType
 from src.crawlers.base import CrawlResult
 
+from src.core.activity import ActivityType, emit as activity_emit
+
 logger = logging.getLogger(__name__)
 
 
@@ -34,14 +36,18 @@ class SurfaceScanner:
 
     async def discover_subdomains(self, domain: str) -> list[dict[str, Any]]:
         """Discover subdomains using passive sources."""
+        await activity_emit(
+            ActivityType.SCAN_START,
+            "surface_scanner",
+            f"Starting subdomain discovery for {domain}",
+            {"domain": domain, "scan_type": "subdomain_enum"},
+        )
+
         subdomains = set()
 
         # Certificate Transparency logs via crt.sh
         ct_subs = await self._crtsh_lookup(domain)
         subdomains.update(ct_subs)
-
-        # DNS dumpster / other passive sources
-        # Add more passive enumeration sources here
 
         results = []
         for sub in sorted(subdomains):
@@ -51,6 +57,19 @@ class SurfaceScanner:
                 "ip": ip,
                 "discovered_at": datetime.now(timezone.utc).isoformat(),
             })
+            await activity_emit(
+                ActivityType.SCAN_SUBDOMAIN,
+                "surface_scanner",
+                f"Found subdomain: {sub}" + (f" → {ip}" if ip else ""),
+                {"subdomain": sub, "ip": ip, "domain": domain},
+            )
+
+        await activity_emit(
+            ActivityType.SCAN_COMPLETE,
+            "surface_scanner",
+            f"Subdomain scan complete for {domain} — {len(results)} found",
+            {"domain": domain, "count": len(results)},
+        )
 
         logger.info(f"[surface] Discovered {len(results)} subdomains for {domain}")
         return results
@@ -93,6 +112,13 @@ class SurfaceScanner:
 
     async def check_common_exposures(self, domain: str) -> list[CrawlResult]:
         """Check for common misconfigurations on a domain."""
+        await activity_emit(
+            ActivityType.SCAN_START,
+            "surface_scanner",
+            f"Starting exposure check on {domain}",
+            {"domain": domain, "scan_type": "exposure_check"},
+        )
+
         results = []
         session = await self._get_session()
 
@@ -132,8 +158,22 @@ class SurfaceScanner:
                                 },
                             ))
                             logger.warning(f"[surface] {issue_desc} at {url}")
+                            await activity_emit(
+                                ActivityType.SCAN_EXPOSURE,
+                                "surface_scanner",
+                                f"Exposure found: {issue_desc} at {url}",
+                                {"url": url, "issue": issue_desc, "status": resp.status, "size": len(body)},
+                                severity="warning",
+                            )
             except Exception:
                 pass  # Connection errors are expected for most checks
+
+        await activity_emit(
+            ActivityType.SCAN_COMPLETE,
+            "surface_scanner",
+            f"Exposure check complete for {domain} — {len(results)} issues found",
+            {"domain": domain, "exposures": len(results)},
+        )
 
         return results
 

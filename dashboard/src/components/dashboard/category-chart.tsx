@@ -26,7 +26,7 @@ export function CategoryChart({ data }: CategoryChartProps) {
 
   if (chartData.length === 0) {
     return (
-      <div className="flex items-center justify-center h-[240px] text-[14px] text-[#919EAB]">
+      <div className="flex items-center justify-center h-[240px] text-sm text-grey-500">
         No alerts yet
       </div>
     );
@@ -47,10 +47,13 @@ export function CategoryChart({ data }: CategoryChartProps) {
           contentStyle={{
             background: "#1C252E",
             border: "none",
-            borderRadius: "8px",
-            color: "#fff",
-            fontSize: "13px",
+            borderRadius: 8,
+            color: "#FFFFFF",
+            fontSize: 13,
+            padding: "8px 12px",
           }}
+          itemStyle={{ color: "#FFFFFF" }}
+          cursor={{ fill: "rgba(145,158,171,0.08)" }}
         />
         <Bar dataKey="count" fill="#00A76F" radius={[0, 4, 4, 0]} barSize={16} />
       </BarChart>

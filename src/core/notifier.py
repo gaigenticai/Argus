@@ -11,6 +11,8 @@ import aiohttp
 from src.config.settings import settings
 from src.models.threat import Alert, ThreatSeverity
 
+from src.core.activity import ActivityType, emit as activity_emit
+
 logger = logging.getLogger("argus.notifier")
 
 # Severity → hex colour for Slack attachment bars / email badges
@@ -260,6 +262,21 @@ async def send_alert_notification(alert: Alert) -> dict[str, bool]:
     """
     results: dict[str, bool] = {}
 
+    channels = []
+    if settings.notify.slack_webhook_url:
+        channels.append("slack")
+    if settings.notify.email_smtp_host and settings.notify.email_to:
+        channels.append("email")
+    if settings.notify.pagerduty_routing_key:
+        channels.append("pagerduty")
+
+    await activity_emit(
+        ActivityType.NOTIFICATION_SEND,
+        "notifier",
+        f"Dispatching alert '{alert.title}' to {', '.join(channels) or 'no channels'}",
+        {"alert_id": str(alert.id), "channels": channels, "severity": alert.severity},
+    )
+
     if settings.notify.slack_webhook_url:
         results["slack"] = await _send_slack(alert)
 
@@ -268,6 +285,18 @@ async def send_alert_notification(alert: Alert) -> dict[str, bool]:
 
     if settings.notify.pagerduty_routing_key:
         results["pagerduty"] = await _send_pagerduty(alert)
+
+    succeeded = [ch for ch, ok in results.items() if ok]
+    failed = [ch for ch, ok in results.items() if not ok]
+
+    await activity_emit(
+        ActivityType.NOTIFICATION_RESULT,
+        "notifier",
+        f"Notification result: {len(succeeded)} sent, {len(failed)} failed"
+        + (f" (failed: {', '.join(failed)})" if failed else ""),
+        {"alert_id": str(alert.id), "succeeded": succeeded, "failed": failed},
+        severity="error" if failed else "info",
+    )
 
     if not results:
         logger.warning("No notification channels configured — alert %s was not dispatched", alert.id)

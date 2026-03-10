@@ -7,7 +7,7 @@ export function SeverityBadge({ severity }: { severity: string }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center px-2 py-0.5 rounded-md text-[12px] font-bold uppercase",
+        "inline-flex items-center h-[22px] px-2 rounded text-[11px] font-bold uppercase tracking-wide",
         config.bg,
         config.color
       )}

@@ -12,3 +12,6 @@ node_modules/
 .next/
 *.db
 *.sqlite3
+dashboard/test-results/
+dashboard/playwright-report/
+GeoLite2-City.mmdb

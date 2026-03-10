@@ -6,36 +6,39 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export const severityConfig: Record<string, { color: string; bg: string; label: string }> = {
-  critical: { color: "text-[#FF5630]", bg: "bg-[#FFE9D5]", label: "Critical" },
-  high: { color: "text-[#B76E00]", bg: "bg-[#FFF5CC]", label: "High" },
-  medium: { color: "text-[#B76E00]", bg: "bg-[#FFF8D6]", label: "Medium" },
-  low: { color: "text-[#006C9C]", bg: "bg-[#CAFDF5]", label: "Low" },
-  info: { color: "text-[#637381]", bg: "bg-[#F4F6F8]", label: "Info" },
+  critical: { color: "text-error", bg: "bg-error-lighter", label: "Critical" },
+  high: { color: "text-warning-dark", bg: "bg-warning-lighter", label: "High" },
+  medium: { color: "text-warning-dark", bg: "bg-warning-lighter", label: "Medium" },
+  low: { color: "text-info-dark", bg: "bg-info-lighter", label: "Low" },
+  info: { color: "text-grey-600", bg: "bg-grey-200", label: "Info" },
 };
 
 export const statusConfig: Record<string, { color: string; bg: string }> = {
-  new: { color: "text-[#FF5630]", bg: "bg-[#FFE9D5]" },
-  triaged: { color: "text-[#B76E00]", bg: "bg-[#FFF5CC]" },
-  investigating: { color: "text-[#006C9C]", bg: "bg-[#CAFDF5]" },
-  confirmed: { color: "text-[#B71D18]", bg: "bg-[#FFE9D5]" },
-  false_positive: { color: "text-[#637381]", bg: "bg-[#F4F6F8]" },
-  resolved: { color: "text-[#118D57]", bg: "bg-[#D3FCD2]" },
+  new: { color: "text-error", bg: "bg-error-lighter" },
+  needs_review: { color: "text-secondary", bg: "bg-secondary-lighter" },
+  triaged: { color: "text-warning-dark", bg: "bg-warning-lighter" },
+  investigating: { color: "text-info-dark", bg: "bg-info-lighter" },
+  confirmed: { color: "text-error-dark", bg: "bg-error-lighter" },
+  false_positive: { color: "text-grey-600", bg: "bg-grey-200" },
+  resolved: { color: "text-success-dark", bg: "bg-success-lighter" },
 };
 
 export const categoryLabels: Record<string, string> = {
   credential_leak: "Credential Leak",
   data_breach: "Data Breach",
-  vulnerability: "Vulnerability",
-  exploit: "Exploit",
+  stealer_log: "Stealer Log",
   ransomware: "Ransomware",
+  ransomware_victim: "Ransomware Victim",
+  access_sale: "Access Sale",
+  exploit: "Exploit",
   phishing: "Phishing",
   impersonation: "Impersonation",
   doxxing: "Doxxing",
   insider_threat: "Insider Threat",
   brand_abuse: "Brand Abuse",
   dark_web_mention: "Dark Web Mention",
-  paste_leak: "Paste Leak",
-  code_leak: "Code Leak",
+  underground_chatter: "Underground Chatter",
+  initial_access: "Initial Access",
 };
 
 export function formatDate(dateStr: string): string {

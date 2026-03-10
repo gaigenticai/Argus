@@ -8,7 +8,7 @@ export function StatusBadge({ status }: { status: string }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center px-2 py-0.5 rounded-md text-[12px] font-semibold capitalize",
+        "inline-flex items-center h-[22px] px-2 rounded text-[11px] font-semibold capitalize",
         config.bg,
         config.color
       )}

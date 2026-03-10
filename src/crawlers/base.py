@@ -6,13 +6,17 @@ import logging
 import random
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import AsyncIterator
+from typing import AsyncIterator, Sequence
+from urllib.parse import urlparse
 
 import aiohttp
 from aiohttp_socks import ProxyConnector
+from bs4 import BeautifulSoup, Tag
 
 from src.config.settings import settings
 from src.models.threat import SourceType
+
+from src.core.activity import ActivityType, emit as activity_emit
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +28,9 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
 ]
+
+_UNDERGROUND_TLDS = frozenset({".onion", ".i2p", ".loki"})
+_STRUCTURE_HASH_MAX_ELEMENTS = 500
 
 
 class CrawlResult:
@@ -90,12 +97,52 @@ class BaseCrawler(ABC):
         )
         await asyncio.sleep(delay)
 
-    async def _fetch(self, url: str, use_tor: bool = False) -> str | None:
+    @staticmethod
+    def _is_underground_url(url: str) -> bool:
+        """Return True if the URL targets an underground TLD (.onion, .i2p, .loki)."""
+        try:
+            hostname = urlparse(url).hostname or ""
+        except Exception:
+            return False
+        return any(hostname.endswith(tld) for tld in _UNDERGROUND_TLDS)
+
+    async def _fetch(
+        self,
+        url: str,
+        use_tor: bool = False,
+        method: str = "GET",
+    ) -> str | None:
+        """Fetch a URL. Only GET is permitted for underground (.onion/.i2p/.loki) domains."""
+        method = method.upper()
+
+        # ── Read-only guardrail for underground URLs ──
+        if method != "GET" and self._is_underground_url(url):
+            logger.warning(
+                "[%s] BLOCKED non-GET (%s) to underground URL: %s",
+                self.name,
+                method,
+                url,
+            )
+            await activity_emit(
+                ActivityType.SECURITY_BLOCKED,
+                self.name,
+                f"Blocked {method} request to underground URL",
+                {"url": url, "method": method, "reason": "read_only_guardrail"},
+                severity="critical",
+            )
+            return None
+
         async with self._semaphore:
+            await activity_emit(
+                ActivityType.CRAWLER_FETCH,
+                self.name,
+                f"Fetching {url}",
+                {"url": url, "use_tor": use_tor, "method": method},
+            )
             for attempt in range(settings.crawler.max_retries):
                 try:
                     session = await self._get_session(use_tor=use_tor)
-                    async with session.get(url) as resp:
+                    async with session.request(method, url) as resp:
                         if resp.status == 200:
                             return await resp.text()
                         logger.warning(
@@ -103,11 +150,107 @@ class BaseCrawler(ABC):
                         )
                 except Exception as e:
                     logger.error(f"[{self.name}] Error fetching {url}: {e} (attempt {attempt + 1})")
+                    await activity_emit(
+                        ActivityType.CRAWLER_ERROR,
+                        self.name,
+                        f"Fetch error: {e}",
+                        {"url": url, "attempt": attempt + 1},
+                        severity="warning",
+                    )
 
                 if attempt < settings.crawler.max_retries - 1:
                     await self._delay()
 
             return None
+
+    # ── Structure hash computation ────────────────────────────────
+
+    @staticmethod
+    def compute_structure_hash(html: str) -> str:
+        """Hash the DOM tag structure (tag names + classes) ignoring text content.
+
+        Examines up to ``_STRUCTURE_HASH_MAX_ELEMENTS`` elements and returns
+        a SHA-256 hex digest representing the structural skeleton of the page.
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        parts: list[str] = []
+        for idx, tag in enumerate(soup.descendants):
+            if idx >= _STRUCTURE_HASH_MAX_ELEMENTS:
+                break
+            if not isinstance(tag, Tag):
+                continue
+            classes = " ".join(sorted(tag.get("class", [])))
+            parts.append(f"{tag.name}:{classes}")
+        return hashlib.sha256("|".join(parts).encode()).hexdigest()
+
+    # ── Selector cascading ────────────────────────────────────────
+
+    @staticmethod
+    def _select_with_fallbacks(
+        soup: BeautifulSoup,
+        primary_selector: str,
+        fallback_selectors: Sequence[str] | None = None,
+    ) -> list:
+        """Try *primary_selector* first; fall back through alternatives in order.
+
+        Returns the result list from the first selector that matches at least
+        one element, or an empty list if none match.
+        """
+        results = soup.select(primary_selector)
+        if results:
+            return results
+
+        for selector in fallback_selectors or []:
+            results = soup.select(selector)
+            if results:
+                logger.info(
+                    "Primary selector %r missed — fell back to %r (%d hits)",
+                    primary_selector,
+                    selector,
+                    len(results),
+                )
+                return results
+
+        logger.warning(
+            "All selectors exhausted (primary=%r, fallbacks=%s)",
+            primary_selector,
+            fallback_selectors,
+        )
+        return []
+
+    # ── Mirror URL failover ───────────────────────────────────────
+
+    async def _fetch_with_mirrors(
+        self,
+        primary_url: str,
+        mirror_urls: Sequence[str] | None = None,
+        use_tor: bool = False,
+    ) -> tuple[str | None, str | None]:
+        """Fetch *primary_url* first, then try each mirror in order on failure.
+
+        Returns ``(html, url_used)`` — both ``None`` if every URL fails.
+        """
+        html = await self._fetch(primary_url, use_tor=use_tor)
+        if html is not None:
+            return html, primary_url
+
+        for mirror in mirror_urls or []:
+            logger.info(
+                "[%s] Primary %s failed — trying mirror %s",
+                self.name,
+                primary_url,
+                mirror,
+            )
+            html = await self._fetch(mirror, use_tor=use_tor)
+            if html is not None:
+                return html, mirror
+
+        logger.error(
+            "[%s] All URLs exhausted (primary + %d mirrors)",
+            self.name,
+            len(mirror_urls or []),
+        )
+        return None, None
 
     @abstractmethod
     async def crawl(self) -> AsyncIterator[CrawlResult]:

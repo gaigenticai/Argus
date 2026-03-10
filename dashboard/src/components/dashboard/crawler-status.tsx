@@ -12,45 +12,43 @@ interface CrawlerStatusProps {
 export function CrawlerStatus({ crawlers, onTrigger }: CrawlerStatusProps) {
   if (crawlers.length === 0) {
     return (
-      <div className="flex items-center justify-center h-[200px] text-[14px] text-[#919EAB]">
+      <div className="flex items-center justify-center h-[200px] text-sm text-grey-500">
         No crawlers registered
       </div>
     );
   }
 
   return (
-    <div className="space-y-2 p-4">
+    <div>
       {crawlers.map((crawler) => (
         <div
           key={crawler.name}
-          className="flex items-center gap-3 p-3 rounded-xl bg-[#F9FAFB] hover:bg-[#F4F6F8] transition-colors"
+          className="flex items-center gap-3 px-4 h-[52px] border-b border-grey-200 last:border-b-0 hover:bg-grey-100 transition-colors"
         >
-          <div className="w-9 h-9 rounded-lg bg-[#EFD6FF] flex items-center justify-center">
-            <Bot className="w-5 h-5 text-[#8E33FF]" />
-          </div>
+          <Bot className="w-[18px] h-[18px] text-grey-500 shrink-0" />
           <div className="flex-1 min-w-0">
-            <p className="text-[13px] font-semibold text-[#1C252E]">{crawler.name}</p>
-            <div className="flex items-center gap-2 mt-0.5">
+            <p className="text-[13px] font-semibold text-grey-800">{crawler.name}</p>
+            <div className="flex items-center gap-2">
               {crawler.last_run ? (
-                <span className="flex items-center gap-1 text-[11px] text-[#22C55E]">
+                <span className="flex items-center gap-1 text-[11px] text-success">
                   <CheckCircle className="w-3 h-3" />
                   {timeAgo(crawler.last_run)}
                 </span>
               ) : (
-                <span className="flex items-center gap-1 text-[11px] text-[#919EAB]">
+                <span className="flex items-center gap-1 text-[11px] text-grey-500">
                   <Clock className="w-3 h-3" />
                   Never run
                 </span>
               )}
-              <span className="text-[10px] text-[#C4CDD5]">|</span>
-              <span className="text-[11px] text-[#919EAB]">
+              <span className="text-[10px] text-grey-400">|</span>
+              <span className="text-[11px] text-grey-500">
                 Every {Math.round(crawler.interval_seconds / 60)}m
               </span>
             </div>
           </div>
           <button
             onClick={() => onTrigger(crawler.crawler_name)}
-            className="p-2 rounded-lg hover:bg-[#C8FAD6] text-[#00A76F] transition-colors"
+            className="p-1.5 rounded-lg hover:bg-primary-lighter text-primary transition-colors"
             title="Run now"
           >
             <Play className="w-4 h-4" />

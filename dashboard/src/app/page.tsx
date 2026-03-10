@@ -13,12 +13,14 @@ import { SeverityChart } from "@/components/dashboard/severity-chart";
 import { CategoryChart } from "@/components/dashboard/category-chart";
 import { RecentAlerts } from "@/components/dashboard/recent-alerts";
 import { CrawlerStatus } from "@/components/dashboard/crawler-status";
+import { useToast } from "@/components/shared/toast";
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<AlertStats | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [crawlers, setCrawlers] = useState<Crawler[]>([]);
   const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
 
   useEffect(() => {
     async function load() {
@@ -32,7 +34,7 @@ export default function DashboardPage() {
         setAlerts(a);
         setCrawlers(c);
       } catch {
-        // API not reachable — show empty state
+        toast("error", "Failed to connect to API server");
       } finally {
         setLoading(false);
       }
@@ -43,8 +45,9 @@ export default function DashboardPage() {
   const handleTriggerCrawler = async (name: string) => {
     try {
       await api.triggerCrawler(name);
+      toast("success", `Crawler ${name} triggered successfully`);
     } catch {
-      // silently fail
+      toast("error", `Failed to trigger crawler ${name}`);
     }
   };
 
@@ -52,8 +55,8 @@ export default function DashboardPage() {
     return (
       <div className="flex items-center justify-center h-[60vh]">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-10 h-10 border-3 border-[#00A76F] border-t-transparent rounded-full animate-spin" />
-          <p className="text-[14px] text-[#919EAB]">Loading dashboard...</p>
+          <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <p className="text-[14px] text-grey-500">Loading dashboard...</p>
         </div>
       </div>
     );
@@ -67,8 +70,8 @@ export default function DashboardPage() {
     <div className="space-y-6">
       {/* Page title */}
       <div>
-        <h2 className="text-[24px] font-bold text-[#1C252E]">Dashboard</h2>
-        <p className="text-[14px] text-[#637381] mt-0.5">
+        <h2 className="text-[22px] font-bold text-grey-900">Dashboard</h2>
+        <p className="text-[14px] text-grey-500 mt-0.5">
           Real-time threat intelligence overview
         </p>
       </div>
@@ -111,14 +114,14 @@ export default function DashboardPage() {
 
       {/* Charts row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="bg-white rounded-2xl p-6 shadow-[0_0_2px_0_rgba(145,158,171,0.2),0_12px_24px_-4px_rgba(145,158,171,0.12)]">
-          <h3 className="text-[16px] font-bold text-[#1C252E] mb-4">
+        <div className="bg-white rounded-xl border border-grey-200 p-6">
+          <h3 className="text-[16px] font-bold text-grey-900 mb-4">
             Alerts by severity
           </h3>
           <SeverityChart data={stats?.by_severity || {}} />
         </div>
-        <div className="bg-white rounded-2xl p-6 shadow-[0_0_2px_0_rgba(145,158,171,0.2),0_12px_24px_-4px_rgba(145,158,171,0.12)]">
-          <h3 className="text-[16px] font-bold text-[#1C252E] mb-4">
+        <div className="bg-white rounded-xl border border-grey-200 p-6">
+          <h3 className="text-[16px] font-bold text-grey-900 mb-4">
             Alerts by category
           </h3>
           <CategoryChart data={stats?.by_category || {}} />
@@ -127,17 +130,17 @@ export default function DashboardPage() {
 
       {/* Bottom row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 bg-white rounded-2xl shadow-[0_0_2px_0_rgba(145,158,171,0.2),0_12px_24px_-4px_rgba(145,158,171,0.12)]">
-          <div className="px-6 py-4 border-b border-[#F4F6F8]">
-            <h3 className="text-[16px] font-bold text-[#1C252E]">
+        <div className="lg:col-span-2 bg-white rounded-xl border border-grey-200">
+          <div className="px-6 py-4 border-b border-grey-200">
+            <h3 className="text-[16px] font-bold text-grey-900">
               Recent alerts
             </h3>
           </div>
           <RecentAlerts alerts={alerts} />
         </div>
-        <div className="bg-white rounded-2xl shadow-[0_0_2px_0_rgba(145,158,171,0.2),0_12px_24px_-4px_rgba(145,158,171,0.12)]">
-          <div className="px-6 py-4 border-b border-[#F4F6F8]">
-            <h3 className="text-[16px] font-bold text-[#1C252E]">
+        <div className="bg-white rounded-xl border border-grey-200">
+          <div className="px-6 py-4 border-b border-grey-200">
+            <h3 className="text-[16px] font-bold text-grey-900">
               Crawler status
             </h3>
           </div>

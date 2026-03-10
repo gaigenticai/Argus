@@ -12,7 +12,7 @@ import {
 const COLORS: Record<string, string> = {
   critical: "#FF5630",
   high: "#FFAB00",
-  medium: "#FFC107",
+  medium: "#FFD666",
   low: "#00BBD9",
   info: "#919EAB",
 };
@@ -30,7 +30,7 @@ export function SeverityChart({ data }: SeverityChartProps) {
 
   if (chartData.length === 0) {
     return (
-      <div className="flex items-center justify-center h-[240px] text-[14px] text-[#919EAB]">
+      <div className="flex items-center justify-center h-[240px] text-sm text-grey-500">
         No alerts yet
       </div>
     );
@@ -57,15 +57,17 @@ export function SeverityChart({ data }: SeverityChartProps) {
           contentStyle={{
             background: "#1C252E",
             border: "none",
-            borderRadius: "8px",
-            color: "#fff",
-            fontSize: "13px",
+            borderRadius: 8,
+            color: "#FFFFFF",
+            fontSize: 13,
+            padding: "8px 12px",
           }}
+          itemStyle={{ color: "#FFFFFF" }}
         />
         <Legend
           iconType="circle"
           iconSize={8}
-          wrapperStyle={{ fontSize: "12px", color: "#637381" }}
+          wrapperStyle={{ fontSize: 12, color: "#637381" }}
         />
       </PieChart>
     </ResponsiveContainer>

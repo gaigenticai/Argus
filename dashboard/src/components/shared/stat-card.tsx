@@ -1,4 +1,3 @@
-import { cn } from "@/lib/utils";
 import { type LucideIcon } from "lucide-react";
 
 interface StatCardProps {
@@ -6,28 +5,21 @@ interface StatCardProps {
   value: string | number;
   subtitle?: string;
   icon: LucideIcon;
-  color: string; // hex
-  bgColor: string; // hex
+  color: string;
+  bgColor: string;
 }
 
 export function StatCard({ title, value, subtitle, icon: Icon, color, bgColor }: StatCardProps) {
   return (
-    <div className="bg-white rounded-2xl p-6 shadow-[0_0_2px_0_rgba(145,158,171,0.2),0_12px_24px_-4px_rgba(145,158,171,0.12)]">
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-[14px] font-semibold text-[#637381]">{title}</p>
-          <p className="text-[32px] font-extrabold mt-1" style={{ color }}>{value}</p>
-          {subtitle && (
-            <p className="text-[12px] text-[#919EAB] mt-1">{subtitle}</p>
-          )}
-        </div>
-        <div
-          className="w-12 h-12 rounded-xl flex items-center justify-center"
-          style={{ backgroundColor: bgColor }}
-        >
-          <Icon className="w-6 h-6" style={{ color }} />
-        </div>
+    <div className="bg-white rounded-xl border border-grey-200 p-5">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[13px] font-semibold text-grey-600">{title}</span>
+        <Icon className="w-5 h-5" style={{ color }} />
       </div>
+      <p className="text-[28px] font-extrabold text-grey-900 leading-none" style={{ color }}>{value}</p>
+      {subtitle && (
+        <p className="text-[12px] text-grey-500 mt-1.5">{subtitle}</p>
+      )}
     </div>
   );
 }
