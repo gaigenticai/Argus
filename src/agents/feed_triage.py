@@ -88,14 +88,24 @@ class FeedTriageService:
 
         # 1. Create IOCs from feed entries
         ioc_count = await self._create_iocs_from_feeds(since, batch_size)
+        await self.db.commit()
 
         # 2. Generate alerts from high-severity entries using LLM
-        alert_count = await self._generate_alerts(since)
+        alert_count = 0
+        try:
+            alert_count = await self._generate_alerts(since)
+            await self.db.commit()
+        except Exception as e:
+            logger.error(f"[feed-triage] Alert generation failed: {e}")
+            await self.db.rollback()
 
         # 3. Update global threat status (INFOCON level)
-        await self._update_infocon()
-
-        await self.db.commit()
+        try:
+            await self._update_infocon()
+            await self.db.commit()
+        except Exception as e:
+            logger.error(f"[feed-triage] INFOCON update failed: {e}")
+            await self.db.rollback()
 
         summary = {
             "iocs_created": ioc_count,
@@ -241,21 +251,12 @@ class FeedTriageService:
                         self.db.add(alert)
                         alert_count += 1
             else:
-                # No orgs configured — create general alerts for critical threats
-                top_entry = layer_entries[0]
-                alert = Alert(
-                    category=category,
-                    severity=top_entry.severity,
-                    status=AlertStatus.NEW.value,
-                    title=f"[{layer.upper()}] {len(layer_entries)} new {top_entry.severity} indicators detected",
-                    summary=self._build_alert_summary(layer, layer_entries),
-                    confidence=max(e.confidence for e in layer_entries),
-                    agent_reasoning=f"Auto-generated from {len(layer_entries)} feed entries in the {layer} layer. "
-                    f"Sources: {', '.join(set(e.feed_name for e in layer_entries))}.",
-                    recommended_actions=self._get_recommended_actions(layer),
+                # No orgs configured — log but skip alert creation (alerts require org context)
+                logger.info(
+                    f"[feed-triage] {len(layer_entries)} high-severity {layer} entries found "
+                    f"but no organizations configured — skipping alert generation. "
+                    f"Create an organization to enable LLM-powered triage."
                 )
-                self.db.add(alert)
-                alert_count += 1
 
         if alert_count > 0:
             await self.db.flush()
