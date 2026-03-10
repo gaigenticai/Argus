@@ -283,18 +283,60 @@ async def get_feed(
 
 
 async def _run_feed_in_background(feed_name: str) -> None:
-    """Execute a single feed poll in the background."""
+    """Execute a single feed poll in the background, then run triage."""
     from src.feeds.scheduler import FeedScheduler
     try:
         scheduler = FeedScheduler()
         await scheduler.run_once(feed_name=feed_name)
         logger.info("Manual feed trigger completed: %s", feed_name)
+
+        # Auto-run feed triage after ingestion
+        try:
+            from src.agents.feed_triage import FeedTriageService
+            from src.storage.database import async_session_factory
+            if async_session_factory:
+                async with async_session_factory() as session:
+                    triage_svc = FeedTriageService(session)
+                    summary = await triage_svc.process_new_entries(hours=1)
+                    logger.info("Post-feed triage: %s", summary)
+        except Exception:
+            logger.exception("Post-feed triage failed (non-fatal)")
+
     except Exception:
         logger.exception("Manual feed trigger failed: %s", feed_name)
 
 
 # Track in-progress manual triggers to prevent concurrent runs of the same feed
 _running_triggers: set[str] = set()
+
+
+@router.post("/triage", status_code=202)
+async def trigger_feed_triage(
+    user: AnalystUser,
+    hours: int = Query(default=6, ge=1, le=168),
+    db: AsyncSession = Depends(get_session),
+):
+    """Run AI triage on recent feed entries — creates IOCs and alerts.
+
+    This is the agentic brain: it analyzes feed data, extracts IOCs,
+    correlates threats, and generates actionable alerts with LLM reasoning.
+    """
+    from src.agents.feed_triage import FeedTriageService
+
+    async def _run_triage():
+        from src.storage.database import async_session_factory
+        if async_session_factory:
+            async with async_session_factory() as session:
+                svc = FeedTriageService(session)
+                summary = await svc.process_new_entries(hours=hours)
+                logger.info("Manual feed triage: %s", summary)
+
+    asyncio.get_running_loop().create_task(_run_triage())
+
+    return {
+        "message": f"Feed triage dispatched for last {hours}h of entries",
+        "status": "running",
+    }
 
 
 @router.post("/{feed_name}/trigger", response_model=FeedTriggerResponse, status_code=202)
