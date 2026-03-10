@@ -2,20 +2,17 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# System deps for Playwright + Tor
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    tor \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Playwright browsers
-RUN playwright install chromium --with-deps
-
 COPY . .
 
+# Render sets $PORT dynamically; default to 8000 for local dev
+ENV PORT=8000
 EXPOSE 8000
 
-CMD ["python", "-m", "src.main", "all"]
+CMD uvicorn src.api.app:app --host 0.0.0.0 --port $PORT

@@ -17,7 +17,7 @@ redis>=5.2.0
 aiohttp>=3.11.0
 aiohttp-socks>=0.9.0
 beautifulsoup4>=4.12.0
-playwright>=1.49.0
+# playwright>=1.49.0  # Only needed for crawler mode, not API-only deploys
 
 # LLM (all optional — only install what you need)
 # ollama is accessed via HTTP, no package needed
