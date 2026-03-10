@@ -22,11 +22,16 @@ async def init_db() -> None:
     """Initialize database engine and create tables."""
     global engine, async_session_factory
 
+    import ssl as _ssl
+    ssl_ctx = _ssl.create_default_context()
+
     engine = create_async_engine(
         settings.db.url,
         echo=settings.debug,
         pool_size=5,
         max_overflow=3,
+        pool_timeout=30,
+        connect_args={"ssl": ssl_ctx, "timeout": 30},
     )
 
     async_session_factory = async_sessionmaker(

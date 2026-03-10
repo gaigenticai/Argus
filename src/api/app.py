@@ -12,20 +12,35 @@ from src.api.routes import organizations, alerts, crawlers, scan, webhooks, repo
 from src.api.routes import sources, retention, feedback, iocs, actors, stix, threat_map, feeds
 
 
+import logging
+
+_logger = logging.getLogger(__name__)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
-    # Seed default threat map layers (idempotent)
     try:
-        from src.feeds.seed_layers import seed_default_layers
-        from src.storage.database import async_session_factory
-        async with async_session_factory() as session:
-            await seed_default_layers(session)
-            await session.commit()
-    except Exception:
-        pass  # non-fatal — layers can be seeded later
+        _logger.info("Argus starting — connecting to database...")
+        await init_db()
+        _logger.info("Database connected. Seeding layers...")
+        # Seed default threat map layers (idempotent)
+        try:
+            from src.feeds.seed_layers import seed_default_layers
+            from src.storage.database import async_session_factory
+            async with async_session_factory() as session:
+                await seed_default_layers(session)
+                await session.commit()
+            _logger.info("Layers seeded.")
+        except Exception as e:
+            _logger.warning("Layer seeding failed (non-fatal): %s", e)
+    except Exception as e:
+        _logger.error("Startup failed: %s", e, exc_info=True)
+        # Don't re-raise — let the app start even if DB is down
     yield
-    await close_redis_pool()
+    try:
+        await close_redis_pool()
+    except Exception:
+        pass
     await close_db()
 
 
