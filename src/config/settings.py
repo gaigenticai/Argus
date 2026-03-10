@@ -35,9 +35,15 @@ class DatabaseSettings(BaseSettings):
         if override:
             # Normalize: ensure asyncpg driver
             if override.startswith("postgresql://"):
-                return override.replace("postgresql://", "postgresql+asyncpg://", 1)
-            if override.startswith("postgres://"):
-                return override.replace("postgres://", "postgresql+asyncpg://", 1)
+                override = override.replace("postgresql://", "postgresql+asyncpg://", 1)
+            elif override.startswith("postgres://"):
+                override = override.replace("postgres://", "postgresql+asyncpg://", 1)
+            # Strip sslmode param — asyncpg uses ssl connect_arg instead
+            if "sslmode=" in override:
+                import re
+                override = re.sub(r'[?&]sslmode=[^&]*', '', override)
+                if '?' not in override and '&' in override:
+                    override = override.replace('&', '?', 1)
             return override
         return f"postgresql+asyncpg://{self._credentials}@{self.host}:{self.port}/{self.name}"
 
