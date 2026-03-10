@@ -31,6 +31,8 @@ async def init_db() -> None:
         pool_size=5,
         max_overflow=3,
         pool_timeout=30,
+        pool_recycle=280,       # recycle connections before Neon's 5-min idle timeout
+        pool_pre_ping=True,     # test connections before use (handles sleep/wake)
         connect_args={"ssl": ssl_ctx, "timeout": 30},
     )
 
