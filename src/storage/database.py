@@ -22,18 +22,23 @@ async def init_db() -> None:
     """Initialize database engine and create tables."""
     global engine, async_session_factory
 
-    import ssl as _ssl
-    ssl_ctx = _ssl.create_default_context()
+    db_url = settings.db.url
+    connect_args: dict = {"timeout": 30}
+
+    # Only use SSL for external/cloud DBs (Neon, etc.), not Railway internal
+    if "railway.internal" not in db_url and "localhost" not in db_url:
+        import ssl as _ssl
+        connect_args["ssl"] = _ssl.create_default_context()
 
     engine = create_async_engine(
-        settings.db.url,
+        db_url,
         echo=settings.debug,
         pool_size=5,
         max_overflow=3,
         pool_timeout=30,
-        pool_recycle=280,       # recycle connections before Neon's 5-min idle timeout
-        pool_pre_ping=True,     # test connections before use (handles sleep/wake)
-        connect_args={"ssl": ssl_ctx, "timeout": 30},
+        pool_recycle=280,
+        pool_pre_ping=True,
+        connect_args=connect_args,
     )
 
     async_session_factory = async_sessionmaker(
