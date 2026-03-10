@@ -29,10 +29,28 @@ class DatabaseSettings(BaseSettings):
 
     @property
     def url(self) -> str:
+        """Return DATABASE_URL env var if set, otherwise build from components."""
+        import os
+        override = os.environ.get("DATABASE_URL")
+        if override:
+            # Normalize: ensure asyncpg driver
+            if override.startswith("postgresql://"):
+                return override.replace("postgresql://", "postgresql+asyncpg://", 1)
+            if override.startswith("postgres://"):
+                return override.replace("postgres://", "postgresql+asyncpg://", 1)
+            return override
         return f"postgresql+asyncpg://{self._credentials}@{self.host}:{self.port}/{self.name}"
 
     @property
     def sync_url(self) -> str:
+        import os
+        override = os.environ.get("DATABASE_URL")
+        if override:
+            if "+asyncpg" in override:
+                return override.replace("+asyncpg", "")
+            if override.startswith("postgres://"):
+                return override.replace("postgres://", "postgresql://", 1)
+            return override
         return f"postgresql://{self._credentials}@{self.host}:{self.port}/{self.name}"
 
 
@@ -142,7 +160,8 @@ class Settings(BaseSettings):
     api_host: str = "0.0.0.0"
     api_port: int = 8000
     cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8000"]
-    jwt_secret: str = ""  # MUST be set via ARGUS_JWT_SECRET env var
+    secret_key: str = ""  # Set via ARGUS_SECRET_KEY env var
+    jwt_secret: str = ""  # Falls back to secret_key if not set
 
     db: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)

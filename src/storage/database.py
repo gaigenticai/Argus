@@ -25,8 +25,8 @@ async def init_db() -> None:
     engine = create_async_engine(
         settings.db.url,
         echo=settings.debug,
-        pool_size=20,
-        max_overflow=10,
+        pool_size=5,
+        max_overflow=3,
     )
 
     async_session_factory = async_sessionmaker(
