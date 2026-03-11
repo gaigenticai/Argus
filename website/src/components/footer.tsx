@@ -16,15 +16,15 @@ const LINKS = {
     { label: "Careers", href: "/about#careers" },
   ],
   Resources: [
-    { label: "Documentation", href: "#" },
-    { label: "API Reference", href: "#" },
-    { label: "Status", href: "#" },
-    { label: "Changelog", href: "#" },
+    { label: "Documentation", href: "/platform" },
+    { label: "Integrations", href: "/platform#integrations" },
+    { label: "Threat Map", href: "https://argusai.xyz" },
+    { label: "Changelog", href: "/about" },
   ],
   Legal: [
-    { label: "Privacy Policy", href: "#" },
-    { label: "Terms of Service", href: "#" },
-    { label: "Security", href: "#" },
+    { label: "Privacy Policy", href: "/about#contact" },
+    { label: "Terms of Service", href: "/about#contact" },
+    { label: "Security", href: "/platform#security" },
   ],
 };
 
