@@ -52,10 +52,15 @@ export function Footer() {
                 marginBottom: 16,
               }}
             >
-              <ArgusLogo size={36} />
-              <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em" }}>
-                ARGUS
-              </span>
+              <ArgusLogo size={44} />
+              <div style={{ display: "flex", flexDirection: "column", lineHeight: 1.1 }}>
+                <span style={{ fontSize: 18, fontWeight: 700, letterSpacing: "0.06em" }}>
+                  ARGUS
+                </span>
+                <span style={{ fontSize: 9, fontWeight: 500, letterSpacing: "0.14em", opacity: 0.55 }}>
+                  THE ALL SEEING
+                </span>
+              </div>
             </Link>
             <p
               style={{
