@@ -219,7 +219,7 @@ async def get_feed(
         ThreatLayer.feed_names.any(feed_name)
     )
     layer_result = await db.execute(layer_query)
-    layer_obj = layer_result.scalar_one_or_none()
+    layer_obj = layer_result.scalars().first()
 
     # Active count
     active_count = (await db.execute(
@@ -385,7 +385,7 @@ async def trigger_feed(
         ThreatLayer.feed_names.any(feed_name)
     )
     layer_result = await db.execute(layer_query)
-    layer_obj = layer_result.scalar_one_or_none()
+    layer_obj = layer_result.scalars().first()
 
     # Also check if it's a known default feed
     if not layer_obj and feed_name not in _FEED_TO_LAYER:
