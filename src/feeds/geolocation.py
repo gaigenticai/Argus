@@ -142,6 +142,12 @@ class GeoLocator:
                             "http://ip-api.com/batch",
                             json=payload,
                         ) as resp:
+                            if resp.status == 429:
+                                logger.warning("ip-api.com rate limited (429) — backing off 60s")
+                                await asyncio.sleep(60)
+                                for ip in batch:
+                                    results[ip] = _EMPTY
+                                continue
                             if resp.status != 200:
                                 logger.warning("ip-api.com batch returned %d", resp.status)
                                 for ip in batch:
@@ -167,7 +173,7 @@ class GeoLocator:
 
                 # Rate limit: ip-api.com allows 15 requests per minute for batch
                 if i + batch_size < len(ips):
-                    await asyncio.sleep(4.0)  # ~15 per minute
+                    await asyncio.sleep(5.0)  # ~12 per minute (safe margin)
 
         return results
 

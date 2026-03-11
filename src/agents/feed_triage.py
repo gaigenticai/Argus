@@ -5,9 +5,11 @@ to generate correlated alerts with severity assessment and recommended actions.
 """
 
 import logging
+import uuid as _uuid
 from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select, func
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import time
@@ -207,39 +209,36 @@ class FeedTriageService:
             if not ioc_type:
                 continue
 
-            # Dedup: check if IOC already exists
-            existing = await self.db.execute(
-                select(IOC).where(
-                    IOC.ioc_type == ioc_type,
-                    IOC.value == entry.value,
-                )
-            )
-            existing_ioc = existing.scalar_one_or_none()
-
-            if existing_ioc:
-                # Update existing — bump sighting count
-                existing_ioc.sighting_count += 1
-                existing_ioc.last_seen = now
-                if entry.confidence > existing_ioc.confidence:
-                    existing_ioc.confidence = entry.confidence
-            else:
-                ioc = IOC(
-                    ioc_type=ioc_type,
-                    value=entry.value,
-                    confidence=entry.confidence,
-                    first_seen=entry.first_seen or now,
-                    last_seen=now,
-                    sighting_count=1,
-                    tags=[entry.feed_name, entry.layer],
-                    context={
-                        "feed": entry.feed_name,
-                        "layer": entry.layer,
-                        "severity": entry.severity,
-                        "country": entry.country_code,
-                        "label": entry.label,
-                    },
-                )
-                self.db.add(ioc)
+            # Atomic upsert: INSERT ... ON CONFLICT DO UPDATE
+            stmt = pg_insert(IOC).values(
+                id=_uuid.uuid4(),
+                created_at=now,
+                updated_at=now,
+                ioc_type=ioc_type,
+                value=entry.value,
+                confidence=entry.confidence,
+                first_seen=entry.first_seen or now,
+                last_seen=now,
+                sighting_count=1,
+                tags=[entry.feed_name, entry.layer],
+                context={
+                    "feed": entry.feed_name,
+                    "layer": entry.layer,
+                    "severity": entry.severity,
+                    "country": entry.country_code,
+                    "label": entry.label,
+                },
+            ).on_conflict_do_update(
+                constraint="uq_ioc_type_value",
+                set_={
+                    "sighting_count": IOC.sighting_count + 1,
+                    "last_seen": now,
+                    "confidence": func.greatest(IOC.confidence, entry.confidence),
+                },
+            ).returning(IOC.created_at)
+            result = await self.db.execute(stmt)
+            row = result.one()
+            if (now - row.created_at).total_seconds() < 2:
                 created += 1
 
             # Flush every 100

@@ -4,7 +4,8 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, func
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.agents.triage_agent import TriageAgent
@@ -312,39 +313,34 @@ class IngestionPipeline:
         stored: list[IOC] = []
 
         for ext in extracted:
-            # Upsert: check if this (type, value) pair already exists
-            existing_result = await self.db.execute(
-                select(IOC).where(
-                    IOC.ioc_type == ext.ioc_type.value,
-                    IOC.value == ext.value,
-                )
+            # Atomic upsert: INSERT ... ON CONFLICT DO UPDATE
+            values = dict(
+                id=uuid.uuid4(),
+                created_at=now,
+                updated_at=now,
+                ioc_type=ext.ioc_type.value,
+                value=ext.value,
+                confidence=ext.confidence,
+                first_seen=now,
+                last_seen=now,
+                sighting_count=1,
+                context={"snippet": ext.context_snippet, "source": result.source_name},
+                source_alert_id=alert_id,
+                source_raw_intel_id=raw.id,
             )
-            existing = existing_result.scalar_one_or_none()
-
-            if existing:
-                # Update existing IOC — increment sighting count, update last_seen
-                existing.sighting_count += 1
-                existing.last_seen = now
-                if ext.confidence > existing.confidence:
-                    existing.confidence = ext.confidence
-                # Link to alert if not already linked
-                if alert_id and not existing.source_alert_id:
-                    existing.source_alert_id = alert_id
-                stored.append(existing)
-            else:
-                ioc = IOC(
-                    ioc_type=ext.ioc_type.value,
-                    value=ext.value,
-                    confidence=ext.confidence,
-                    first_seen=now,
-                    last_seen=now,
-                    sighting_count=1,
-                    context={"snippet": ext.context_snippet, "source": result.source_name},
-                    source_alert_id=alert_id,
-                    source_raw_intel_id=raw.id,
-                )
-                self.db.add(ioc)
-                stored.append(ioc)
+            stmt = pg_insert(IOC).values(**values).on_conflict_do_update(
+                constraint="uq_ioc_type_value",
+                set_={
+                    "sighting_count": IOC.sighting_count + 1,
+                    "last_seen": now,
+                    "confidence": func.greatest(IOC.confidence, ext.confidence),
+                    "source_alert_id": alert_id if alert_id else IOC.source_alert_id,
+                },
+            ).returning(IOC.id)
+            ioc_result = await self.db.execute(stmt)
+            ioc_id = ioc_result.scalar_one()
+            ioc_obj_result = await self.db.execute(select(IOC).where(IOC.id == ioc_id))
+            stored.append(ioc_obj_result.scalar_one())
 
         if stored:
             await self.db.flush()

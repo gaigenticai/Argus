@@ -3,10 +3,12 @@
 import asyncio
 import logging
 import socket
+import uuid as _uuid
 from datetime import datetime, timezone, timedelta
 from urllib.parse import urlparse
 
 from sqlalchemy import select, func, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.activity import ActivityType, emit as activity_emit
@@ -82,32 +84,14 @@ class FeedIngestionPipeline:
                 async for entry in feed.poll():
                     total_count += 1
                     try:
-                        # Dedup: check if (feed_name, value) exists
-                        existing = await self.db.execute(
-                            select(ThreatFeedEntry).where(
-                                ThreatFeedEntry.feed_name == entry.feed_name,
-                                ThreatFeedEntry.value == entry.value,
-                            )
-                        )
-                        existing_row = existing.scalar_one_or_none()
-
                         now = datetime.now(timezone.utc)
                         expires_at = now + timedelta(hours=entry.expires_hours)
 
-                        if existing_row:
-                            # Update last_seen and refresh expiry
-                            existing_row.last_seen = now
-                            existing_row.expires_at = expires_at
-                            if entry.severity and entry.severity != existing_row.severity:
-                                existing_row.severity = entry.severity
-                            if entry.confidence and entry.confidence > existing_row.confidence:
-                                existing_row.confidence = entry.confidence
-                            if entry.description and not existing_row.description:
-                                existing_row.description = entry.description
-                            continue
-
-                        # New entry
-                        feed_entry = ThreatFeedEntry(
+                        # Atomic upsert: INSERT ... ON CONFLICT DO UPDATE
+                        stmt = pg_insert(ThreatFeedEntry).values(
+                            id=_uuid.uuid4(),
+                            created_at=now,
+                            updated_at=now,
                             feed_name=entry.feed_name,
                             layer=entry.layer,
                             entry_type=entry.entry_type,
@@ -123,9 +107,29 @@ class FeedIngestionPipeline:
                             first_seen=entry.first_seen or now,
                             last_seen=now,
                             expires_at=expires_at,
-                        )
-                        self.db.add(feed_entry)
+                        ).on_conflict_do_update(
+                            constraint="uq_feed_name_value",
+                            set_={
+                                "last_seen": now,
+                                "expires_at": expires_at,
+                                "severity": entry.severity,
+                                "confidence": entry.confidence,
+                            },
+                        ).returning(ThreatFeedEntry.id, ThreatFeedEntry.created_at)
+                        result = await self.db.execute(stmt)
+                        row = result.one()
+                        is_new = (now - row.created_at).total_seconds() < 2
+
+                        if not is_new:
+                            continue
+
                         new_count += 1
+
+                        # We need the ORM object for geo queue — fetch it
+                        feed_entry_result = await self.db.execute(
+                            select(ThreatFeedEntry).where(ThreatFeedEntry.id == row.id)
+                        )
+                        feed_entry = feed_entry_result.scalar_one()
 
                         # Resolve domain → IP for URL/domain entries missing ip_for_geo
                         if not entry.ip_for_geo and entry.latitude is None:
