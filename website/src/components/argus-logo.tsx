@@ -9,15 +9,15 @@ export function ArgusLogo({ size = 44 }: { size?: number }) {
   useEffect(() => {
     let timeout: ReturnType<typeof setTimeout>;
     const scheduleBlink = () => {
-      // Slow, creepy blink every 8-14 seconds — the kind you notice
-      const delay = 8000 + Math.random() * 6000;
+      // Unnerving slow blink every 15-25 seconds
+      const delay = 15000 + Math.random() * 10000;
       timeout = setTimeout(() => {
         setBlink(true);
-        // Eye stays closed for 600ms — long enough to notice and freak out
+        // Eye stays closed for 1.2s — slow, deliberate, creepy
         setTimeout(() => {
           setBlink(false);
           scheduleBlink();
-        }, 600);
+        }, 1200);
       }, delay);
     };
     scheduleBlink();
@@ -51,7 +51,7 @@ export function ArgusLogo({ size = 44 }: { size?: number }) {
           cx="32" cy="32" rx="19" ry="11"
           fill={`url(#${uid}sclera)`}
           style={{
-            transition: "ry 0.35s ease-in-out",
+            transition: "ry 0.6s ease-in-out",
             ry: blink ? 0.3 : 11,
           } as React.CSSProperties}
         />
@@ -61,11 +61,11 @@ export function ArgusLogo({ size = 44 }: { size?: number }) {
           cx="32" cy="27" rx="16" ry="4"
           fill="#8B7355"
           opacity={blink ? 0 : 0.12}
-          style={{ transition: "opacity 0.3s" }}
+          style={{ transition: "opacity 0.5s" }}
         />
 
         {/* ── Blood vessels / veins for realism ── */}
-        <g opacity={blink ? 0 : 0.18} style={{ transition: "opacity 0.3s" }}>
+        <g opacity={blink ? 0 : 0.18} style={{ transition: "opacity 0.5s" }}>
           <path d="M14 30Q18 28 22 30Q20 29 18 30" stroke="#C4574A" strokeWidth="0.35" fill="none" />
           <path d="M15 33Q19 32 21 33" stroke="#C4574A" strokeWidth="0.25" fill="none" />
           <path d="M42 30Q46 28 50 30Q48 29 46 30" stroke="#C4574A" strokeWidth="0.35" fill="none" />
@@ -79,16 +79,16 @@ export function ArgusLogo({ size = 44 }: { size?: number }) {
         <circle
           cx="32" cy="32" r="9"
           fill={`url(#${uid}irisOuter)`}
-          style={{ transition: "opacity 0.3s", opacity: blink ? 0 : 1 }}
+          style={{ transition: "opacity 0.5s", opacity: blink ? 0 : 1 }}
         />
         {/* Inner iris detail */}
         <circle
           cx="32" cy="32" r="7"
           fill={`url(#${uid}irisInner)`}
-          style={{ transition: "opacity 0.3s", opacity: blink ? 0 : 1 }}
+          style={{ transition: "opacity 0.5s", opacity: blink ? 0 : 1 }}
         />
         {/* Iris fibres (radial lines) */}
-        <g opacity={blink ? 0 : 0.15} style={{ transition: "opacity 0.3s" }}>
+        <g opacity={blink ? 0 : 0.15} style={{ transition: "opacity 0.5s" }}>
           {[0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330].map((angle) => {
             const rad = (angle * Math.PI) / 180;
             const x1 = 32 + Math.cos(rad) * 4;
@@ -113,14 +113,14 @@ export function ArgusLogo({ size = 44 }: { size?: number }) {
           strokeWidth="0.7"
           fill="none"
           opacity={blink ? 0 : 0.5}
-          style={{ transition: "opacity 0.3s" }}
+          style={{ transition: "opacity 0.5s" }}
         />
 
         {/* ── Pupil ── */}
         <circle
           cx="32" cy="32" r="3.5"
           fill="#050505"
-          style={{ transition: "opacity 0.3s", opacity: blink ? 0 : 1 }}
+          style={{ transition: "opacity 0.5s", opacity: blink ? 0 : 1 }}
         />
 
         {/* Catchlight reflections — 2 points like studio lighting */}
@@ -128,13 +128,13 @@ export function ArgusLogo({ size = 44 }: { size?: number }) {
           cx="29" cy="29.5" rx="1.8" ry="1.4"
           fill="white"
           opacity={blink ? 0 : 0.9}
-          style={{ transition: "opacity 0.3s" }}
+          style={{ transition: "opacity 0.5s" }}
         />
         <circle
           cx="35" cy="34" r="0.7"
           fill="white"
           opacity={blink ? 0 : 0.45}
-          style={{ transition: "opacity 0.3s" }}
+          style={{ transition: "opacity 0.5s" }}
         />
 
         {/* ── Upper eyelid crease (double fold) ── */}
@@ -181,7 +181,7 @@ export function ArgusLogo({ size = 44 }: { size?: number }) {
           cx="32" cy="32" rx="20" ry={blink ? 12 : 0}
           fill={`url(#${uid}skinBlink)`}
           style={{
-            transition: "ry 0.35s ease-in-out",
+            transition: "ry 0.6s ease-in-out",
           } as React.CSSProperties}
         />
         {blink && (
