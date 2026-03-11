@@ -250,7 +250,7 @@ export default function ThreatMapPage() {
   );
 
   // UI state
-  const [hours, setHours] = useState(24);
+  const [hours, setHours] = useState(168);
   const [layerSearch, setLayerSearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -307,7 +307,7 @@ export default function ThreatMapPage() {
         if (activeLayerNames.length === layers.length) {
           allEntries = await api.getThreatMapEntries({
             hours,
-            limit: 2000,
+            limit: 5000,
             ...params,
           });
         } else {
@@ -317,7 +317,7 @@ export default function ThreatMapPage() {
                 .getThreatMapEntries({
                   layer,
                   hours,
-                  limit: Math.floor(2000 / activeLayerNames.length),
+                  limit: Math.floor(5000 / activeLayerNames.length),
                   ...params,
                 })
                 .catch(() => [] as ThreatMapEntry[])

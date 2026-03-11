@@ -339,6 +339,36 @@ async def trigger_feed_triage(
     }
 
 
+@router.post("/backfill-geo", status_code=202)
+async def backfill_geolocation_endpoint(
+    user: AnalystUser,
+):
+    """Retroactively resolve domains/URLs → IP → lat/lng for entries missing geolocation.
+
+    This resolves ~20K+ URL entries (URLhaus, OpenPhish, etc.) that were ingested
+    without coordinates, putting thousands more dots on the threat map.
+    """
+    async def _run_backfill():
+        from src.storage.database import async_session_factory
+        from src.feeds.pipeline import backfill_geolocation
+        from src.feeds.geolocation import GeoLocator
+        if async_session_factory:
+            geo = GeoLocator()
+            try:
+                async with async_session_factory() as session:
+                    summary = await backfill_geolocation(session, geo)
+                    logger.info("Geolocation backfill complete: %s", summary)
+            finally:
+                geo.close()
+
+    asyncio.get_running_loop().create_task(_run_backfill())
+
+    return {
+        "message": "Geolocation backfill dispatched — resolving domains to IPs for map display",
+        "status": "running",
+    }
+
+
 @router.post("/{feed_name}/trigger", response_model=FeedTriggerResponse, status_code=202)
 async def trigger_feed(
     feed_name: str,

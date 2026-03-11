@@ -1,7 +1,10 @@
 """Feed ingestion pipeline — dedup, geolocate, store, emit."""
 
+import asyncio
 import logging
+import socket
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlparse
 
 from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +18,43 @@ logger = logging.getLogger(__name__)
 
 # Batch size for geolocation
 _GEO_BATCH_SIZE = 200
+
+# DNS resolution concurrency limit
+_DNS_SEMAPHORE = asyncio.Semaphore(50)
+_DNS_CACHE: dict[str, str | None] = {}
+
+
+async def resolve_domain_to_ip(domain: str) -> str | None:
+    """Resolve a domain to its first IPv4 address via DNS. Cached and rate-limited."""
+    if domain in _DNS_CACHE:
+        return _DNS_CACHE[domain]
+
+    async with _DNS_SEMAPHORE:
+        try:
+            result = await asyncio.to_thread(
+                socket.getaddrinfo, domain, None, socket.AF_INET, socket.SOCK_STREAM,
+            )
+            ip = result[0][4][0] if result else None
+            _DNS_CACHE[domain] = ip
+            return ip
+        except (socket.gaierror, OSError, TimeoutError):
+            _DNS_CACHE[domain] = None
+            return None
+
+
+def extract_domain(value: str, entry_type: str) -> str | None:
+    """Extract a domain name from a URL or domain entry value."""
+    if entry_type == "domain":
+        return value.strip().lower()
+    if entry_type == "url":
+        try:
+            parsed = urlparse(value)
+            host = parsed.hostname
+            if host:
+                return host.lower()
+        except Exception:
+            pass
+    return None
 
 
 class FeedIngestionPipeline:
@@ -86,6 +126,14 @@ class FeedIngestionPipeline:
                         )
                         self.db.add(feed_entry)
                         new_count += 1
+
+                        # Resolve domain → IP for URL/domain entries missing ip_for_geo
+                        if not entry.ip_for_geo and entry.latitude is None:
+                            domain = extract_domain(entry.value, entry.entry_type)
+                            if domain:
+                                resolved_ip = await resolve_domain_to_ip(domain)
+                                if resolved_ip:
+                                    entry.ip_for_geo = resolved_ip
 
                         # Queue for geolocation if IP available and no coords yet
                         if entry.ip_for_geo and entry.latitude is None:
@@ -161,3 +209,72 @@ class FeedIngestionPipeline:
             .where(ThreatLayer.name == layer_name)
             .values(entry_count=count)
         )
+
+
+async def backfill_geolocation(db: AsyncSession, geolocator: GeoLocator, batch_size: int = 500) -> dict:
+    """Retroactively resolve domains/URLs → IP → geo for entries missing lat/lng.
+
+    Returns summary of how many entries were updated.
+    """
+    # Find entries with no lat/lng that are URL or domain type
+    query = (
+        select(ThreatFeedEntry)
+        .where(
+            ThreatFeedEntry.latitude.is_(None),
+            ThreatFeedEntry.entry_type.in_(["url", "domain"]),
+        )
+        .limit(10000)  # Process in chunks to avoid memory issues
+    )
+    result = await db.execute(query)
+    entries = result.scalars().all()
+
+    if not entries:
+        return {"total_checked": 0, "resolved": 0, "geolocated": 0}
+
+    logger.info("[backfill] Found %d entries without geo data to process", len(entries))
+
+    # Phase 1: DNS resolution — domain → IP
+    resolved_count = 0
+    entries_to_geo: list[tuple[str, ThreatFeedEntry]] = []
+
+    for entry in entries:
+        domain = extract_domain(entry.value, entry.entry_type)
+        if not domain:
+            continue
+
+        ip = await resolve_domain_to_ip(domain)
+        if ip:
+            resolved_count += 1
+            entries_to_geo.append((ip, entry))
+
+    logger.info("[backfill] Resolved %d domains to IPs", resolved_count)
+
+    # Phase 2: Batch geolocate all resolved IPs
+    geolocated = 0
+    for i in range(0, len(entries_to_geo), batch_size):
+        batch = entries_to_geo[i:i + batch_size]
+        ips = [ip for ip, _ in batch]
+        geo_results = await geolocator.locate_batch(ips)
+
+        for ip, entry in batch:
+            if ip in geo_results:
+                geo = geo_results[ip]
+                if geo.latitude is not None:
+                    entry.latitude = geo.latitude
+                    entry.longitude = geo.longitude
+                    entry.country_code = geo.country_code
+                    entry.city = geo.city
+                    entry.asn = geo.asn
+                    geolocated += 1
+
+        await db.flush()
+
+    await db.commit()
+
+    summary = {
+        "total_checked": len(entries),
+        "resolved": resolved_count,
+        "geolocated": geolocated,
+    }
+    logger.info("[backfill] Geolocation backfill complete: %s", summary)
+    return summary

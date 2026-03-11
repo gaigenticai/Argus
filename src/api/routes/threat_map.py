@@ -184,7 +184,7 @@ async def list_entries(
     min_lng: float | None = Query(None, ge=-180, le=180),
     max_lng: float | None = Query(None, ge=-180, le=180),
     hours: int = Query(24, ge=1, le=_MAX_HOURS),
-    limit: int = Query(500, ge=1, le=2000),
+    limit: int = Query(500, ge=1, le=5000),
     offset: int = Query(0, ge=0),
     db: AsyncSession = Depends(get_session),
 ):
