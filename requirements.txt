@@ -37,5 +37,9 @@ cryptography>=43.0.0
 geoip2>=4.8.0
 websockets>=12.0
 
+# Local security tools
+yara-python>=4.5.0
+PyYAML>=6.0.0
+
 # Utils
 python-dotenv>=1.0.0

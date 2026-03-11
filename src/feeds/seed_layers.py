@@ -43,35 +43,46 @@ async def seed_default_layers(db: AsyncSession) -> None:
 # Integration configs — auto-enable local/open-source tools
 # ---------------------------------------------------------------------------
 
-# Tools that run locally inside the container (no external server needed)
+# Tools installed in the Docker image — genuinely functional
 LOCAL_TOOLS = [
     {"tool_name": "nuclei", "api_url": "", "enabled": True, "health_status": "connected"},
     {"tool_name": "yara", "api_url": "data/yara_rules", "enabled": True, "health_status": "connected"},
     {"tool_name": "sigma", "api_url": "data/sigma_rules", "enabled": True, "health_status": "connected"},
-    {"tool_name": "suricata", "api_url": "/var/log/suricata/eve.json", "enabled": True, "health_status": "connected"},
-    {"tool_name": "prowler", "api_url": "aws", "enabled": True, "health_status": "connected"},
 ]
 
-# Tools that need an external instance — seed as unconfigured so they show up
-EXTERNAL_TOOLS = [
-    {"tool_name": "opencti", "api_url": "", "enabled": False, "health_status": "unconfigured"},
-    {"tool_name": "wazuh", "api_url": "", "enabled": False, "health_status": "unconfigured"},
-    {"tool_name": "spiderfoot", "api_url": "", "enabled": False, "health_status": "unconfigured"},
-    {"tool_name": "shuffle", "api_url": "", "enabled": False, "health_status": "unconfigured"},
-    {"tool_name": "gophish", "api_url": "", "enabled": False, "health_status": "unconfigured"},
+# Tools that need external infrastructure — available but not installed
+AVAILABLE_TOOLS = [
+    {"tool_name": "opencti", "api_url": "", "enabled": False, "health_status": "available"},
+    {"tool_name": "wazuh", "api_url": "", "enabled": False, "health_status": "available"},
+    {"tool_name": "spiderfoot", "api_url": "", "enabled": False, "health_status": "available"},
+    {"tool_name": "shuffle", "api_url": "", "enabled": False, "health_status": "available"},
+    {"tool_name": "gophish", "api_url": "", "enabled": False, "health_status": "available"},
+    {"tool_name": "suricata", "api_url": "", "enabled": False, "health_status": "available"},
+    {"tool_name": "prowler", "api_url": "", "enabled": False, "health_status": "available"},
 ]
 
 
 async def seed_integrations(db: AsyncSession) -> None:
-    """Seed integration configs — auto-enable local tools, stub external ones."""
-    all_tools = LOCAL_TOOLS + EXTERNAL_TOOLS
+    """Seed integration configs — auto-enable local tools, mark others as available."""
+    all_tools = LOCAL_TOOLS + AVAILABLE_TOOLS
+    expected = {t["tool_name"]: t for t in all_tools}
+
     for tool_data in all_tools:
-        existing = await db.execute(
+        result = await db.execute(
             select(IntegrationConfig).where(
                 IntegrationConfig.tool_name == tool_data["tool_name"]
             )
         )
-        if existing.scalar_one_or_none():
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            # Fix any wrongly-seeded statuses (e.g. suricata/prowler were "connected")
+            target = expected[existing.tool_name]
+            if existing.health_status != target["health_status"] and existing.health_status in ("unconfigured", "connected"):
+                existing.health_status = target["health_status"]
+                existing.enabled = target["enabled"]
+                existing.api_url = target["api_url"]
+                logger.info("Fixed integration status: %s → %s", existing.tool_name, target["health_status"])
             continue
 
         config = IntegrationConfig(

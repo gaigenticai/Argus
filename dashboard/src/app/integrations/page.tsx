@@ -12,6 +12,7 @@ import {
   Loader2,
   X,
   Lock,
+  PackagePlus,
 } from "lucide-react";
 import { api, type IntegrationTool } from "@/lib/api";
 import { useToast } from "@/components/shared/toast";
@@ -20,6 +21,7 @@ import { timeAgo } from "@/lib/utils";
 const STATUS_CONFIG: Record<string, { label: string; icon: typeof CheckCircle; color: string; bg: string }> = {
   connected: { label: "Connected", icon: CheckCircle, color: "text-success-dark", bg: "bg-success-lighter" },
   error: { label: "Error", icon: AlertTriangle, color: "text-error-dark", bg: "bg-error-lighter" },
+  available: { label: "Available", icon: PackagePlus, color: "text-info-dark", bg: "bg-info-lighter" },
   unconfigured: { label: "Not Configured", icon: Clock, color: "text-grey-600", bg: "bg-grey-200" },
 };
 
@@ -117,6 +119,7 @@ export default function IntegrationsPage() {
   }
 
   const connectedCount = tools.filter((t) => t.health_status === "connected").length;
+  const availableCount = tools.filter((t) => t.health_status === "available").length;
 
   return (
     <div className="space-y-6">
@@ -125,7 +128,7 @@ export default function IntegrationsPage() {
         <div>
           <h2 className="text-[22px] font-bold text-grey-900">Integrations</h2>
           <p className="text-[14px] text-grey-500 mt-0.5">
-            Connect open-source security tools to build an all-in-one platform
+            Open-source security tools — installed locally or connect your own instances
           </p>
         </div>
         <button
@@ -140,17 +143,17 @@ export default function IntegrationsPage() {
       <div className="flex items-center gap-6 px-6 py-4 bg-white rounded-xl border border-grey-200">
         <div>
           <span className="text-[28px] font-extrabold text-grey-900">{tools.length}</span>
-          <p className="text-[12px] text-grey-500">Available</p>
+          <p className="text-[12px] text-grey-500">Total</p>
         </div>
         <div className="w-px h-10 bg-grey-200" />
         <div>
           <span className="text-[28px] font-extrabold text-success">{connectedCount}</span>
-          <p className="text-[12px] text-grey-500">Connected</p>
+          <p className="text-[12px] text-grey-500">Installed</p>
         </div>
         <div className="w-px h-10 bg-grey-200" />
         <div>
-          <span className="text-[28px] font-extrabold text-grey-500">{tools.length - connectedCount}</span>
-          <p className="text-[12px] text-grey-500">Available to connect</p>
+          <span className="text-[28px] font-extrabold text-info">{availableCount}</span>
+          <p className="text-[12px] text-grey-500">Available</p>
         </div>
         <div className="flex-1" />
         <div className="flex items-center gap-2 text-[13px] text-grey-500">
