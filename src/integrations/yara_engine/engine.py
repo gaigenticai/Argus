@@ -48,30 +48,48 @@ class YaraEngine:
             logger.warning("Rules directory does not exist: %s", self.rules_dir)
             return 0
 
-        rule_files: dict[str, str] = {}
+        all_files: dict[str, str] = {}
         for ext in ("*.yar", "*.yara"):
             for path in self.rules_dir.rglob(ext):
-                # YARA namespaces must be unique — use the relative path as key
                 namespace = str(path.relative_to(self.rules_dir)).replace("/", "_").replace("\\", "_")
-                rule_files[namespace] = str(path)
+                all_files[namespace] = str(path)
 
-        if not rule_files:
+        if not all_files:
             logger.info("No YARA rule files found in %s", self.rules_dir)
             self._compiled = None
             return 0
 
+        # Try bulk compile first — fastest path
         try:
-            self._compiled = yara.compile(filepaths=rule_files)
-            logger.info("Compiled %d YARA rule file(s) from %s", len(rule_files), self.rules_dir)
-            return len(rule_files)
-        except yara.SyntaxError as exc:
-            logger.error("YARA compilation error: %s", exc)
-            self._compiled = None
-            return 0
-        except Exception as exc:
-            logger.error("Failed to compile YARA rules: %s", exc)
-            self._compiled = None
-            return 0
+            self._compiled = yara.compile(filepaths=all_files)
+            logger.info("Compiled %d YARA rule file(s) from %s", len(all_files), self.rules_dir)
+            return len(all_files)
+        except (yara.SyntaxError, Exception) as exc:
+            logger.warning("Bulk compile failed (%s) — compiling rules individually", exc)
+
+        # Fall back to per-file compilation, skipping broken rules
+        good_files: dict[str, str] = {}
+        skipped = 0
+        for ns, filepath in all_files.items():
+            try:
+                yara.compile(filepath=filepath)
+                good_files[ns] = filepath
+            except Exception:
+                skipped += 1
+
+        if good_files:
+            try:
+                self._compiled = yara.compile(filepaths=good_files)
+                logger.info(
+                    "Compiled %d YARA rule file(s), skipped %d broken (%s)",
+                    len(good_files), skipped, self.rules_dir,
+                )
+                return len(good_files)
+            except Exception as exc:
+                logger.error("Failed to compile good rules: %s", exc)
+
+        self._compiled = None
+        return 0
 
     def match_data(self, data: bytes, timeout: int = 30) -> list[dict]:
         """Match binary data against compiled rules.
