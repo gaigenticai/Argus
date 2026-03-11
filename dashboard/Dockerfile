@@ -7,7 +7,7 @@ RUN npm ci
 
 COPY . .
 
-ENV NEXT_PUBLIC_API_URL=https://argus-api-production.up.railway.app/api/v1
+ENV NEXT_PUBLIC_API_URL=https://api.argusai.xyz/api/v1
 
 RUN npm run build
 
