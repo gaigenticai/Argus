@@ -278,7 +278,7 @@ async def test_integration(
         return ConnectionTestResult(
             tool_name=tool_name,
             connected=False,
-            message=f"No client implementation for {tool_name} yet",
+            message=f"Client for '{tool_name}' could not be initialized — check server dependencies",
         )
 
     try:
@@ -329,7 +329,7 @@ async def trigger_sync(
 
     client = _get_client(tool_name, config)
     if not client:
-        raise HTTPException(501, f"Sync not yet implemented for {tool_name}")
+        raise HTTPException(501, f"Client for '{tool_name}' could not be initialized — check dependencies")
 
     async def _run_sync():
         from src.storage.database import async_session_factory
@@ -403,26 +403,43 @@ async def triage_history(
 
 
 def _get_client(tool_name: str, config: IntegrationConfig):
-    """Create an integration client from DB config."""
+    """Create an integration client from DB config.
+
+    Returns an object supporting test_connection(), sync(), and async-with.
+    All 10 integrations are wired — API-based tools use their HTTP clients,
+    local tools use adapter classes that wrap CLI/engine tooling.
+    """
     try:
         if tool_name == "opencti":
             from src.integrations.opencti.client import OpenCTIClient
             return OpenCTIClient(api_url=config.api_url, api_key=config.api_key)
         elif tool_name == "wazuh":
             from src.integrations.wazuh.client import WazuhClient
-            return WazuhClient(
-                api_url=config.api_url,
-                api_key=config.api_key,  # "user:password" format
-            )
+            return WazuhClient(api_url=config.api_url, api_key=config.api_key)
         elif tool_name == "spiderfoot":
-            from src.integrations.spiderfoot.client import SpiderFootClient
-            return SpiderFootClient(api_url=config.api_url, api_key=config.api_key)
+            from src.integrations.spiderfoot.client import SpiderFootIntegration
+            return SpiderFootIntegration(api_url=config.api_url, api_key=config.api_key)
         elif tool_name == "shuffle":
-            from src.integrations.shuffle.client import ShuffleClient
-            return ShuffleClient(api_url=config.api_url, api_key=config.api_key)
+            from src.integrations.shuffle.client import ShuffleIntegration
+            return ShuffleIntegration(api_url=config.api_url, api_key=config.api_key)
         elif tool_name == "gophish":
-            from src.integrations.gophish.client import GoPhishClient
-            return GoPhishClient(api_url=config.api_url, api_key=config.api_key)
+            from src.integrations.gophish.client import GoPhishIntegration
+            return GoPhishIntegration(api_url=config.api_url, api_key=config.api_key)
+        elif tool_name == "nuclei":
+            from src.integrations.nuclei.adapter import NucleiIntegration
+            return NucleiIntegration(api_url=config.api_url or "", api_key=config.api_key)
+        elif tool_name == "yara":
+            from src.integrations.yara_engine.adapter import YaraIntegration
+            return YaraIntegration(api_url=config.api_url or "data/yara_rules", api_key=config.api_key)
+        elif tool_name == "sigma":
+            from src.integrations.sigma.adapter import SigmaAdapter
+            return SigmaAdapter(api_url=config.api_url or "data/sigma_rules", api_key=config.api_key)
+        elif tool_name == "suricata":
+            from src.integrations.suricata.adapter import SuricataAdapter
+            return SuricataAdapter(api_url=config.api_url or "/var/log/suricata/eve.json", api_key=config.api_key)
+        elif tool_name == "prowler":
+            from src.integrations.prowler.adapter import ProwlerIntegration
+            return ProwlerIntegration(api_url=config.api_url or "aws", api_key=config.api_key)
     except ImportError as e:
         logger.warning("Integration %s not available: %s", tool_name, e)
     return None

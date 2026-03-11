@@ -297,7 +297,7 @@ async def _run_feed_in_background(feed_name: str) -> None:
             if async_session_factory:
                 async with async_session_factory() as session:
                     triage_svc = FeedTriageService(session)
-                    summary = await triage_svc.process_new_entries(hours=1)
+                    summary = await triage_svc.process_new_entries(hours=1, trigger="auto_post_feed")
                     logger.info("Post-feed triage: %s", summary)
         except Exception:
             logger.exception("Post-feed triage failed (non-fatal)")
@@ -328,7 +328,7 @@ async def trigger_feed_triage(
         if async_session_factory:
             async with async_session_factory() as session:
                 svc = FeedTriageService(session)
-                summary = await svc.process_new_entries(hours=hours)
+                summary = await svc.process_new_entries(hours=hours, trigger="manual")
                 logger.info("Manual feed triage: %s", summary)
 
     asyncio.get_running_loop().create_task(_run_triage())

@@ -10,11 +10,13 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import time
+
 from src.agents.triage_agent import TriageAgent
 from src.config.settings import settings
 from src.core.activity import ActivityType, emit as activity_emit
 from src.models.feeds import ThreatFeedEntry
-from src.models.intel import IOC, IOCType
+from src.models.intel import IOC, IOCType, TriageRun
 from src.models.threat import Alert, AlertStatus, Organization
 
 logger = logging.getLogger(__name__)
@@ -72,12 +74,29 @@ class FeedTriageService:
         self.db = db
         self.triage = TriageAgent(db=db)
 
-    async def process_new_entries(self, hours: int = 1, batch_size: int = 500) -> dict:
+    async def process_new_entries(
+        self, hours: int = 1, batch_size: int = 500, trigger: str = "manual",
+    ) -> dict:
         """Process recent feed entries: create IOCs, generate alerts, update INFOCON.
 
+        Persists a TriageRun record tracking the run's outcome.
         Returns summary dict with counts.
         """
+        t0 = time.monotonic()
         since = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+        # Create TriageRun record up front so it's visible immediately
+        run = TriageRun(
+            trigger=trigger,
+            hours_window=hours,
+            entries_processed=0,
+            iocs_created=0,
+            alerts_generated=0,
+            duration_seconds=0.0,
+            status="running",
+        )
+        self.db.add(run)
+        await self.db.flush()
 
         await activity_emit(
             ActivityType.TRIAGE_START,
@@ -86,31 +105,72 @@ class FeedTriageService:
             {"hours": hours},
         )
 
-        # 1. Create IOCs from feed entries
-        ioc_count = await self._create_iocs_from_feeds(since, batch_size)
-        await self.db.commit()
-
-        # 2. Generate alerts from high-severity entries using LLM
+        error_message: str | None = None
+        ioc_count = 0
         alert_count = 0
-        try:
-            alert_count = await self._generate_alerts(since)
-            await self.db.commit()
-        except Exception as e:
-            logger.error(f"[feed-triage] Alert generation failed: {e}")
-            await self.db.rollback()
+        entries_processed = 0
 
-        # 3. Update global threat status (INFOCON level)
         try:
-            await self._update_infocon()
+            # 1. Create IOCs from feed entries
+            ioc_count = await self._create_iocs_from_feeds(since, batch_size)
+
+            # Count entries that were processed
+            from sqlalchemy import func as sqlfunc
+            result = await self.db.execute(
+                select(sqlfunc.count()).select_from(ThreatFeedEntry).where(
+                    ThreatFeedEntry.created_at >= since,
+                    ThreatFeedEntry.entry_type.in_(list(ENTRY_TYPE_TO_IOC.keys())),
+                )
+            )
+            entries_processed = result.scalar() or 0
             await self.db.commit()
+
+            # 2. Generate alerts from high-severity entries using LLM
+            try:
+                alert_count = await self._generate_alerts(since)
+                await self.db.commit()
+            except Exception as e:
+                logger.error(f"[feed-triage] Alert generation failed: {e}")
+                error_message = f"Alert generation failed: {str(e)[:400]}"
+                await self.db.rollback()
+
+            # 3. Update global threat status (INFOCON level)
+            try:
+                await self._update_infocon()
+                await self.db.commit()
+            except Exception as e:
+                logger.error(f"[feed-triage] INFOCON update failed: {e}")
+                await self.db.rollback()
+
         except Exception as e:
-            logger.error(f"[feed-triage] INFOCON update failed: {e}")
-            await self.db.rollback()
+            logger.error(f"[feed-triage] Triage failed: {e}")
+            error_message = str(e)[:500]
+            try:
+                await self.db.rollback()
+            except Exception:
+                pass
+
+        # Finalize the TriageRun record
+        duration = time.monotonic() - t0
+        run.entries_processed = entries_processed
+        run.iocs_created = ioc_count
+        run.alerts_generated = alert_count
+        run.duration_seconds = round(duration, 2)
+        run.status = "completed" if error_message is None else "error"
+        run.error_message = error_message
+
+        try:
+            await self.db.commit()
+        except Exception:
+            logger.error("[feed-triage] Failed to persist TriageRun record")
 
         summary = {
             "iocs_created": ioc_count,
             "alerts_generated": alert_count,
+            "entries_processed": entries_processed,
             "time_range_hours": hours,
+            "duration_seconds": round(duration, 2),
+            "status": run.status,
         }
 
         await activity_emit(
