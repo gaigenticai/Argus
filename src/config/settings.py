@@ -146,7 +146,7 @@ class FeedSettings(BaseSettings):
 
     enabled: bool = True
     maxmind_license_key: Optional[str] = None
-    maxmind_db_path: str = "data/GeoLite2-City.mmdb"
+    maxmind_db_path: str = "data/dbip-city-lite.mmdb"
     ipapi_batch_size: int = 100
     ipapi_rate_limit: int = 15
     dedup_window_hours: int = 24

@@ -14,6 +14,13 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Download DB-IP City Lite MMDB for offline geolocation (free, CC BY 4.0)
+RUN mkdir -p data && \
+    curl -L -o data/dbip-city-lite.mmdb.gz \
+    "https://download.db-ip.com/free/dbip-city-lite-2026-03.mmdb.gz" && \
+    gunzip data/dbip-city-lite.mmdb.gz && \
+    ls -lh data/dbip-city-lite.mmdb
+
 # Verify the app can import and all routes are registered
 RUN python -c "\
 from src.api.app import app; \

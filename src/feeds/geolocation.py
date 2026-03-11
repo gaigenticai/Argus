@@ -42,12 +42,12 @@ class GeoLocator:
         self._init_maxmind()
 
     def _init_maxmind(self):
-        """Try to load MaxMind GeoLite2 databases."""
+        """Try to load MMDB geolocation database (DB-IP Lite or MaxMind GeoLite2)."""
         db_path = Path(settings.feeds.maxmind_db_path)
         if not db_path.exists():
             logger.warning(
-                "MaxMind GeoLite2 DB not found at %s — using ip-api.com fallback. "
-                "Set ARGUS_FEED_MAXMIND_LICENSE_KEY and run the download script for better performance.",
+                "GeoIP MMDB not found at %s — using ip-api.com fallback. "
+                "Download DB-IP Lite or MaxMind GeoLite2 for better performance.",
                 db_path,
             )
             return
@@ -55,11 +55,11 @@ class GeoLocator:
             import geoip2.database
 
             self._reader = geoip2.database.Reader(str(db_path))
-            # Try ASN DB too
+            # Try ASN DB too (MaxMind format)
             asn_path = db_path.parent / "GeoLite2-ASN.mmdb"
             if asn_path.exists():
                 self._asn_reader = geoip2.database.Reader(str(asn_path))
-            logger.info("MaxMind GeoLite2 loaded from %s", db_path)
+            logger.info("GeoIP MMDB loaded from %s", db_path)
         except Exception as e:
             logger.warning("Failed to load MaxMind DB: %s", e)
 
