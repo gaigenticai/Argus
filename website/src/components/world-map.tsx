@@ -187,10 +187,10 @@ export function WorldMap() {
 
       ctx.clearRect(0, 0, w, h);
 
-      // Draw continent outlines
-      ctx.strokeStyle = "rgba(0, 167, 111, 0.08)";
-      ctx.lineWidth = 1;
-      ctx.fillStyle = "rgba(0, 167, 111, 0.02)";
+      // Draw continent outlines — white boundaries
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.18)";
+      ctx.lineWidth = 1.2;
+      ctx.fillStyle = "rgba(255, 255, 255, 0.03)";
 
       for (const path of CONTINENT_PATHS) {
         ctx.beginPath();
@@ -206,7 +206,7 @@ export function WorldMap() {
       }
 
       // Draw grid lines
-      ctx.strokeStyle = "rgba(0, 167, 111, 0.025)";
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.04)";
       ctx.lineWidth = 0.5;
       for (let lat = 0; lat < 500; lat += 50) {
         ctx.beginPath();
