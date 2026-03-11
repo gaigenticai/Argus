@@ -1,6 +1,6 @@
 """IP geolocation engine — resolves IPs to lat/lon for the threat map.
 
-Chain: DB-IP Lite MMDB (instant, offline) → ip-api.com batch → ipwho.is single-IP fallback.
+Chain: DB-IP Lite MMDB (instant, offline) → ipwho.is (free, commercial OK) → ip-api.com (last resort).
 """
 
 import asyncio
@@ -32,8 +32,8 @@ class GeoLocator:
     """IP-to-location resolver.
 
     Primary: DB-IP Lite MMDB (local, instant)
-    Fallback 1: ip-api.com batch API (free, 15 req/min, 100 IPs per batch)
-    Fallback 2: ipwho.is single-IP API (free, HTTPS, no key, 10k/month)
+    Fallback 1: ipwho.is (free, HTTPS, no key, commercial use OK)
+    Fallback 2: ip-api.com batch (free tier, non-commercial, last resort)
     """
 
     def __init__(self):
@@ -115,16 +115,16 @@ class GeoLocator:
             else:
                 misses.append(ip)
 
-        # Phase 2: ip-api.com batch for misses
+        # Phase 2: ipwho.is for misses (free, commercial use OK)
         if misses:
-            api_results = await self._ipapi_batch(misses)
-            results.update(api_results)
+            ipwhois_results = await self._ipwhois_fallback(misses)
+            results.update(ipwhois_results)
 
-        # Phase 3: ipwho.is for anything still unresolved
+        # Phase 3: ip-api.com batch as last resort for remaining misses
         still_missing = [ip for ip in misses if results.get(ip, _EMPTY).latitude is None]
         if still_missing:
-            ipwhois_results = await self._ipwhois_fallback(still_missing)
-            results.update(ipwhois_results)
+            api_results = await self._ipapi_batch(still_missing)
+            results.update(api_results)
 
         return results
 
