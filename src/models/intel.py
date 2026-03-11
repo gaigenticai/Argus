@@ -307,3 +307,98 @@ class WebhookDelivery(Base, UUIDMixin):
         Index("ix_webhook_deliveries_status", "status"),
         Index("ix_webhook_deliveries_retry", "next_retry_at"),
     )
+
+
+# --- Integration Configs (external tool connections) ---
+
+
+class IntegrationConfig(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "integration_configs"
+
+    tool_name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    api_url: Mapped[str] = mapped_column(String(2048), default="", nullable=False)
+    api_key: Mapped[str | None] = mapped_column(String(500))
+    extra_settings: Mapped[dict | None] = mapped_column(JSONB)
+    health_status: Mapped[str] = mapped_column(String(20), default="unconfigured", nullable=False)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(Text)
+    sync_interval_seconds: Mapped[int] = mapped_column(Integer, default=3600, nullable=False)
+
+    __table_args__ = (
+        Index("ix_integration_configs_tool", "tool_name"),
+    )
+
+
+# --- Triage Run History ---
+
+
+class TriageRun(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "triage_runs"
+
+    trigger: Mapped[str] = mapped_column(String(20), nullable=False)  # manual, scheduled, post_feed
+    hours_window: Mapped[int] = mapped_column(Integer, nullable=False)
+    entries_processed: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    iocs_created: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    alerts_generated: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    duration_seconds: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="running", nullable=False)  # running, completed, failed
+    error_message: Mapped[str | None] = mapped_column(Text)
+
+    __table_args__ = (
+        Index("ix_triage_runs_status", "status"),
+        Index("ix_triage_runs_created", "created_at"),
+    )
+
+
+# --- Vulnerability Scans (Nuclei integration) ---
+
+
+class VulnerabilityScan(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "vulnerability_scans"
+
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="SET NULL")
+    )
+    target: Mapped[str] = mapped_column(String(2048), nullable=False)
+    scanner: Mapped[str] = mapped_column(String(50), default="nuclei", nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    findings_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    scan_output: Mapped[dict | None] = mapped_column(JSONB)
+
+    vulnerabilities = relationship("Vulnerability", back_populates="scan", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_vuln_scans_org", "organization_id"),
+        Index("ix_vuln_scans_status", "status"),
+    )
+
+
+class Vulnerability(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "vulnerabilities"
+
+    scan_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("vulnerability_scans.id", ondelete="CASCADE"), nullable=False
+    )
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="SET NULL")
+    )
+    template_id: Mapped[str | None] = mapped_column(String(255))
+    name: Mapped[str] = mapped_column(String(500), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    url: Mapped[str | None] = mapped_column(String(2048))
+    matched_at: Mapped[str | None] = mapped_column(String(2048))
+    remediation: Mapped[str | None] = mapped_column(Text)
+    cve_ids: Mapped[list | None] = mapped_column(ARRAY(String))
+    raw_output: Mapped[dict | None] = mapped_column(JSONB)
+
+    scan = relationship("VulnerabilityScan", back_populates="vulnerabilities")
+
+    __table_args__ = (
+        Index("ix_vulns_scan", "scan_id"),
+        Index("ix_vulns_severity", "severity"),
+        Index("ix_vulns_org", "organization_id"),
+    )

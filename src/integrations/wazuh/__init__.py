@@ -1,0 +1,1 @@
+"""Wazuh integration — SIEM + EDR."""

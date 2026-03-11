@@ -10,6 +10,7 @@ from src.storage.database import init_db, close_db
 from src.core.rate_limit import close_redis_pool
 from src.api.routes import organizations, alerts, crawlers, scan, webhooks, reports, activity, auth, users, audit
 from src.api.routes import sources, retention, feedback, iocs, actors, stix, threat_map, feeds
+from src.api.routes import integrations as tools_routes
 
 
 import logging
@@ -77,6 +78,7 @@ app.include_router(actors.router, prefix="/api/v1")
 app.include_router(stix.router, prefix="/api/v1")
 app.include_router(threat_map.router, prefix="/api/v1")
 app.include_router(feeds.router, prefix="/api/v1")
+app.include_router(tools_routes.router, prefix="/api/v1")
 
 
 @app.get("/health")

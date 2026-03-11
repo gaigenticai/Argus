@@ -278,6 +278,18 @@ export const api = {
     if (params?.hours) qs.set("hours", String(params.hours));
     return request<HeatmapEntry[]>(`/threat-map/heatmap?${qs}`);
   },
+  // Integrations / Tools
+  getIntegrations: () => request<IntegrationTool[]>("/tools/"),
+  getIntegration: (name: string) => request<IntegrationTool>(`/tools/${name}`),
+  updateIntegration: (name: string, data: IntegrationUpdateRequest) =>
+    request(`/tools/${name}`, { method: "PUT", body: JSON.stringify(data) }),
+  testIntegration: (name: string) =>
+    request<{ tool_name: string; connected: boolean; message: string }>(`/tools/${name}/test`, { method: "POST" }),
+  syncIntegration: (name: string) =>
+    request<{ tool_name: string; message: string; status: string }>(`/tools/${name}/sync`, { method: "POST" }),
+  getTriageHistory: (limit: number = 20) =>
+    request<TriageRunItem[]>(`/tools/triage/history?limit=${limit}`),
+
   // Feeds
   getFeeds: () => request<FeedSummary>("/feeds/"),
   triggerFeed: (name: string) =>
@@ -727,4 +739,40 @@ export interface FeedTriggerResponse {
   feed_name: string;
   message: string;
   status: string;
+}
+
+export interface IntegrationTool {
+  tool_name: string;
+  display_name: string;
+  category: string;
+  description: string;
+  license: string;
+  enabled: boolean;
+  health_status: string;
+  api_url: string;
+  last_sync_at: string | null;
+  last_error: string | null;
+  sync_interval_seconds: number;
+  id: string | null;
+}
+
+export interface IntegrationUpdateRequest {
+  enabled?: boolean;
+  api_url?: string;
+  api_key?: string;
+  extra_settings?: Record<string, unknown>;
+  sync_interval_seconds?: number;
+}
+
+export interface TriageRunItem {
+  id: string;
+  trigger: string;
+  hours_window: number;
+  entries_processed: number;
+  iocs_created: number;
+  alerts_generated: number;
+  duration_seconds: number;
+  status: string;
+  error_message: string | null;
+  created_at: string;
 }

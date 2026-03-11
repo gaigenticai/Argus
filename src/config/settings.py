@@ -157,6 +157,26 @@ class FeedSettings(BaseSettings):
     abuse_ch_api_key: Optional[str] = None
 
 
+class IntegrationSettings(BaseSettings):
+    model_config = {"env_prefix": "ARGUS_INT_"}
+
+    opencti_url: Optional[str] = None
+    opencti_api_key: Optional[str] = None
+    wazuh_url: Optional[str] = None
+    wazuh_user: Optional[str] = None
+    wazuh_password: Optional[str] = None
+    nuclei_binary: str = "nuclei"
+    nuclei_templates: str = "data/nuclei-templates"
+    yara_rules_dir: str = "data/yara_rules"
+    sigma_rules_dir: str = "data/sigma_rules"
+    spiderfoot_url: Optional[str] = None
+    spiderfoot_api_key: Optional[str] = None
+    shuffle_url: Optional[str] = None
+    shuffle_api_key: Optional[str] = None
+    gophish_url: Optional[str] = None
+    gophish_api_key: Optional[str] = None
+
+
 class Settings(BaseSettings):
     model_config = {"env_prefix": "ARGUS_"}
 
@@ -178,6 +198,7 @@ class Settings(BaseSettings):
     crawler: CrawlerSettings = Field(default_factory=CrawlerSettings)
     notify: NotificationSettings = Field(default_factory=NotificationSettings)
     feeds: FeedSettings = Field(default_factory=FeedSettings)
+    integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)
 
 
 settings = Settings()
