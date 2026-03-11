@@ -54,7 +54,7 @@ const SECTIONS = [
     content: [
       {
         subtitle: "We Do Not Sell Your Data",
-        text: "Gaigentic AI does not sell, rent, or trade your personal information or threat intelligence data to third parties. Your data is not used for advertising purposes.",
+        text: "Argus does not sell, rent, or trade your personal information or threat intelligence data to third parties. Your data is not used for advertising purposes.",
       },
       {
         subtitle: "Service Providers",
@@ -116,7 +116,7 @@ const SECTIONS = [
     content: [
       {
         subtitle: "Access",
-        text: "You have the right to request a copy of the personal information we hold about you. You can access most of this information directly through your Argus account settings. For a comprehensive data export, contact us at cto@gaigentic.ai.",
+        text: "You have the right to request a copy of the personal information we hold about you. You can access most of this information directly through your Argus account settings. For a comprehensive data export, contact us through our contact form.",
       },
       {
         subtitle: "Correction",
@@ -132,7 +132,7 @@ const SECTIONS = [
       },
       {
         subtitle: "Objection and Restriction",
-        text: "You have the right to object to certain processing of your personal information, and to request that we restrict processing in certain circumstances. To exercise these rights, contact us at cto@gaigentic.ai.",
+        text: "You have the right to object to certain processing of your personal information, and to request that we restrict processing in certain circumstances. To exercise these rights, contact us through our contact form.",
       },
     ],
   },
@@ -288,7 +288,7 @@ export default function PrivacyPolicyPage() {
                 margin: "0 auto",
               }}
             >
-              How Gaigentic AI collects, uses, and protects your data when you
+              How Argus collects, uses, and protects your data when you
               use the Argus threat intelligence platform.
             </p>
           </AnimateIn>
@@ -343,7 +343,7 @@ export default function PrivacyPolicyPage() {
                   Last updated: March 11, 2026.
                 </strong>{" "}
                 This Privacy Policy applies to the Argus platform operated by
-                Gaigentic AI, accessible at{" "}
+                Argus, accessible at{" "}
                 <a
                   href="https://argusai.xyz"
                   style={{ color: "var(--primary)", textDecoration: "none" }}
@@ -364,7 +364,7 @@ export default function PrivacyPolicyPage() {
                 marginBottom: 48,
               }}
             >
-              Gaigentic AI (&quot;we,&quot; &quot;us,&quot; or &quot;our&quot;)
+              Argus (&quot;we,&quot; &quot;us,&quot; or &quot;our&quot;)
               is committed to protecting the privacy and security of your
               personal information. This Privacy Policy describes how we collect,
               use, disclose, and safeguard your information when you use the
@@ -520,17 +520,16 @@ export default function PrivacyPolicyPage() {
                             marginBottom: 4,
                           }}
                         >
-                          Gaigentic AI
+                          Argus
                         </strong>
-                        Email:{" "}
                         <a
-                          href="mailto:cto@gaigentic.ai"
+                          href="/about#contact"
                           style={{
                             color: "var(--primary)",
                             textDecoration: "none",
                           }}
                         >
-                          cto@gaigentic.ai
+                          Contact us
                         </a>
                       </div>
                       <div
@@ -587,7 +586,7 @@ export default function PrivacyPolicyPage() {
                 }}
               >
                 This Privacy Policy is effective as of March 11, 2026 and
-                applies to the Argus platform by Gaigentic AI.
+                applies to the Argus platform by Argus.
               </p>
             </div>
           </AnimateIn>

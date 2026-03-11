@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Shield } from "lucide-react";
+import { ArgusLogo } from "./argus-logo";
 
 const LINKS = {
   Product: [
@@ -52,19 +52,7 @@ export function Footer() {
                 marginBottom: 16,
               }}
             >
-              <div
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 10,
-                  background: "linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <Shield size={20} color="#fff" strokeWidth={2.5} />
-              </div>
+              <ArgusLogo size={36} />
               <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em" }}>
                 ARGUS
               </span>
@@ -153,7 +141,7 @@ export function Footer() {
           }}
         >
           <p style={{ fontSize: 13, color: "var(--text-muted)" }}>
-            &copy; {new Date().getFullYear()} Argus. Built by Gaigentic AI.
+            &copy; {new Date().getFullYear()} Argus. All rights reserved.
           </p>
           <p style={{ fontSize: 13, color: "var(--text-muted)" }}>
             Protecting organizations worldwide.

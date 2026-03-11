@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useTheme } from "./theme-provider";
 import { useState, useEffect } from "react";
-import { Menu, X, Sun, Moon, Shield } from "lucide-react";
+import { Menu, X, Sun, Moon } from "lucide-react";
+import { ArgusLogo } from "./argus-logo";
 
 const NAV_LINKS = [
   { label: "Features", href: "/features" },
@@ -67,19 +68,7 @@ export function Navbar() {
             transition: "color 0.3s",
           }}
         >
-          <div
-            style={{
-              width: 36,
-              height: 36,
-              borderRadius: 10,
-              background: "linear-gradient(135deg, var(--primary) 0%, var(--secondary) 100%)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Shield size={20} color="#fff" strokeWidth={2.5} />
-          </div>
+          <ArgusLogo size={36} />
           <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em" }}>
             ARGUS
           </span>

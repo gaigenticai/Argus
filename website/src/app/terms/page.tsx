@@ -8,7 +8,7 @@ const SECTIONS = [
     id: "acceptance",
     title: "1. Acceptance of Terms",
     content: [
-      `By accessing or using the Argus platform ("Service"), operated by Gaigentic AI ("Company," "we," "us," or "our"), you ("User," "you," or "your") agree to be bound by these Terms of Service ("Terms"). If you are using the Service on behalf of an organization, you represent and warrant that you have the authority to bind that organization to these Terms, and "you" refers to both you individually and the organization.`,
+      `By accessing or using the Argus platform ("Service"), operated by Argus ("Company," "we," "us," or "our"), you ("User," "you," or "your") agree to be bound by these Terms of Service ("Terms"). If you are using the Service on behalf of an organization, you represent and warrant that you have the authority to bind that organization to these Terms, and "you" refers to both you individually and the organization.`,
       `If you do not agree to these Terms, you must not access or use the Service. Your continued use of the Service following the posting of any changes to these Terms constitutes acceptance of those changes.`,
       `These Terms apply to all visitors, registered users, and any other persons who access or use the Service, including via API integrations, automated scripts, or third-party applications.`,
     ],
@@ -45,7 +45,7 @@ const SECTIONS = [
       "Maintain and promptly update your account information to keep it accurate and current",
       "Maintain the confidentiality of your account credentials, including passwords and API keys",
       "Accept responsibility for all activities that occur under your account",
-      "Immediately notify us at cto@gaigentic.ai if you become aware of any unauthorized use of your account or any other breach of security",
+      "Immediately notify us through our contact form if you become aware of any unauthorized use of your account or any other breach of security",
     ],
     contentAfter: [
       `You must be at least 18 years of age to create an account. We reserve the right to suspend or terminate accounts that we reasonably believe have been compromised, are being used fraudulently, or are in violation of these Terms.`,
@@ -62,7 +62,7 @@ const SECTIONS = [
       "Use the Service to engage in, facilitate, or support any illegal activity, including unauthorized access to computer systems, networks, or data",
       "Reverse engineer, decompile, disassemble, or otherwise attempt to derive the source code of the Service, its algorithms, or underlying AI models",
       "Abuse, overload, or disrupt the Service or its infrastructure, including through denial-of-service attacks, excessive API calls beyond your rate limits, or automated scraping",
-      "Redistribute, resell, sublicense, or commercially exploit threat intelligence data obtained through the Service without prior written authorization from Gaigentic AI",
+      "Redistribute, resell, sublicense, or commercially exploit threat intelligence data obtained through the Service without prior written authorization from Argus",
       "Use the Service to develop a competing product or service",
       "Upload malicious code, malware, or any content designed to compromise the security or integrity of the Service",
       "Impersonate any person or entity, or misrepresent your affiliation with any person or entity",
@@ -71,16 +71,16 @@ const SECTIONS = [
       "Circumvent or attempt to circumvent any access controls, rate limits, or usage restrictions",
     ],
     contentAfter: [
-      `Responsible Disclosure: If you discover a security vulnerability in the Argus platform, we ask that you report it to us responsibly at cto@gaigentic.ai before disclosing it publicly. We commit to acknowledging your report within 48 hours and providing a timeline for remediation. We will not take legal action against researchers who discover and report vulnerabilities in good faith, provided they do not access, modify, or delete other users' data, and they allow us a reasonable period to address the issue before public disclosure.`,
+      `Responsible Disclosure: If you discover a security vulnerability in the Argus platform, we ask that you report it to us responsibly through our contact form before disclosing it publicly. We commit to acknowledging your report within 48 hours and providing a timeline for remediation. We will not take legal action against researchers who discover and report vulnerabilities in good faith, provided they do not access, modify, or delete other users' data, and they allow us a reasonable period to address the issue before public disclosure.`,
     ],
   },
   {
     id: "ip",
     title: "5. Intellectual Property",
     content: [
-      `Ownership of the Service: The Service, including its software, AI models, algorithms, user interface, documentation, branding, trademarks, and all related intellectual property, is and remains the exclusive property of Gaigentic AI and its licensors. These Terms do not grant you any ownership rights in the Service. The Argus name, logo, and all related product names and marks are trademarks of Gaigentic AI.`,
+      `Ownership of the Service: The Service, including its software, AI models, algorithms, user interface, documentation, branding, trademarks, and all related intellectual property, is and remains the exclusive property of Argus and its licensors. These Terms do not grant you any ownership rights in the Service. The Argus name, logo, and all related product names and marks are trademarks of Argus.`,
       `Ownership of Your Data: You retain all rights, title, and interest in the data you upload to or generate through the Service ("User Data"), including threat intelligence reports generated from your specific organizational data, custom detection rules, and configurations. We do not claim ownership of your User Data.`,
-      `License to User Data: By using the Service, you grant Gaigentic AI a limited, non-exclusive, worldwide license to process, store, and analyze your User Data solely for the purpose of providing and improving the Service. This license terminates when you delete your User Data or close your account, subject to any retention periods required by law or specified in these Terms.`,
+      `License to User Data: By using the Service, you grant Argus a limited, non-exclusive, worldwide license to process, store, and analyze your User Data solely for the purpose of providing and improving the Service. This license terminates when you delete your User Data or close your account, subject to any retention periods required by law or specified in these Terms.`,
       `Aggregated Data: We may collect and use aggregated, anonymized, and de-identified data derived from your use of the Service for purposes of improving the Service, conducting research, and generating industry-level threat intelligence. Such aggregated data will not identify you or any individual and is not considered User Data.`,
       `Open-Source Components: The Service integrates with and builds upon open-source security tools. The use of such components is governed by their respective open-source licenses, and nothing in these Terms restricts any rights you may have under those licenses.`,
     ],
@@ -113,9 +113,9 @@ const SECTIONS = [
     id: "liability",
     title: "8. Limitation of Liability",
     content: [
-      `TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL GAIGENTIC AI, ITS DIRECTORS, OFFICERS, EMPLOYEES, AGENTS, AFFILIATES, OR LICENSORS BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, INCLUDING BUT NOT LIMITED TO LOSS OF PROFITS, DATA, BUSINESS OPPORTUNITIES, OR GOODWILL, ARISING OUT OF OR IN CONNECTION WITH YOUR USE OF OR INABILITY TO USE THE SERVICE, EVEN IF WE HAVE BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.`,
+      `TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL ARGUS, ITS DIRECTORS, OFFICERS, EMPLOYEES, AGENTS, AFFILIATES, OR LICENSORS BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, INCLUDING BUT NOT LIMITED TO LOSS OF PROFITS, DATA, BUSINESS OPPORTUNITIES, OR GOODWILL, ARISING OUT OF OR IN CONNECTION WITH YOUR USE OF OR INABILITY TO USE THE SERVICE, EVEN IF WE HAVE BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.`,
       `TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, OUR TOTAL AGGREGATE LIABILITY FOR ALL CLAIMS ARISING OUT OF OR RELATING TO THESE TERMS OR THE SERVICE SHALL NOT EXCEED THE GREATER OF: (A) THE TOTAL AMOUNT YOU PAID TO US IN THE TWELVE (12) MONTHS IMMEDIATELY PRECEDING THE EVENT GIVING RISE TO THE CLAIM, OR (B) ONE HUNDRED U.S. DOLLARS ($100).`,
-      `The Service provides threat intelligence and security information for informational and analytical purposes. It is not a substitute for professional cybersecurity services, incident response, or legal advice. You acknowledge that no threat intelligence platform can guarantee the detection of all threats, and you agree not to hold Gaigentic AI liable for any security incident that the Service fails to detect or prevent.`,
+      `The Service provides threat intelligence and security information for informational and analytical purposes. It is not a substitute for professional cybersecurity services, incident response, or legal advice. You acknowledge that no threat intelligence platform can guarantee the detection of all threats, and you agree not to hold Argus liable for any security incident that the Service fails to detect or prevent.`,
       `Some jurisdictions do not allow the exclusion or limitation of certain damages. In such jurisdictions, our liability will be limited to the greatest extent permitted by law.`,
     ],
   },
@@ -123,7 +123,7 @@ const SECTIONS = [
     id: "indemnification",
     title: "9. Indemnification",
     content: [
-      `You agree to indemnify, defend, and hold harmless Gaigentic AI and its officers, directors, employees, agents, affiliates, successors, and assigns from and against any and all claims, liabilities, damages, losses, costs, and expenses (including reasonable attorneys' fees and court costs) arising out of or relating to:`,
+      `You agree to indemnify, defend, and hold harmless Argus and its officers, directors, employees, agents, affiliates, successors, and assigns from and against any and all claims, liabilities, damages, losses, costs, and expenses (including reasonable attorneys' fees and court costs) arising out of or relating to:`,
     ],
     list: [
       "Your use or misuse of the Service",
@@ -140,7 +140,7 @@ const SECTIONS = [
     id: "termination",
     title: "10. Termination",
     content: [
-      `Termination by You: You may terminate your account and stop using the Service at any time by contacting us at cto@gaigentic.ai or through your account settings. Upon termination, your right to access the Service will cease immediately, except as provided below regarding data export.`,
+      `Termination by You: You may terminate your account and stop using the Service at any time through your account settings or by contacting us through our contact form. Upon termination, your right to access the Service will cease immediately, except as provided below regarding data export.`,
       `Termination by Us: We may suspend or terminate your access to the Service immediately, without prior notice or liability, if we reasonably believe that you have violated these Terms, engaged in fraudulent or illegal activity, or if continued provision of the Service to you is no longer commercially viable. For terminations not caused by your breach, we will provide at least 30 days' notice.`,
       `Data Export: Following termination, we will make your User Data available for export for a period of 30 days. After this export period, we reserve the right to delete your User Data from our systems, unless retention is required by applicable law.`,
       `Survival: The following sections shall survive termination of these Terms: Intellectual Property (Section 5), Limitation of Liability (Section 8), Indemnification (Section 9), Governing Law (Section 11), and any other provisions that by their nature are intended to survive termination.`,
@@ -504,7 +504,7 @@ export default function TermsPage() {
                             marginBottom: 2,
                           }}
                         >
-                          Gaigentic AI
+                          Argus
                         </div>
                         <div
                           style={{
@@ -538,17 +538,15 @@ export default function TermsPage() {
                           lineHeight: 1.6,
                         }}
                       >
-                        <span style={{ fontWeight: 600, color: "var(--text)" }}>
-                          Email:{" "}
-                        </span>
                         <a
-                          href="mailto:cto@gaigentic.ai"
+                          href="/about#contact"
                           style={{
                             color: "var(--primary)",
                             textDecoration: "none",
+                            fontWeight: 600,
                           }}
                         >
-                          cto@gaigentic.ai
+                          Contact us
                         </a>
                       </div>
                       <div
@@ -571,26 +569,6 @@ export default function TermsPage() {
                           argusai.xyz
                         </a>
                       </div>
-                      <div
-                        style={{
-                          fontSize: 14,
-                          color: "var(--text-secondary)",
-                          lineHeight: 1.6,
-                        }}
-                      >
-                        <span style={{ fontWeight: 600, color: "var(--text)" }}>
-                          Security vulnerabilities:{" "}
-                        </span>
-                        <a
-                          href="mailto:cto@gaigentic.ai"
-                          style={{
-                            color: "var(--primary)",
-                            textDecoration: "none",
-                          }}
-                        >
-                          cto@gaigentic.ai
-                        </a>
-                      </div>
                     </div>
 
                     <div
@@ -608,8 +586,7 @@ export default function TermsPage() {
                       }}
                     >
                       We aim to respond to all inquiries within two (2) business
-                      days. For urgent security matters, please include
-                      &ldquo;URGENT&rdquo; in your subject line.
+                      days.
                     </p>
                   </div>
                 )}

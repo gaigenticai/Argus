@@ -68,7 +68,7 @@ const TIERS = [
       { text: "Custom threat feed ingestion", included: true },
     ],
     cta: "Contact sales",
-    ctaHref: "mailto:sales@argusai.xyz",
+    ctaHref: "/about#contact",
     ctaStyle: "secondary" as const,
     popular: false,
   },
@@ -660,7 +660,7 @@ export default function PricingPage() {
               }}
             >
               <Link
-                href="mailto:sales@argusai.xyz"
+                href="/about#contact"
                 style={{
                   height: 52,
                   padding: "0 32px",

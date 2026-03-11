@@ -6,8 +6,6 @@ import {
   Shield,
   Brain,
   Globe,
-  Mail,
-  MapPin,
   Send,
   Database,
   Wrench,
@@ -360,7 +358,7 @@ export default function AboutPage() {
                     fontWeight: 500,
                   }}
                 >
-                  Gaigentic AI founding team
+                  Argus founding team
                 </p>
               </div>
             </div>
@@ -657,7 +655,7 @@ export default function AboutPage() {
                     letterSpacing: "-0.02em",
                   }}
                 >
-                  Built by Gaigentic AI
+                  Get in touch
                 </h2>
                 <p
                   style={{
@@ -739,87 +737,19 @@ export default function AboutPage() {
                 from you.
               </p>
 
-              <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                  <div
-                    style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: 12,
-                      background: "rgba(0,167,111,0.1)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <Mail size={20} style={{ color: "var(--primary)" }} />
-                  </div>
-                  <div>
-                    <div
-                      style={{
-                        fontSize: 13,
-                        color: "var(--text-muted)",
-                        marginBottom: 2,
-                        fontWeight: 500,
-                      }}
-                    >
-                      Email
-                    </div>
-                    <a
-                      href="mailto:contact@gaigentic.ai"
-                      style={{
-                        fontSize: 15,
-                        color: "var(--text)",
-                        textDecoration: "none",
-                        fontWeight: 500,
-                        transition: "color 0.2s",
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.color = "var(--primary)")}
-                      onMouseLeave={(e) => (e.currentTarget.style.color = "var(--text)")}
-                    >
-                      contact@gaigentic.ai
-                    </a>
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                  <div
-                    style={{
-                      width: 44,
-                      height: 44,
-                      borderRadius: 12,
-                      background: "rgba(0,167,111,0.1)",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0,
-                    }}
-                  >
-                    <MapPin size={20} style={{ color: "var(--primary)" }} />
-                  </div>
-                  <div>
-                    <div
-                      style={{
-                        fontSize: 13,
-                        color: "var(--text-muted)",
-                        marginBottom: 2,
-                        fontWeight: 500,
-                      }}
-                    >
-                      Location
-                    </div>
-                    <div
-                      style={{
-                        fontSize: 15,
-                        color: "var(--text)",
-                        fontWeight: 500,
-                      }}
-                    >
-                      Global — Remote-first
-                    </div>
-                  </div>
-                </div>
+              <div
+                style={{
+                  padding: "20px 24px",
+                  borderRadius: 12,
+                  background: "rgba(0,167,111,0.06)",
+                  border: "1px solid rgba(0,167,111,0.12)",
+                  fontSize: 14,
+                  lineHeight: 1.7,
+                  color: "var(--text-secondary)",
+                }}
+              >
+                Fill out the form and our team will get back to you within 24 hours.
+                We respond to every message personally.
               </div>
             </div>
           </AnimateIn>

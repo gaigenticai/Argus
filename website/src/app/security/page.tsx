@@ -152,8 +152,8 @@ const SECTIONS: SecuritySection[] = [
     title: "Vulnerability Disclosure Program",
     color: "var(--warning, #FFAB00)",
     paragraphs: [
-      "We believe that security researchers play a vital role in keeping the internet safe. If you discover a vulnerability in any Gaigentic AI product or service, we want to hear from you.",
-      "Please report security vulnerabilities responsibly by emailing cto@gaigentic.ai with the following details:",
+      "We believe that security researchers play a vital role in keeping the internet safe. If you discover a vulnerability in any Argus product or service, we want to hear from you.",
+      "Please report security vulnerabilities responsibly through our contact form at /about#contact with the following details:",
     ],
     items: [
       "A clear description of the vulnerability and its potential impact",
@@ -593,7 +593,7 @@ export default function SecurityPage() {
               </p>
 
               <a
-                href="mailto:cto@gaigentic.ai"
+                href="/about#contact"
                 style={{
                   display: "inline-flex",
                   alignItems: "center",
@@ -615,7 +615,7 @@ export default function SecurityPage() {
                 }
               >
                 <Lock size={16} />
-                Contact: cto@gaigentic.ai
+                Contact us
               </a>
 
               <div
@@ -628,8 +628,8 @@ export default function SecurityPage() {
                 }}
               >
                 {[
-                  { icon: Globe, label: "gaigentic.ai" },
-                  { icon: Users, label: "Gaigentic AI" },
+                  { icon: Globe, label: "argusai.xyz" },
+                  { icon: Users, label: "Argus" },
                   { icon: Shield, label: "Argus Platform" },
                 ].map((item) => (
                   <div
