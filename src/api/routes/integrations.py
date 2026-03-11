@@ -265,7 +265,20 @@ async def test_integration(
     )
     config = result.scalar_one_or_none()
 
-    if not config or not config.api_url:
+    # Local tools (nuclei, yara, sigma) don't need api_url
+    _LOCAL_TOOLS = {"nuclei", "yara", "sigma"}
+
+    if not config:
+        # Auto-create a config stub so _get_client has something to work with
+        if tool_name in _LOCAL_TOOLS:
+            config = IntegrationConfig(tool_name=tool_name, api_url="", enabled=True)
+        else:
+            return ConnectionTestResult(
+                tool_name=tool_name,
+                connected=False,
+                message="Integration not configured — set API URL first",
+            )
+    elif tool_name not in _LOCAL_TOOLS and not config.api_url:
         return ConnectionTestResult(
             tool_name=tool_name,
             connected=False,

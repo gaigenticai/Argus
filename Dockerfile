@@ -32,12 +32,11 @@ RUN mkdir -p data && \
     gunzip data/dbip-city-lite.mmdb.gz && \
     ls -lh data/dbip-city-lite.mmdb
 
-# Download YARA community rules
+# Download YARA community rules (all categories)
 RUN mkdir -p data/yara_rules && \
     curl -sSL https://github.com/Yara-Rules/rules/archive/refs/heads/master.zip -o /tmp/yara-rules.zip && \
     unzip -o /tmp/yara-rules.zip -d /tmp/ && \
-    cp -r /tmp/rules-master/malware/ data/yara_rules/ && \
-    cp -r /tmp/rules-master/cve_rules/ data/yara_rules/ 2>/dev/null || true && \
+    cp -r /tmp/rules-master/*/ data/yara_rules/ && \
     rm -rf /tmp/yara-rules.zip /tmp/rules-master && \
     echo "YARA rules: $(find data/yara_rules -name '*.yar' -o -name '*.yara' | wc -l) files"
 
