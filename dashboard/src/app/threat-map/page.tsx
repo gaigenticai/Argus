@@ -48,6 +48,7 @@ import {
   api,
   type ThreatMapLayer,
   type ThreatMapEntry,
+  type ThreatMapEntryDetail,
   type GlobalThreatStats,
 } from "@/lib/api";
 
@@ -142,6 +143,99 @@ function severityColor(s: string): string {
     default:
       return "#637381";
   }
+}
+
+/** Build a location string from city + country code */
+function formatLocation(city?: string | null, countryCode?: string | null): string | null {
+  if (!city && !countryCode) return null;
+  const parts: string[] = [];
+  if (city) parts.push(city);
+  if (countryCode) {
+    try {
+      const name = new Intl.DisplayNames(["en"], { type: "region" }).of(countryCode);
+      parts.push(name || countryCode);
+    } catch {
+      parts.push(countryCode);
+    }
+  }
+  return parts.join(", ");
+}
+
+/** Extract enriched metadata fields from feed_metadata for display */
+function extractMetaHighlights(
+  entry: ThreatMapEntryDetail
+): { label: string; value: string }[] {
+  const meta = entry.feed_metadata;
+  const out: { label: string; value: string }[] = [];
+  if (!meta) return out;
+
+  // Malware family / name
+  const malware = meta.malware_family || meta.malware || meta.threat;
+  if (malware && typeof malware === "string" && malware !== "none") {
+    out.push({ label: "Malware", value: malware });
+  }
+
+  // Threat type (from ThreatFox)
+  if (meta.threat_type && typeof meta.threat_type === "string") {
+    out.push({ label: "Threat type", value: meta.threat_type });
+  }
+
+  // Tags
+  const tags = meta.tags;
+  if (tags) {
+    const tagStr = Array.isArray(tags)
+      ? (tags as string[]).filter(Boolean).join(", ")
+      : typeof tags === "string" && tags.trim() ? tags : null;
+    if (tagStr) out.push({ label: "Tags", value: tagStr });
+  }
+
+  // CVE-specific: vendor + product
+  if (meta.vendor && typeof meta.vendor === "string") {
+    const product = meta.product ? ` ${meta.product}` : "";
+    out.push({ label: "Vendor", value: `${meta.vendor}${product}` });
+  }
+
+  // Ransomware use (CISA KEV)
+  if (meta.ransomware_use === "Known") {
+    out.push({ label: "Ransomware", value: "Known campaign use" });
+  }
+
+  // Due date (CISA KEV)
+  if (meta.due_date && typeof meta.due_date === "string") {
+    out.push({ label: "Remediation due", value: meta.due_date });
+  }
+
+  // Abuse score (AbuseIPDB)
+  if (typeof meta.abuse_confidence_score === "number") {
+    out.push({ label: "Abuse score", value: `${meta.abuse_confidence_score}%` });
+  }
+
+  // Attack count (DShield)
+  if (typeof meta.attacks === "number") {
+    out.push({ label: "Attacks", value: formatNumber(meta.attacks as number) });
+  }
+
+  // IP reputation score
+  if (typeof meta.score === "number") {
+    out.push({ label: "Rep. score", value: `${meta.score}/8` });
+  }
+
+  // URL status (URLhaus)
+  if (meta.status && typeof meta.status === "string") {
+    out.push({ label: "Status", value: meta.status });
+  }
+
+  // Port (SSL blacklist)
+  if (meta.port && typeof meta.port === "string") {
+    out.push({ label: "Port", value: meta.port });
+  }
+
+  // Reference link
+  if (meta.reference && typeof meta.reference === "string") {
+    out.push({ label: "Reference", value: meta.reference });
+  }
+
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,9 +339,10 @@ export default function ThreatMapPage() {
   const [entries, setEntries] = useState<ThreatMapEntry[]>([]);
   const [stats, setStats] = useState<GlobalThreatStats | null>(null);
   const [activeLayers, setActiveLayers] = useState<Set<string>>(new Set());
-  const [selectedEntry, setSelectedEntry] = useState<ThreatMapEntry | null>(
+  const [selectedEntry, setSelectedEntry] = useState<ThreatMapEntryDetail | null>(
     null
   );
+  const [detailLoading, setDetailLoading] = useState(false);
 
   // UI state
   const [hours, setHours] = useState(168);
@@ -438,7 +533,7 @@ export default function ThreatMapPage() {
   // ----- Map click --------------------------------------------------------
 
   const handleMapClick = useCallback(
-    (evt: MapLayerMouseEvent) => {
+    async (evt: MapLayerMouseEvent) => {
       const feature = evt.features?.[0];
       if (!feature || !feature.properties) {
         setSelectedEntry(null);
@@ -447,8 +542,18 @@ export default function ThreatMapPage() {
 
       const props = feature.properties;
       const entry = entries.find((e) => e.id === props.id);
-      if (entry) {
-        setSelectedEntry(entry);
+      if (!entry) return;
+
+      // Show popup immediately with basic data, then enrich
+      setSelectedEntry(entry as unknown as ThreatMapEntryDetail);
+      setDetailLoading(true);
+      try {
+        const detail = await api.getThreatMapEntry(entry.id);
+        setSelectedEntry(detail);
+      } catch {
+        // Keep the basic entry data if detail fetch fails
+      } finally {
+        setDetailLoading(false);
       }
     },
     [entries]
@@ -714,7 +819,7 @@ export default function ThreatMapPage() {
                 onClose={() => setSelectedEntry(null)}
                 closeOnClick={false}
                 className="threat-popup"
-                maxWidth="340px"
+                maxWidth="380px"
                 offset={12}
               >
                 <div className="popup-inner">
@@ -763,7 +868,30 @@ export default function ThreatMapPage() {
                     </p>
                   )}
 
-                  {/* Meta grid */}
+                  {/* Description (from detail endpoint) */}
+                  {selectedEntry.description && (
+                    <p className="text-[11px] text-[#919EAB] mb-3 leading-relaxed line-clamp-3">
+                      {selectedEntry.description}
+                    </p>
+                  )}
+
+                  {/* Location bar */}
+                  {(() => {
+                    const loc = formatLocation(selectedEntry.city, selectedEntry.country_code);
+                    return loc ? (
+                      <div className="popup-location-bar">
+                        <Globe className="w-3 h-3 text-[#637381] flex-shrink-0" />
+                        <span className="text-[11px] text-[#C4CDD5]">{loc}</span>
+                        {selectedEntry.asn && (
+                          <span className="text-[10px] text-[#637381] ml-auto font-mono truncate max-w-[140px]">
+                            {selectedEntry.asn}
+                          </span>
+                        )}
+                      </div>
+                    ) : null;
+                  })()}
+
+                  {/* Core meta grid */}
                   <div className="popup-meta-grid">
                     <div className="popup-meta-item">
                       <span className="popup-meta-label">Feed</span>
@@ -783,14 +911,6 @@ export default function ThreatMapPage() {
                         {selectedEntry.entry_type}
                       </span>
                     </div>
-                    {selectedEntry.country_code && (
-                      <div className="popup-meta-item">
-                        <span className="popup-meta-label">Country</span>
-                        <span className="popup-meta-value">
-                          {selectedEntry.country_code}
-                        </span>
-                      </div>
-                    )}
                     <div className="popup-meta-item">
                       <span className="popup-meta-label">First seen</span>
                       <span className="popup-meta-value">
@@ -803,7 +923,38 @@ export default function ThreatMapPage() {
                         {timeAgo(selectedEntry.last_seen)}
                       </span>
                     </div>
+                    {selectedEntry.expires_at && (
+                      <div className="popup-meta-item">
+                        <span className="popup-meta-label">Expires</span>
+                        <span className="popup-meta-value">
+                          {timeAgo(selectedEntry.expires_at).replace(" ago", "")}
+                        </span>
+                      </div>
+                    )}
                   </div>
+
+                  {/* Enriched metadata from feed_metadata */}
+                  {(() => {
+                    const highlights = extractMetaHighlights(selectedEntry);
+                    if (!highlights.length) return null;
+                    return (
+                      <div className="popup-enriched">
+                        {highlights.map((h, i) => (
+                          <div key={i} className="popup-enriched-row">
+                            <span className="popup-meta-label">{h.label}</span>
+                            <span className="popup-enriched-value">{h.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+
+                  {/* Loading indicator for detail fetch */}
+                  {detailLoading && (
+                    <div className="flex items-center justify-center pt-2 pb-1">
+                      <Loader2 className="w-3 h-3 text-[#637381] animate-spin" />
+                    </div>
+                  )}
                 </div>
               </Popup>
             )}
@@ -1074,6 +1225,44 @@ export default function ThreatMapPage() {
           display: flex;
           flex-direction: column;
           gap: 1px;
+        }
+
+        .popup-location-bar {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 8px;
+          margin-bottom: 10px;
+          background: rgba(255, 255, 255, 0.03);
+          border-radius: 6px;
+          border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .popup-enriched {
+          margin-top: 8px;
+          padding-top: 8px;
+          border-top: 1px solid rgba(255, 255, 255, 0.06);
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .popup-enriched-row {
+          display: flex;
+          align-items: baseline;
+          gap: 8px;
+        }
+
+        .popup-enriched-row .popup-meta-label {
+          flex-shrink: 0;
+          min-width: 72px;
+        }
+
+        .popup-enriched-value {
+          font-size: 11px;
+          color: #F4F6F8;
+          font-weight: 500;
+          word-break: break-word;
         }
 
         .threat-popup .maplibregl-popup-tip {
