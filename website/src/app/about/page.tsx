@@ -9,8 +9,6 @@ import {
   Mail,
   MapPin,
   Send,
-  Briefcase,
-  ArrowRight,
   Database,
   Wrench,
   Radar,
@@ -1017,119 +1015,6 @@ export default function AboutPage() {
                 </div>
               )}
             </form>
-          </AnimateIn>
-        </div>
-      </section>
-
-      {/* ═══════════════════ CAREERS ═══════════════════ */}
-      <section
-        id="careers"
-        style={{
-          padding: "120px 0",
-          background: "var(--bg-alt)",
-          borderTop: "1px solid var(--border)",
-        }}
-      >
-        <div style={{ maxWidth: 800, margin: "0 auto", padding: "0 24px" }}>
-          <AnimateIn>
-            <div
-              style={{
-                textAlign: "center",
-                padding: "56px 48px",
-                borderRadius: 20,
-                border: "1px solid var(--border)",
-                background: "var(--bg-card)",
-                position: "relative",
-                overflow: "hidden",
-              }}
-            >
-              {/* Decorative gradient */}
-              <div
-                style={{
-                  position: "absolute",
-                  width: 400,
-                  height: 400,
-                  borderRadius: "50%",
-                  background:
-                    "radial-gradient(circle, rgba(0,167,111,0.06) 0%, transparent 70%)",
-                  bottom: -150,
-                  left: "50%",
-                  transform: "translateX(-50%)",
-                  pointerEvents: "none",
-                }}
-              />
-
-              <div style={{ position: "relative", zIndex: 1 }}>
-                <div
-                  style={{
-                    width: 64,
-                    height: 64,
-                    borderRadius: 16,
-                    background: "rgba(0,167,111,0.1)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    margin: "0 auto 28px",
-                  }}
-                >
-                  <Briefcase size={28} style={{ color: "var(--primary)" }} />
-                </div>
-                <h2
-                  style={{
-                    fontSize: "clamp(24px, 3vw, 32px)",
-                    fontWeight: 700,
-                    color: "var(--text)",
-                    marginBottom: 16,
-                    letterSpacing: "-0.02em",
-                  }}
-                >
-                  We&apos;re hiring
-                </h2>
-                <p
-                  style={{
-                    fontSize: 16,
-                    lineHeight: 1.7,
-                    color: "var(--text-secondary)",
-                    maxWidth: 520,
-                    margin: "0 auto 32px",
-                  }}
-                >
-                  We&apos;re looking for security engineers who dream in YARA rules,
-                  AI researchers who want to push agentic systems further, and product
-                  designers who can make complex security data feel intuitive. If you
-                  want to build the future of threat intelligence, let&apos;s talk.
-                </p>
-                <a
-                  href="mailto:careers@gaigentic.ai"
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 8,
-                    height: 48,
-                    padding: "0 28px",
-                    borderRadius: 12,
-                    background: "transparent",
-                    color: "var(--primary)",
-                    fontSize: 15,
-                    fontWeight: 600,
-                    textDecoration: "none",
-                    border: "1px solid var(--primary)",
-                    transition: "all 0.25s",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "var(--primary)";
-                    e.currentTarget.style.color = "#fff";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "transparent";
-                    e.currentTarget.style.color = "var(--primary)";
-                  }}
-                >
-                  careers@gaigentic.ai
-                  <ArrowRight size={16} />
-                </a>
-              </div>
-            </div>
           </AnimateIn>
         </div>
       </section>

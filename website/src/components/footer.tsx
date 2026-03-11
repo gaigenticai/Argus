@@ -13,18 +13,11 @@ const LINKS = {
   Company: [
     { label: "About", href: "/about" },
     { label: "Contact", href: "/about#contact" },
-    { label: "Careers", href: "/about#careers" },
-  ],
-  Resources: [
-    { label: "Documentation", href: "/platform" },
-    { label: "Integrations", href: "/platform#integrations" },
-    { label: "Threat Map", href: "https://app.argusai.xyz" },
-    { label: "Changelog", href: "/about" },
   ],
   Legal: [
-    { label: "Privacy Policy", href: "/about#contact" },
-    { label: "Terms of Service", href: "/about#contact" },
-    { label: "Security", href: "/platform#security" },
+    { label: "Privacy Policy", href: "/privacy" },
+    { label: "Terms of Service", href: "/terms" },
+    { label: "Security", href: "/security" },
   ],
 };
 
@@ -41,7 +34,7 @@ export function Footer() {
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "1.5fr repeat(4, 1fr)",
+            gridTemplateColumns: "1.5fr repeat(3, 1fr)",
             gap: 48,
           }}
           className="footer-grid"
