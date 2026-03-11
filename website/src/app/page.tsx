@@ -216,7 +216,7 @@ export default function Home() {
           <AnimateIn delay={0.45}>
             <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
               <Link
-                href="https://argusai.xyz"
+                href="https://app.argusai.xyz"
                 target="_blank"
                 style={{
                   height: 52,
@@ -707,7 +707,7 @@ export default function Home() {
             </p>
             <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
               <Link
-                href="https://argusai.xyz"
+                href="https://app.argusai.xyz"
                 target="_blank"
                 style={{
                   height: 52,

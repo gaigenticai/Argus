@@ -518,7 +518,7 @@ export default function FeaturesPage() {
             </p>
             <div style={{ display: "flex", gap: 16, justifyContent: "center", flexWrap: "wrap" }}>
               <Link
-                href="https://argusai.xyz"
+                href="https://app.argusai.xyz"
                 target="_blank"
                 style={{
                   height: 52,

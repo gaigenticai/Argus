@@ -8,7 +8,7 @@ const LINKS = {
     { label: "Features", href: "/features" },
     { label: "Platform", href: "/platform" },
     { label: "Pricing", href: "/pricing" },
-    { label: "Dashboard", href: "https://argusai.xyz" },
+    { label: "Dashboard", href: "https://app.argusai.xyz" },
   ],
   Company: [
     { label: "About", href: "/about" },
@@ -18,7 +18,7 @@ const LINKS = {
   Resources: [
     { label: "Documentation", href: "/platform" },
     { label: "Integrations", href: "/platform#integrations" },
-    { label: "Threat Map", href: "https://argusai.xyz" },
+    { label: "Threat Map", href: "https://app.argusai.xyz" },
     { label: "Changelog", href: "/about" },
   ],
   Legal: [

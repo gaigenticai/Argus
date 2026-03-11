@@ -24,7 +24,7 @@ const TIERS = [
       { text: "SOAR automation", included: false },
     ],
     cta: "Get started free",
-    ctaHref: "https://argusai.xyz",
+    ctaHref: "https://app.argusai.xyz",
     ctaStyle: "ghost" as const,
     popular: false,
   },
@@ -46,7 +46,7 @@ const TIERS = [
       { text: "PDF reports & exports", included: true },
     ],
     cta: "Start free trial",
-    ctaHref: "https://argusai.xyz",
+    ctaHref: "https://app.argusai.xyz",
     ctaStyle: "primary" as const,
     popular: true,
   },
@@ -679,7 +679,7 @@ export default function PricingPage() {
                 Talk to sales
               </Link>
               <Link
-                href="https://argusai.xyz"
+                href="https://app.argusai.xyz"
                 target="_blank"
                 style={{
                   height: 52,

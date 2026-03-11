@@ -144,7 +144,7 @@ export function Navbar() {
 
           {/* CTA */}
           <Link
-            href="https://argusai.xyz"
+            href="https://app.argusai.xyz"
             target="_blank"
             style={{
               height: 40,
@@ -236,7 +236,7 @@ export function Navbar() {
               {theme === "dark" ? "Light" : "Dark"}
             </button>
             <Link
-              href="https://argusai.xyz"
+              href="https://app.argusai.xyz"
               target="_blank"
               style={{
                 flex: 1,
