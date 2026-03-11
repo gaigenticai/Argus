@@ -8,7 +8,6 @@ import {
   Building2,
   Bot,
   FileText,
-  Eye,
   Globe,
   Map,
   Activity,
@@ -24,6 +23,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/auth/auth-provider";
+import { ArgusLogo } from "@/components/shared/argus-logo";
 
 const NAV_INTELLIGENCE = [
   { label: "Threat Map", href: "/threat-map", icon: Map },
@@ -92,12 +92,10 @@ export function Sidebar() {
     <aside className="fixed left-0 top-0 bottom-0 w-[280px] bg-grey-900 flex flex-col z-40">
       {/* Logo */}
       <div className="h-16 flex items-center gap-3 px-6 shrink-0">
-        <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center">
-          <Eye className="w-[18px] h-[18px] text-white" />
-        </div>
+        <ArgusLogo size={36} />
         <div className="leading-none">
           <h1 className="text-white text-[16px] font-extrabold tracking-wider">ARGUS</h1>
-          <p className="text-grey-600 text-[10px] tracking-[1.5px] uppercase mt-0.5">Threat Intel</p>
+          <p className="text-grey-600 text-[10px] tracking-[1.5px] uppercase mt-0.5">The All Seeing</p>
         </div>
       </div>
 

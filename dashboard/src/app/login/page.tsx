@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import { Eye, EyeOff, Shield } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
+import { ArgusLogo } from "@/components/shared/argus-logo";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -34,12 +35,10 @@ export default function LoginPage() {
       <div className="w-full max-w-[420px]">
         {/* Logo */}
         <div className="flex items-center justify-center gap-3 mb-10">
-          <div className="w-10 h-10 rounded-xl bg-grey-900 flex items-center justify-center">
-            <Shield className="w-5 h-5 text-primary" />
-          </div>
+          <ArgusLogo size={44} />
           <div className="leading-none">
             <h1 className="text-grey-900 text-[20px] font-extrabold tracking-wider">ARGUS</h1>
-            <p className="text-grey-500 text-[10px] tracking-[1.5px] uppercase mt-0.5">Threat Intelligence</p>
+            <p className="text-grey-500 text-[10px] tracking-[1.5px] uppercase mt-0.5">The All Seeing</p>
           </div>
         </div>
 
