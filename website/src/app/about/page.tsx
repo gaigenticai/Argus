@@ -49,13 +49,25 @@ const STATS = [
 
 export default function AboutPage() {
   const [formData, setFormData] = useState({ name: "", email: "", message: "" });
-  const [submitted, setSubmitted] = useState(false);
+  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSubmitted(true);
-    setFormData({ name: "", email: "", message: "" });
-    setTimeout(() => setSubmitted(false), 4000);
+    setStatus("sending");
+    try {
+      const res = await fetch("/api/contact", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData),
+      });
+      if (!res.ok) throw new Error("Failed");
+      setStatus("sent");
+      setFormData({ name: "", email: "", message: "" });
+      setTimeout(() => setStatus("idle"), 5000);
+    } catch {
+      setStatus("error");
+      setTimeout(() => setStatus("idle"), 5000);
+    }
   };
 
   return (
@@ -936,38 +948,44 @@ export default function AboutPage() {
 
               <button
                 type="submit"
+                disabled={status === "sending"}
                 style={{
                   height: 48,
                   padding: "0 28px",
                   borderRadius: 12,
-                  background: "var(--primary)",
+                  background: status === "sending" ? "var(--text-muted)" : "var(--primary)",
                   color: "#fff",
                   fontSize: 15,
                   fontWeight: 600,
                   fontFamily: "var(--font-body)",
                   border: "none",
-                  cursor: "pointer",
+                  cursor: status === "sending" ? "not-allowed" : "pointer",
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
                   gap: 8,
                   transition: "all 0.25s",
                   alignSelf: "flex-start",
+                  opacity: status === "sending" ? 0.7 : 1,
                 }}
                 onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--primary-dark)";
-                  e.currentTarget.style.transform = "translateY(-1px)";
+                  if (status !== "sending") {
+                    e.currentTarget.style.background = "var(--primary-dark)";
+                    e.currentTarget.style.transform = "translateY(-1px)";
+                  }
                 }}
                 onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--primary)";
-                  e.currentTarget.style.transform = "translateY(0)";
+                  if (status !== "sending") {
+                    e.currentTarget.style.background = "var(--primary)";
+                    e.currentTarget.style.transform = "translateY(0)";
+                  }
                 }}
               >
-                Send message
+                {status === "sending" ? "Sending..." : "Send message"}
                 <Send size={15} />
               </button>
 
-              {submitted && (
+              {status === "sent" && (
                 <div
                   style={{
                     padding: "12px 16px",
@@ -980,6 +998,22 @@ export default function AboutPage() {
                   }}
                 >
                   Message sent! We&apos;ll get back to you soon.
+                </div>
+              )}
+
+              {status === "error" && (
+                <div
+                  style={{
+                    padding: "12px 16px",
+                    borderRadius: 10,
+                    background: "rgba(255,86,48,0.1)",
+                    border: "1px solid rgba(255,86,48,0.2)",
+                    color: "var(--error)",
+                    fontSize: 14,
+                    fontWeight: 500,
+                  }}
+                >
+                  Something went wrong. Please try again or email us directly.
                 </div>
               )}
             </form>
