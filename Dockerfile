@@ -36,9 +36,9 @@ RUN mkdir -p data && \
 RUN mkdir -p data/yara_rules && \
     curl -sSL https://github.com/Yara-Rules/rules/archive/refs/heads/master.zip -o /tmp/yara-rules.zip && \
     unzip -o /tmp/yara-rules.zip -d /tmp/ && \
-    cp -r /tmp/rules-master/*/ data/yara_rules/ && \
+    find /tmp/rules-master -name '*.yar' -o -name '*.yara' | while read f; do cp "$f" data/yara_rules/; done && \
     rm -rf /tmp/yara-rules.zip /tmp/rules-master && \
-    echo "YARA rules: $(find data/yara_rules -name '*.yar' -o -name '*.yara' | wc -l) files"
+    echo "YARA rules: $(ls data/yara_rules/*.yar 2>/dev/null | wc -l) files"
 
 # Download Sigma community rules
 RUN mkdir -p data/sigma_rules && \
