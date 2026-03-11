@@ -14,8 +14,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Verify the app can import before running
-RUN python -c "from src.api.app import app; print('Import OK')"
+# Verify the app can import and all routes are registered
+RUN python -c "\
+from src.api.app import app; \
+routes = [r.path for r in app.routes]; \
+print('Import OK'); \
+print('Routes:', len(routes)); \
+assert '/api/v1/tools/' in routes, f'/tools/ route missing! Routes: {routes}'; \
+print('Tools route verified')"
 
 # Render sets $PORT dynamically; default to 8000 for local dev
 ENV PORT=8000
