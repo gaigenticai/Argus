@@ -278,9 +278,14 @@ export const api = {
     if (params?.hours) qs.set("hours", String(params.hours));
     return request<HeatmapEntry[]>(`/threat-map/heatmap?${qs}`);
   },
-  getFeeds: () => request<FeedStatus[]>("/feeds/"),
+  // Feeds
+  getFeeds: () => request<FeedSummary>("/feeds/"),
   triggerFeed: (name: string) =>
-    request("/feeds/" + name + "/trigger", { method: "POST" }),
+    request<FeedTriggerResponse>("/feeds/" + name + "/trigger", { method: "POST" }),
+  triggerFeedTriage: (hours: number = 6) =>
+    request<{ message: string; status: string }>(`/feeds/triage?hours=${hours}`, { method: "POST" }),
+  backfillGeolocation: () =>
+    request<{ message: string; status: string }>("/feeds/backfill-geo", { method: "POST" }),
 };
 
 // Auth Types
@@ -698,8 +703,28 @@ export interface ThreatMapParams {
   offset?: number;
 }
 
-export interface FeedStatus {
+export interface FeedInfo {
   feed_name: string;
-  entry_count: number;
-  last_entry_at: string | null;
+  layer: string;
+  display_name: string;
+  icon: string;
+  color: string;
+  enabled: boolean;
+  refresh_interval_seconds: number;
+  description: string | null;
+  active_entry_count: number;
+  total_entry_count: number;
+  latest_entry_at: string | null;
+}
+
+export interface FeedSummary {
+  total_feeds: number;
+  total_active_entries: number;
+  feeds: FeedInfo[];
+}
+
+export interface FeedTriggerResponse {
+  feed_name: string;
+  message: string;
+  status: string;
 }

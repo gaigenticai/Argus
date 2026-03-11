@@ -18,6 +18,9 @@ import {
   LogOut,
   Database,
   Shield,
+  Rss,
+  Brain,
+  Puzzle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -33,10 +36,12 @@ const NAV_INTELLIGENCE = [
 ];
 
 const NAV_OPS = [
+  { label: "Feeds", href: "/feeds", icon: Rss },
   { label: "Sources", href: "/sources", icon: Database },
   { label: "Crawlers", href: "/crawlers", icon: Bot },
   { label: "Activity", href: "/activity", icon: Activity },
   { label: "Reports", href: "/reports", icon: FileText },
+  { label: "Integrations", href: "/integrations", icon: Puzzle },
 ];
 
 const NAV_ADMIN = [
