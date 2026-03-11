@@ -26,12 +26,13 @@ async def lifespan(app: FastAPI):
         _logger.info("Database connected. Seeding layers...")
         # Seed default threat map layers (idempotent)
         try:
-            from src.feeds.seed_layers import seed_default_layers
+            from src.feeds.seed_layers import seed_default_layers, seed_integrations
             from src.storage.database import async_session_factory
             async with async_session_factory() as session:
                 await seed_default_layers(session)
+                await seed_integrations(session)
                 await session.commit()
-            _logger.info("Layers seeded.")
+            _logger.info("Layers & integrations seeded.")
         except Exception as e:
             _logger.warning("Layer seeding failed (non-fatal): %s", e)
     except Exception as e:

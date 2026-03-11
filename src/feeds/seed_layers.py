@@ -1,9 +1,10 @@
-"""Seed default threat map layers."""
+"""Seed default threat map layers and integration configs."""
 
 import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.feeds import ThreatLayer
+from src.models.intel import IntegrationConfig
 
 logger = logging.getLogger(__name__)
 
@@ -34,5 +35,52 @@ async def seed_default_layers(db: AsyncSession) -> None:
         layer = ThreatLayer(**layer_data)
         db.add(layer)
         logger.info("Seeded threat layer: %s", layer_data["name"])
+
+    await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Integration configs — auto-enable local/open-source tools
+# ---------------------------------------------------------------------------
+
+# Tools that run locally inside the container (no external server needed)
+LOCAL_TOOLS = [
+    {"tool_name": "nuclei", "api_url": "", "enabled": True, "health_status": "connected"},
+    {"tool_name": "yara", "api_url": "data/yara_rules", "enabled": True, "health_status": "connected"},
+    {"tool_name": "sigma", "api_url": "data/sigma_rules", "enabled": True, "health_status": "connected"},
+    {"tool_name": "suricata", "api_url": "/var/log/suricata/eve.json", "enabled": True, "health_status": "connected"},
+    {"tool_name": "prowler", "api_url": "aws", "enabled": True, "health_status": "connected"},
+]
+
+# Tools that need an external instance — seed as unconfigured so they show up
+EXTERNAL_TOOLS = [
+    {"tool_name": "opencti", "api_url": "", "enabled": False, "health_status": "unconfigured"},
+    {"tool_name": "wazuh", "api_url": "", "enabled": False, "health_status": "unconfigured"},
+    {"tool_name": "spiderfoot", "api_url": "", "enabled": False, "health_status": "unconfigured"},
+    {"tool_name": "shuffle", "api_url": "", "enabled": False, "health_status": "unconfigured"},
+    {"tool_name": "gophish", "api_url": "", "enabled": False, "health_status": "unconfigured"},
+]
+
+
+async def seed_integrations(db: AsyncSession) -> None:
+    """Seed integration configs — auto-enable local tools, stub external ones."""
+    all_tools = LOCAL_TOOLS + EXTERNAL_TOOLS
+    for tool_data in all_tools:
+        existing = await db.execute(
+            select(IntegrationConfig).where(
+                IntegrationConfig.tool_name == tool_data["tool_name"]
+            )
+        )
+        if existing.scalar_one_or_none():
+            continue
+
+        config = IntegrationConfig(
+            tool_name=tool_data["tool_name"],
+            api_url=tool_data["api_url"],
+            enabled=tool_data["enabled"],
+            health_status=tool_data["health_status"],
+        )
+        db.add(config)
+        logger.info("Seeded integration: %s (enabled=%s)", tool_data["tool_name"], tool_data["enabled"])
 
     await db.commit()
