@@ -1,6 +1,6 @@
 """IP geolocation engine — resolves IPs to lat/lon for the threat map.
 
-Uses MaxMind GeoLite2 local DB (instant, offline) with ip-api.com batch fallback.
+Chain: DB-IP Lite MMDB (instant, offline) → ip-api.com batch → ipwho.is single-IP fallback.
 """
 
 import asyncio
@@ -31,8 +31,9 @@ _EMPTY = GeoResult()
 class GeoLocator:
     """IP-to-location resolver.
 
-    Primary: MaxMind GeoLite2-City.mmdb (local, instant)
-    Fallback: ip-api.com batch API (free, 15 req/min, 100 IPs per batch)
+    Primary: DB-IP Lite MMDB (local, instant)
+    Fallback 1: ip-api.com batch API (free, 15 req/min, 100 IPs per batch)
+    Fallback 2: ipwho.is single-IP API (free, HTTPS, no key, 10k/month)
     """
 
     def __init__(self):
@@ -99,11 +100,11 @@ class GeoLocator:
             return _EMPTY
 
     async def locate_batch(self, ips: list[str]) -> dict[str, GeoResult]:
-        """Batch resolve IPs. Uses MaxMind for all available; falls back to ip-api.com for misses."""
+        """Batch resolve IPs. Chain: MMDB → ip-api.com batch → ipwho.is single."""
         results: dict[str, GeoResult] = {}
         misses: list[str] = []
 
-        # Phase 1: MaxMind local lookups (instant)
+        # Phase 1: Local MMDB lookups (instant)
         for ip in ips:
             if not self._is_public_ip(ip):
                 results[ip] = _EMPTY
@@ -118,6 +119,12 @@ class GeoLocator:
         if misses:
             api_results = await self._ipapi_batch(misses)
             results.update(api_results)
+
+        # Phase 3: ipwho.is for anything still unresolved
+        still_missing = [ip for ip in misses if results.get(ip, _EMPTY).latitude is None]
+        if still_missing:
+            ipwhois_results = await self._ipwhois_fallback(still_missing)
+            results.update(ipwhois_results)
 
         return results
 
@@ -177,8 +184,53 @@ class GeoLocator:
 
         return results
 
+    async def _ipwhois_fallback(self, ips: list[str]) -> dict[str, GeoResult]:
+        """Resolve IPs via ipwho.is — free, HTTPS, no API key required.
+
+        Single-IP endpoint, so we run up to 20 concurrent requests.
+        Used as last-resort for IPs that MMDB and ip-api.com both missed.
+        """
+        results: dict[str, GeoResult] = {}
+        sem = asyncio.Semaphore(20)
+        timeout = aiohttp.ClientTimeout(total=10)
+
+        async def _fetch_one(session: aiohttp.ClientSession, ip: str) -> None:
+            async with sem:
+                try:
+                    async with session.get(f"https://ipwho.is/{ip}") as resp:
+                        if resp.status != 200:
+                            results[ip] = _EMPTY
+                            return
+                        data = await resp.json()
+                        if data.get("success"):
+                            conn = data.get("connection", {})
+                            asn_num = conn.get("asn")
+                            asn_org = conn.get("org", "")
+                            asn_str = f"AS{asn_num} {asn_org}" if asn_num else None
+                            results[ip] = GeoResult(
+                                latitude=data.get("latitude"),
+                                longitude=data.get("longitude"),
+                                country_code=data.get("country_code"),
+                                city=data.get("city"),
+                                asn=asn_str,
+                            )
+                        else:
+                            results[ip] = _EMPTY
+                except Exception:
+                    results[ip] = _EMPTY
+
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            tasks = [_fetch_one(session, ip) for ip in ips[:200]]  # cap at 200
+            await asyncio.gather(*tasks)
+
+        resolved = sum(1 for r in results.values() if r.latitude is not None)
+        if resolved:
+            logger.info("ipwho.is fallback resolved %d/%d IPs", resolved, len(ips))
+
+        return results
+
     def close(self):
-        """Close MaxMind readers."""
+        """Close MMDB readers."""
         if self._reader:
             self._reader.close()
             self._reader = None
