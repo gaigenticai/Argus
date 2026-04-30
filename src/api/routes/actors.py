@@ -1,5 +1,8 @@
 """Threat actor management and timeline endpoints."""
 
+from __future__ import annotations
+
+
 import uuid
 from datetime import datetime
 
@@ -8,12 +11,13 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.auth import AdminUser, AnalystUser
 from src.models.intel import ThreatActor, ActorSighting, IOC
 from src.models.threat import Alert
 from src.enrichment.actor_tracker import merge_actors as do_merge, calculate_risk_score
 from src.storage.database import get_session
 
-router = APIRouter(prefix="/actors", tags=["actors"])
+router = APIRouter(prefix="/actors", tags=["Threat Intelligence"])
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +83,7 @@ class ActorStats(BaseModel):
 
 @router.get("/stats", response_model=ActorStats)
 async def actor_stats(
+    analyst: AnalystUser,
     db: AsyncSession = Depends(get_session),
 ):
     """Aggregate statistics about tracked threat actors."""
@@ -124,6 +129,7 @@ async def actor_stats(
 @router.get("/{actor_id}/timeline", response_model=list[TimelineEntry])
 async def actor_timeline(
     actor_id: uuid.UUID,
+    analyst: AnalystUser,
     limit: int = Query(100, le=500),
     db: AsyncSession = Depends(get_session),
 ):
@@ -158,6 +164,7 @@ async def actor_timeline(
 async def merge_actor(
     actor_id: uuid.UUID,
     other_id: uuid.UUID,
+    admin: AdminUser,
     db: AsyncSession = Depends(get_session),
 ):
     """Merge two threat actors (secondary into primary)."""
@@ -173,6 +180,7 @@ async def merge_actor(
 @router.get("/{actor_id}", response_model=ActorDetail)
 async def get_actor(
     actor_id: uuid.UUID,
+    analyst: AnalystUser,
     db: AsyncSession = Depends(get_session),
 ):
     """Get actor profile with sightings, IOCs, and linked alerts."""
@@ -227,6 +235,7 @@ async def get_actor(
 async def update_actor(
     actor_id: uuid.UUID,
     body: ActorUpdate,
+    admin: AdminUser,
     db: AsyncSession = Depends(get_session),
 ):
     """Update actor profile (add aliases, TTPs, description, etc.)."""
@@ -267,6 +276,7 @@ async def update_actor(
 
 @router.get("/", response_model=list[ActorResponse])
 async def list_actors(
+    analyst: AnalystUser,
     risk_score_min: float | None = None,
     platform: str | None = None,
     language: str | None = None,

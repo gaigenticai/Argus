@@ -1,9 +1,17 @@
 """YARA rule engine — compile and match YARA rules against data and files."""
 
+from __future__ import annotations
+
+
+import asyncio
 import io
 import logging
 import zipfile
 from pathlib import Path
+
+import aiohttp
+
+from src.core.http_circuit import get_breaker
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +32,39 @@ class YaraEngine:
 
     This is a local engine and does NOT inherit from BaseIntegration
     (no remote API involved).
+
+    Adversarial audit D-19 — ``rules_dir`` must be confined to the
+    install tree (``YARA_RULES_ROOT``). A misconfig like
+    ``rules_dir=/etc/secrets`` would otherwise walk the host's secret
+    directory and surface file contents in parse-failure logs.
     """
 
     COMMUNITY_RULES_URL = (
         "https://github.com/Yara-Rules/rules/archive/refs/heads/master.zip"
     )
 
+    # Allowed parent directories for YARA rule loading. Must be absolute
+    # paths. ``data/yara_rules`` is the bundled / dev path; the Docker
+    # image installs into /opt/argus/rules/yara.
+    _RULES_ROOTS: tuple[Path, ...] = (
+        Path("/opt/argus/rules/yara").resolve(),
+        Path.cwd().resolve() / "data" / "yara_rules",
+    )
+
     def __init__(self, rules_dir: str = "data/yara_rules"):
-        self.rules_dir = Path(rules_dir)
+        candidate = Path(rules_dir).expanduser().resolve()
+        # Allow the path itself or any ancestor that lives under one of
+        # the install roots. ``is_relative_to`` is the strict check.
+        ok = any(
+            candidate == root or candidate.is_relative_to(root)
+            for root in self._RULES_ROOTS
+        )
+        if not ok:
+            raise ValueError(
+                f"YARA rules_dir must live under {self._RULES_ROOTS!r}; "
+                f"got {candidate!r}"
+            )
+        self.rules_dir = candidate
         self._compiled: "yara.Rules | None" = None  # type: ignore[name-defined]
 
     def compile_rules(self) -> int:
@@ -74,8 +107,12 @@ class YaraEngine:
             try:
                 yara.compile(filepath=filepath)
                 good_files[ns] = filepath
-            except Exception:
+            except (yara.SyntaxError, yara.Error, OSError) as exc:
+                # Broken / malformed individual rule file. We skip and
+                # log at DEBUG so a corpus refresh that introduces a
+                # bad file is still visible without spamming INFO.
                 skipped += 1
+                logger.debug("Skipping unparseable YARA rule %s: %s", filepath, exc)
 
         if good_files:
             try:
@@ -85,7 +122,7 @@ class YaraEngine:
                     len(good_files), skipped, self.rules_dir,
                 )
                 return len(good_files)
-            except Exception as exc:
+            except (yara.SyntaxError, yara.Error, OSError) as exc:
                 logger.error("Failed to compile good rules: %s", exc)
 
         self._compiled = None
@@ -114,7 +151,7 @@ class YaraEngine:
         except yara.TimeoutError:
             logger.error("YARA match timed out after %ds", timeout)
             return []
-        except Exception as exc:
+        except yara.Error as exc:
             logger.error("YARA match_data failed: %s", exc)
             return []
 
@@ -147,7 +184,7 @@ class YaraEngine:
         except yara.TimeoutError:
             logger.error("YARA match timed out for file %s", filepath)
             return []
-        except Exception as exc:
+        except (yara.Error, OSError) as exc:
             logger.error("YARA match_file failed for %s: %s", filepath, exc)
             return []
 
@@ -157,26 +194,23 @@ class YaraEngine:
         """Download the latest YARA community rules from GitHub.
 
         Fetches the Yara-Rules/rules repo as a zip archive, extracts all
-        .yar files into ``self.rules_dir``.
+        .yar files into ``self.rules_dir``. ``aiohttp`` is a hard
+        dependency of the project (see requirements.txt) so the import
+        is module-level.
         """
-        try:
-            import aiohttp
-        except ImportError:
-            logger.error("aiohttp is required to download community rules.")
-            return
-
         logger.info("Downloading YARA community rules from %s ...", self.COMMUNITY_RULES_URL)
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(self.COMMUNITY_RULES_URL, timeout=aiohttp.ClientTimeout(total=120)) as resp:
-                    if resp.status != 200:
-                        logger.error(
-                            "Failed to download community rules: HTTP %d", resp.status
-                        )
-                        return
-                    archive_bytes = await resp.read()
-        except Exception as exc:
+            async with get_breaker("yara_community_rules"):
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(self.COMMUNITY_RULES_URL, timeout=aiohttp.ClientTimeout(total=120)) as resp:
+                        if resp.status != 200:
+                            logger.error(
+                                "Failed to download community rules: HTTP %d", resp.status
+                            )
+                            return
+                        archive_bytes = await resp.read()
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as exc:
             logger.error("Error downloading community rules: %s", exc)
             return
 
@@ -199,7 +233,7 @@ class YaraEngine:
         except zipfile.BadZipFile:
             logger.error("Downloaded archive is not a valid zip file.")
             return
-        except Exception as exc:
+        except (OSError, zipfile.LargeZipFile) as exc:
             logger.error("Error extracting community rules: %s", exc)
             return
 

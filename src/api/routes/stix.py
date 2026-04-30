@@ -1,5 +1,8 @@
 """TAXII 2.1 compatible endpoints for STIX object exchange."""
 
+from __future__ import annotations
+
+
 import uuid
 from datetime import datetime, timezone
 
@@ -8,11 +11,12 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.auth import AnalystUser
 from src.models.intel import IOC, ThreatActor, ActorSighting
 from src.models.threat import Alert
 from src.storage.database import get_session
 
-router = APIRouter(prefix="/taxii", tags=["taxii"])
+router = APIRouter(prefix="/taxii", tags=["Threat Intelligence"])
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -259,6 +263,7 @@ async def list_collections():
 @router.get("/collections/{collection_id}/objects")
 async def get_collection_objects(
     collection_id: str,
+    analyst: AnalystUser,
     limit: int = Query(100, le=1000),
     offset: int = 0,
     added_after: datetime | None = None,
@@ -330,6 +335,7 @@ async def get_collection_objects(
 async def get_collection_object(
     collection_id: str,
     object_id: str,
+    analyst: AnalystUser,
     db: AsyncSession = Depends(get_session),
 ):
     """Get a single STIX object by its ID."""

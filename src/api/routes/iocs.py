@@ -1,5 +1,8 @@
 """IOC management and export endpoints."""
 
+from __future__ import annotations
+
+
 import csv
 import io
 import uuid
@@ -11,10 +14,11 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, desc, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.auth import AnalystUser
 from src.models.intel import IOC, IOCType, ThreatActor
 from src.storage.database import get_session
 
-router = APIRouter(prefix="/iocs", tags=["iocs"])
+router = APIRouter(prefix="/iocs", tags=["Threat Intelligence"])
 
 
 # ---------------------------------------------------------------------------
@@ -157,6 +161,7 @@ def _ioc_type_to_indicator_type(ioc_type: str) -> str:
 
 @router.get("/stats", response_model=IOCStats)
 async def ioc_stats(
+    analyst: AnalystUser,
     db: AsyncSession = Depends(get_session),
 ):
     """IOC statistics: count by type, top IOCs by sighting count."""
@@ -193,6 +198,7 @@ async def ioc_stats(
 
 @router.get("/export/stix")
 async def export_stix(
+    analyst: AnalystUser,
     ioc_type: str | None = None,
     confidence_min: float | None = None,
     limit: int = Query(1000, le=10000),
@@ -223,6 +229,7 @@ async def export_stix(
 
 @router.get("/export/csv")
 async def export_csv(
+    analyst: AnalystUser,
     ioc_type: str | None = None,
     confidence_min: float | None = None,
     limit: int = Query(5000, le=50000),
@@ -268,6 +275,7 @@ async def export_csv(
 @router.post("/search", response_model=list[BulkSearchResult])
 async def bulk_search(
     body: BulkSearchRequest,
+    analyst: AnalystUser,
     db: AsyncSession = Depends(get_session),
 ):
     """Bulk search: accept a list of IOC values, return which ones are known."""
@@ -294,6 +302,7 @@ async def bulk_search(
 @router.get("/{ioc_id}", response_model=IOCDetail)
 async def get_ioc(
     ioc_id: uuid.UUID,
+    analyst: AnalystUser,
     db: AsyncSession = Depends(get_session),
 ):
     """Get IOC detail with linked actor info."""
@@ -314,6 +323,7 @@ async def get_ioc(
 
 @router.get("/", response_model=list[IOCResponse])
 async def list_iocs(
+    analyst: AnalystUser,
     ioc_type: str | None = None,
     value_search: str | None = None,
     confidence_min: float | None = None,

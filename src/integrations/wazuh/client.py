@@ -4,6 +4,9 @@ Connects to Wazuh's RESTful API to pull alerts, agent status, and
 vulnerability data for correlation with Argus threat intelligence.
 """
 
+from __future__ import annotations
+
+
 import base64
 import logging
 from datetime import datetime, timedelta, timezone
@@ -11,6 +14,7 @@ from typing import Any
 
 import aiohttp
 
+from src.core.http_circuit import get_breaker
 from src.integrations.base import BaseIntegration
 
 logger = logging.getLogger(__name__)
@@ -83,31 +87,32 @@ class WazuhClient(BaseIntegration):
         }
 
         try:
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=30)
-            ) as session:
-                async with session.post(url, headers=headers) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        logger.error(
-                            "[%s] Authentication failed (%d): %s",
-                            self.name,
-                            resp.status,
-                            body[:200],
-                        )
-                        self._jwt_token = None
-                        return False
+            async with get_breaker("wazuh"):
+                async with aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=30)
+                ) as session:
+                    async with session.post(url, headers=headers) as resp:
+                        if resp.status != 200:
+                            body = await resp.text()
+                            logger.error(
+                                "[%s] Authentication failed (%d): %s",
+                                self.name,
+                                resp.status,
+                                body[:200],
+                            )
+                            self._jwt_token = None
+                            return False
 
-                    data = await resp.json()
-                    token = data.get("data", {}).get("token")
-                    if not token:
-                        logger.error("[%s] No token in auth response", self.name)
-                        self._jwt_token = None
-                        return False
+                        data = await resp.json()
+                        token = data.get("data", {}).get("token")
+                        if not token:
+                            logger.error("[%s] No token in auth response", self.name)
+                            self._jwt_token = None
+                            return False
 
-                    self._jwt_token = token
-                    logger.info("[%s] Authenticated successfully", self.name)
-                    return True
+                        self._jwt_token = token
+                        logger.info("[%s] Authenticated successfully", self.name)
+                        return True
 
         except Exception as exc:
             logger.error("[%s] Authentication error: %s", self.name, exc)

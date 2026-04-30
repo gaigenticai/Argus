@@ -1,5 +1,8 @@
 """On-demand scanning endpoints."""
 
+from __future__ import annotations
+
+
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -7,11 +10,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.auth import AnalystUser, CurrentUser
 from src.enrichment.surface_scanner import SurfaceScanner
 from src.models.threat import Organization, Asset
 from src.storage.database import get_session
 
-router = APIRouter(prefix="/scan", tags=["scanning"])
+router = APIRouter(prefix="/scan", tags=["External Surface"])
 
 
 class ScanRequest(BaseModel):
@@ -27,18 +31,33 @@ class SubdomainResult(BaseModel):
 @router.post("/{org_id}/subdomains")
 async def scan_subdomains(
     org_id: uuid.UUID,
+    analyst: AnalystUser,
     db: AsyncSession = Depends(get_session),
 ):
-    """Discover subdomains for an organization's domains."""
+    """Discover subdomains for an organization's domains.
+
+    Returns ``scan_status``:
+
+    * ``ok`` — every passive source completed cleanly. Empty
+      ``subdomains`` means the org genuinely has no public subdomain
+      footprint.
+    * ``partial`` — at least one passive source failed (rate-limit,
+      DNS, network). The ``errors`` array enumerates which. The
+      analyst is told the result is incomplete so an empty list is
+      not mis-read as "we're clean".
+    * ``failed`` — every passive source failed. No usable signal.
+    """
     org = await db.get(Organization, org_id)
     if not org:
         raise HTTPException(404, "Organization not found")
 
     scanner = SurfaceScanner()
+    scanner.reset_errors()
     all_results = []
+    domains = list(org.domains or [])
 
     try:
-        for domain in (org.domains or []):
+        for domain in domains:
             subdomains = await scanner.discover_subdomains(domain)
             all_results.extend(subdomains)
 
@@ -63,12 +82,27 @@ async def scan_subdomains(
     finally:
         await scanner.close()
 
-    return {"discovered": len(all_results), "subdomains": all_results}
+    errors = list(scanner.last_errors)
+    if not errors:
+        scan_status = "ok"
+    elif all_results:
+        scan_status = "partial"
+    else:
+        scan_status = "failed"
+
+    return {
+        "discovered": len(all_results),
+        "subdomains": all_results,
+        "scan_status": scan_status,
+        "errors": errors,
+        "domains_scanned": domains,
+    }
 
 
 @router.post("/{org_id}/exposures")
 async def scan_exposures(
     org_id: uuid.UUID,
+    analyst: AnalystUser,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_session),
 ):

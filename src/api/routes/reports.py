@@ -1,5 +1,8 @@
 """Report generation and listing endpoints."""
 
+from __future__ import annotations
+
+
 import os
 import uuid
 from datetime import datetime, timezone
@@ -11,11 +14,12 @@ from pydantic import BaseModel
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.auth import AnalystUser
 from src.models.threat import Alert, Asset, Organization, Report, VIPTarget
 from src.storage.database import get_session
 from src.core.report_generator import ArgusReportGenerator
 
-router = APIRouter(prefix="/reports", tags=["reports"])
+router = APIRouter(prefix="/reports", tags=["Compliance & DLP"])
 
 # Directory where generated reports are stored
 REPORTS_DIR = Path(os.getenv("ARGUS_REPORTS_DIR", "data/reports"))
@@ -55,6 +59,7 @@ class ReportResponse(BaseModel):
 @router.post("/generate", response_class=StreamingResponse)
 async def generate_report(
     body: ReportGenerateRequest,
+    analyst: AnalystUser,
     db: AsyncSession = Depends(get_session),
 ):
     """Generate a threat intelligence PDF report for the given organization and date range."""
@@ -183,6 +188,7 @@ async def generate_report(
 
 @router.get("/", response_model=list[ReportResponse])
 async def list_reports(
+    analyst: AnalystUser,
     org_id: uuid.UUID | None = None,
     limit: int = Query(20, le=100),
     offset: int = 0,
@@ -202,6 +208,7 @@ async def list_reports(
 @router.get("/{report_id}", response_class=StreamingResponse)
 async def download_report(
     report_id: uuid.UUID,
+    analyst: AnalystUser,
     db: AsyncSession = Depends(get_session),
 ):
     """Download a previously generated report PDF."""
