@@ -7,6 +7,9 @@ This agent takes individual alerts and finds patterns:
 - VIP mentioned in dark web + credential found = critical
 """
 
+from __future__ import annotations
+
+
 import json
 import logging
 from typing import Any
@@ -69,20 +72,42 @@ class CorrelationAgent:
         org_profile: dict[str, Any],
         time_window_hours: int = 72,
     ) -> dict[str, Any] | None:
-        """Analyze a batch of recent alerts for correlations."""
+        """Analyze a batch of recent alerts for correlations.
+
+        Returns ``None`` when:
+            * fewer than 2 alerts in the batch (nothing to correlate);
+            * the LLM provider is not configured;
+            * the LLM transport returned non-2xx;
+            * the response could not be parsed as JSON.
+        Each branch logs structured context so an operator can tell
+        "no correlations" apart from "engine never ran".
+        """
         if len(alerts) < 2:
             return None
+
+        from src.agents.triage_agent import LLMNotConfigured, LLMTransportError
 
         prompt = self._build_prompt(alerts, org_profile, time_window_hours)
 
         try:
             response = await self._call_llm(CORRELATION_SYSTEM_PROMPT, prompt)
-            return json.loads(response)
-        except json.JSONDecodeError:
-            logger.error("[correlation] LLM returned invalid JSON")
+        except LLMNotConfigured as e:
+            logger.warning(f"[correlation] Skipping — LLM not configured: {e}")
+            return None
+        except LLMTransportError as e:
+            logger.error(f"[correlation] LLM transport failure: {e}")
             return None
         except Exception as e:
-            logger.error(f"[correlation] Analysis failed: {e}")
+            logger.exception(f"[correlation] LLM call crashed: {e}")
+            return None
+
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError:
+            logger.error(
+                "[correlation] LLM returned invalid JSON: %s",
+                response[:200] if response else "<empty>",
+            )
             return None
 
     def _build_prompt(
@@ -114,27 +139,7 @@ Industry: {org_profile.get('industry', 'Unknown')}
 Analyze these alerts for correlations, threat actor patterns, and campaign indicators."""
 
     async def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
-        """Call LLM — same pattern as triage agent."""
-        import aiohttp
-
-        if self.provider == "ollama":
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.base_url}/api/chat",
-                    json={
-                        "model": self.model,
-                        "messages": [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": user_prompt},
-                        ],
-                        "stream": False,
-                        "format": "json",
-                    },
-                ) as resp:
-                    data = await resp.json()
-                    return data["message"]["content"]
-        else:
-            # Reuse triage agent's provider logic
-            from src.agents.triage_agent import TriageAgent
-            agent = TriageAgent()
-            return await agent._call_llm(system_prompt, user_prompt)
+        from src.llm.providers import get_provider
+        from src.config.settings import settings
+        provider = get_provider(settings.llm)
+        return await provider.call(system_prompt, user_prompt)

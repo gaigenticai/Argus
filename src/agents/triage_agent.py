@@ -4,6 +4,9 @@ Takes raw intelligence, matches it against monitored organizations,
 classifies threats, and produces actionable alerts.
 """
 
+from __future__ import annotations
+
+
 import json
 import logging
 from typing import Any
@@ -12,12 +15,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import settings
+from src.llm.providers import (  # noqa: F401  — re-exported for backward compat
+    LLMNotConfigured,
+    LLMTransportError,
+    get_provider,
+)
 from src.models.threat import Alert, ThreatCategory, ThreatSeverity
 from src.models.intel import TriageFeedback
 
 from src.core.activity import ActivityType, emit as activity_emit
 
 logger = logging.getLogger(__name__)
+
 
 TRIAGE_SYSTEM_PROMPT = """You are Argus, an elite threat intelligence analyst AI.
 Your job is to analyze raw intelligence data and determine if it represents a threat
@@ -177,6 +186,13 @@ class TriageAgent:
 
             if result is None:
                 logger.warning(f"[triage] Could not parse LLM response: {response[:200]}")
+                await activity_emit(
+                    ActivityType.TRIAGE_NO_THREAT,
+                    "triage_agent",
+                    f"LLM response could not be parsed for {org_name}",
+                    {"org": org_name, "response_preview": response[:200]},
+                    severity="warning",
+                )
                 return None
 
             if not result.get("is_threat", False):
@@ -212,8 +228,35 @@ class TriageAgent:
             )
 
             return result
+        except LLMNotConfigured as e:
+            logger.warning(f"[triage] Skipping analysis — LLM not configured: {e}")
+            await activity_emit(
+                ActivityType.TRIAGE_NO_THREAT,
+                "triage_agent",
+                f"LLM not configured — triage skipped for {org_name}",
+                {"org": org_name, "reason": "llm_not_configured"},
+                severity="warning",
+            )
+            return None
+        except LLMTransportError as e:
+            logger.error(f"[triage] LLM transport failure: {e}")
+            await activity_emit(
+                ActivityType.TRIAGE_NO_THREAT,
+                "triage_agent",
+                f"LLM call failed for {org_name}",
+                {"org": org_name, "error": str(e)[:300]},
+                severity="error",
+            )
+            return None
         except Exception as e:
-            logger.error(f"[triage] Analysis failed: {e}")
+            logger.exception(f"[triage] Analysis failed: {e}")
+            await activity_emit(
+                ActivityType.TRIAGE_NO_THREAT,
+                "triage_agent",
+                f"Triage agent crashed for {org_name}",
+                {"org": org_name, "error": str(e)[:300]},
+                severity="error",
+            )
             return None
 
     def _parse_json_response(self, response: str) -> dict | None:
@@ -272,98 +315,14 @@ VIP Emails: {', '.join(e for v in org_profile.get('vips', []) for e in v.get('em
 Analyze whether this intelligence represents a threat to this organization."""
 
     async def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
-        """Call the configured LLM provider."""
-        if self.provider == "ollama":
-            return await self._call_ollama(system_prompt, user_prompt)
-        elif self.provider == "openai":
-            return await self._call_openai(system_prompt, user_prompt)
-        elif self.provider == "anthropic":
-            return await self._call_anthropic(system_prompt, user_prompt)
-        else:
-            raise ValueError(f"Unknown LLM provider: {self.provider}")
+        """Dispatch to the configured LLM provider via ``src.llm.providers``.
 
-    async def _call_ollama(self, system_prompt: str, user_prompt: str) -> str:
-        import aiohttp
-
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{self.base_url}/api/chat",
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    "stream": False,
-                    "format": "json",
-                },
-            ) as resp:
-                data = await resp.json()
-                return data["message"]["content"]
-
-    async def _call_openai(self, system_prompt: str, user_prompt: str) -> str:
-        import aiohttp
-
-        # z.ai and OpenAI-compatible APIs: base_url may already include path
-        base = self.base_url.rstrip("/")
-        if base.endswith("/v4") or base.endswith("/v1"):
-            url = f"{base}/chat/completions"
-        else:
-            url = f"{base}/v1/chat/completions"
-
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-        }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url,
-                headers=headers,
-                json={
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                },
-            ) as resp:
-                data = await resp.json()
-                logger.debug(f"[triage] LLM response keys: {list(data.keys())}")
-
-                # Handle both OpenAI and z.ai response formats
-                if "choices" in data:
-                    return data["choices"][0]["message"]["content"]
-                elif "data" in data and "choices" in data["data"]:
-                    return data["data"]["choices"][0]["message"]["content"]
-                elif "result" in data:
-                    return data["result"]
-                elif "output" in data:
-                    return data["output"]
-                else:
-                    logger.error(f"[triage] Unexpected LLM response format: {list(data.keys())} — {str(data)[:500]}")
-                    raise ValueError(f"Unexpected response format: {list(data.keys())}")
-
-    async def _call_anthropic(self, system_prompt: str, user_prompt: str) -> str:
-        import aiohttp
-
-        headers = {
-            "x-api-key": self.api_key,
-            "Content-Type": "application/json",
-            "anthropic-version": "2023-06-01",
-        }
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.anthropic.com/v1/messages",
-                headers=headers,
-                json={
-                    "model": self.model,
-                    "max_tokens": 1024,
-                    "system": system_prompt,
-                    "messages": [{"role": "user", "content": user_prompt}],
-                },
-            ) as resp:
-                data = await resp.json()
-                return data["content"][0]["text"]
+        Raises ``LLMNotConfigured`` when credentials are absent so the
+        triage path can emit a structured ``triage_skipped`` activity
+        rather than silently returning a degraded result.
+        """
+        provider = get_provider(settings.llm)
+        return await provider.call(system_prompt, user_prompt)
 
     def _validate_enum(self, value: str | None, enum_class, default):
         if value is None:
