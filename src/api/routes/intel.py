@@ -654,6 +654,59 @@ async def sigma_translate(
     }
 
 
+class YaraScanRequest(BaseModel):
+    """yara-x scan over a base64-encoded blob (P2 #2.10)."""
+    rules_text: str
+    sample_b64: str
+
+
+@router.get("/yara/availability")
+async def yara_availability(analyst: AnalystUser):
+    from src.intel.yarax_capa import is_available
+    return is_available()
+
+
+@router.post("/yara/scan")
+async def yara_scan(
+    body: YaraScanRequest,
+    analyst: AnalystUser,
+):
+    """Compile + scan once. For repeated scans against the same rules
+    use the in-process scanner — this route is for ad-hoc analyst use."""
+    import asyncio
+    import base64
+    from src.intel.yarax_capa import scan_bytes
+
+    try:
+        sample = base64.b64decode(body.sample_b64, validate=False)
+    except Exception:
+        raise HTTPException(400, "sample_b64 is not valid base64")
+    matches = await asyncio.to_thread(scan_bytes, sample, rules_text=body.rules_text)
+    return {"matches": [m.to_dict() for m in matches]}
+
+
+class CapaExtractRequest(BaseModel):
+    """Submit a base64-encoded PE / ELF / Mach-O for capa analysis."""
+    sample_b64: str
+
+
+@router.post("/capa/extract")
+async def capa_extract(
+    body: CapaExtractRequest,
+    analyst: AnalystUser,
+):
+    import asyncio
+    import base64
+    from src.intel.yarax_capa import extract_capabilities
+
+    try:
+        sample = base64.b64decode(body.sample_b64, validate=False)
+    except Exception:
+        raise HTTPException(400, "sample_b64 is not valid base64")
+    result = await asyncio.to_thread(extract_capabilities, sample)
+    return result.to_dict()
+
+
 class KestrelRenderRequest(BaseModel):
     title: str
     source_name: str  # stixshifter module name (splunk, elastic_ecs, …)

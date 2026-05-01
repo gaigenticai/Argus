@@ -49,6 +49,12 @@ stix-shifter-modules-elastic-ecs>=8.1.0
 stix-shifter-modules-qradar>=8.1.0
 stix-shifter-modules-azure-sentinel>=8.1.0
 
+# YARA-X + Mandiant capa (P2 #2.10). yara-x is the Rust-rewrite of YARA
+# with a drop-in Python binding (~5x faster compile + scan vs yara-python);
+# capa extracts adversary capabilities from PE / ELF / Mach-O binaries.
+yara-x>=1.0.0
+flare-capa>=9.0.0
+
 # Notifications
 aiosmtplib>=3.0.0
 
