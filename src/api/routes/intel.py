@@ -654,6 +654,63 @@ async def sigma_translate(
     }
 
 
+class KestrelRenderRequest(BaseModel):
+    title: str
+    source_name: str  # stixshifter module name (splunk, elastic_ecs, …)
+    iocs: list[dict[str, str]]  # [{type, value}, …]
+    technique_id: str | None = None
+
+
+class KestrelExecuteRequest(BaseModel):
+    script: str
+    timeout_seconds: int = 120
+
+
+@router.get("/kestrel/availability")
+async def kestrel_availability(analyst: AnalystUser):
+    """Report whether the Kestrel CLI / module is available in this
+    deployment so the dashboard can grey out the "Run hunt" button
+    when only the script-rendering path is usable."""
+    from src.intel.kestrel_hunt import is_available
+    return is_available()
+
+
+@router.post("/kestrel/render")
+async def kestrel_render(
+    body: KestrelRenderRequest,
+    analyst: AnalystUser,
+):
+    """Compose a Kestrel hunt script — pure function, works regardless
+    of whether Kestrel is installed. The output script is the durable
+    case artefact."""
+    from src.intel.kestrel_hunt import render_hunt
+
+    iocs = [(d.get("type", ""), d.get("value", "")) for d in body.iocs
+            if d.get("value")]
+    if not iocs:
+        raise HTTPException(400, "at least one IOC required")
+    hunt = render_hunt(
+        title=body.title, source_name=body.source_name,
+        iocs=iocs, technique_id=body.technique_id,
+    )
+    return hunt.to_dict()
+
+
+@router.post("/kestrel/execute")
+async def kestrel_execute(
+    body: KestrelExecuteRequest,
+    analyst: AnalystUser,
+):
+    """Run a Kestrel hunt script. Returns ``available=False`` when
+    Kestrel is not installed; the analyst can still copy the script."""
+    from src.intel.kestrel_hunt import execute_hunt
+
+    result = await execute_hunt(
+        body.script, timeout_seconds=body.timeout_seconds,
+    )
+    return result.to_dict()
+
+
 class StixTranslateRequest(BaseModel):
     stix_pattern: str
     modules: list[str] | None = None
