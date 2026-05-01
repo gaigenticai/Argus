@@ -296,3 +296,138 @@ async def test_taxii_invalid_added_after_returns_400(
 async def test_taxii_route_requires_auth(client):
     r = await client.get("/taxii2/")
     assert r.status_code in (401, 403)
+
+
+# ── TAXII 2.1 §1.6.6 content negotiation ────────────────────────────
+
+
+async def test_taxii_response_content_type_is_versioned(client, analyst_user):
+    """Discovery returns Content-Type: application/taxii+json;version=2.1."""
+    r = await client.get("/taxii2/", headers=analyst_user["headers"])
+    assert r.status_code == 200
+    ct = r.headers["content-type"].lower().replace(" ", "")
+    assert ct.startswith("application/taxii+json"), ct
+    assert "version=2.1" in ct, ct
+
+
+async def test_taxii_accept_versioned_taxii_json(client, analyst_user):
+    r = await client.get(
+        "/taxii2/api/",
+        headers={
+            **analyst_user["headers"],
+            "Accept": "application/taxii+json;version=2.1",
+        },
+    )
+    assert r.status_code == 200
+    ct = r.headers["content-type"].lower().replace(" ", "")
+    assert "application/taxii+json" in ct
+
+
+async def test_taxii_rejects_incompatible_accept_header(
+    client, analyst_user,
+):
+    r = await client.get(
+        "/taxii2/api/",
+        headers={
+            **analyst_user["headers"],
+            "Accept": "application/xml",
+        },
+    )
+    assert r.status_code == 406
+
+
+async def test_taxii_objects_accepts_stix_media_type(
+    client, analyst_user, session,
+):
+    """Objects endpoint accepts application/stix+json;version=2.1 and
+    advertises that media-type when the client requests it."""
+    org_id = await _system_org(session)
+    cid = collection_id_for_org(org_id)
+    r = await client.get(
+        f"/taxii2/api/collections/{cid}/objects/",
+        headers={
+            **analyst_user["headers"],
+            "Accept": "application/stix+json;version=2.1",
+        },
+    )
+    assert r.status_code == 200
+    ct = r.headers["content-type"].lower().replace(" ", "")
+    assert "application/stix+json" in ct, ct
+
+
+async def test_taxii_objects_rejects_xml_accept(client, analyst_user, session):
+    org_id = await _system_org(session)
+    cid = collection_id_for_org(org_id)
+    r = await client.get(
+        f"/taxii2/api/collections/{cid}/objects/",
+        headers={
+            **analyst_user["headers"],
+            "Accept": "text/xml",
+        },
+    )
+    assert r.status_code == 406
+
+
+async def test_taxii_objects_emits_date_added_headers(
+    client, analyst_user, session, organization,
+):
+    """X-TAXII-Date-Added-First / Last headers must be set when the
+    response carries indicators (TAXII 2.1 §5.4 Table 18)."""
+    from datetime import datetime, timedelta, timezone
+    from src.models.intel import IOC, IOCType
+
+    org_id = await _system_org(session)
+    now = datetime.now(timezone.utc)
+    for i, val in enumerate(("9.9.9.1", "9.9.9.2", "9.9.9.3")):
+        session.add(IOC(
+            ioc_type=IOCType.IPV4, value=val,
+            confidence=0.9,
+            first_seen=now - timedelta(hours=10),
+            last_seen=now - timedelta(minutes=i * 5),
+        ))
+    await session.commit()
+
+    cid = collection_id_for_org(org_id)
+    r = await client.get(
+        f"/taxii2/api/collections/{cid}/objects/?limit=50",
+        headers=analyst_user["headers"],
+    )
+    assert r.status_code == 200
+    assert "x-taxii-date-added-first" in r.headers
+    assert "x-taxii-date-added-last" in r.headers
+    # Newest-first ordering — the "last" timestamp should be ≥ "first".
+    first = r.headers["x-taxii-date-added-first"]
+    last = r.headers["x-taxii-date-added-last"]
+    assert first <= last, (first, last)
+
+
+async def test_taxii_objects_omits_date_added_when_empty(
+    client, analyst_user, session,
+):
+    """No X-TAXII-Date-Added-* headers when the envelope is empty —
+    avoids advertising a fake pagination cursor."""
+    org_id = await _system_org(session)
+    cid = collection_id_for_org(org_id)
+    # Use an added_after far in the future so no indicators match.
+    r = await client.get(
+        f"/taxii2/api/collections/{cid}/objects/"
+        "?added_after=2099-01-01T00:00:00Z",
+        headers=analyst_user["headers"],
+    )
+    assert r.status_code == 200
+    assert "x-taxii-date-added-first" not in r.headers
+    assert "x-taxii-date-added-last" not in r.headers
+
+
+async def test_taxii_accepts_no_explicit_accept_header(client, analyst_user):
+    """Curl-style requests with no Accept header still work — only an
+    *explicit* incompatible Accept gets a 406."""
+    headers = dict(analyst_user["headers"])
+    headers.pop("Accept", None)
+    r = await client.get("/taxii2/", headers=headers)
+    assert r.status_code == 200
+
+
+async def _system_org(session):
+    from src.core.tenant import get_system_org_id
+    return await get_system_org_id(session)

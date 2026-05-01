@@ -40940,8 +40940,26 @@
     },
     "/taxii2/": {
       "get": {
-        "description": "TAXII 2.1 discovery resource (RFC \u00a74.1).",
+        "description": "TAXII 2.1 discovery resource (\u00a74.1).",
         "operationId": "taxii_discovery_taxii2__get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "accept",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Accept"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -40950,6 +40968,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -40965,8 +40993,26 @@
     },
     "/taxii2/api/": {
       "get": {
-        "description": "API root resource (RFC \u00a74.2).",
+        "description": "API root resource (\u00a74.2).",
         "operationId": "taxii_api_root_taxii2_api__get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "accept",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Accept"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -40975,6 +41021,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -40992,6 +41048,24 @@
       "get": {
         "description": "List collections \u2014 one per tenant org. Argus is single-tenant\non-prem so this returns exactly one row in v1.",
         "operationId": "taxii_collections_list_taxii2_api_collections__get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "accept",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Accept"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
@@ -41000,6 +41074,16 @@
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "security": [
@@ -41015,7 +41099,7 @@
     },
     "/taxii2/api/collections/{collection_id}/": {
       "get": {
-        "description": "Single-collection descriptor (RFC \u00a75.2).",
+        "description": "Single-collection descriptor (\u00a75.2).",
         "operationId": "taxii_collection_info_taxii2_api_collections__collection_id___get",
         "parameters": [
           {
@@ -41025,6 +41109,22 @@
             "schema": {
               "title": "Collection Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "accept",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Accept"
             }
           }
         ],
@@ -41061,7 +41161,7 @@
     },
     "/taxii2/api/collections/{collection_id}/objects/": {
       "get": {
-        "description": "Stream the collection's STIX 2.1 indicators (RFC \u00a75.3).\n\n``?added_after=<RFC 3339>`` lets subscribers fetch only the diff\nsince their last poll. ``limit`` caps the envelope size; the\nresponse sets ``more=false`` because v1 doesn't paginate further\n\u2014 clients should call back with a tighter ``added_after``.",
+        "description": "Stream the collection's STIX 2.1 indicators (\u00a75.4).\n\n``?added_after=<RFC 3339>`` lets subscribers fetch only the diff\nsince their last poll. ``limit`` caps the envelope size. The\nresponse advertises ``X-TAXII-Date-Added-First/Last`` so clients\ncan paginate without reading the body.",
         "operationId": "taxii_collection_objects_taxii2_api_collections__collection_id__objects__get",
         "parameters": [
           {
@@ -41099,6 +41199,22 @@
               "minimum": 1,
               "title": "Limit",
               "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "accept",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Accept"
             }
           }
         ],
