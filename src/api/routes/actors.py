@@ -181,7 +181,7 @@ async def merge_actor(
 async def get_actor_navigator_layer(
     actor_id: uuid.UUID,
     analyst: AnalystUser,
-    matrix: str = Query(default="enterprise", regex="^(enterprise|ics)$"),
+    matrix: str = Query(default="enterprise", pattern="^(enterprise|ics)$"),
     db: AsyncSession = Depends(get_session),
 ):
     """Download a MITRE ATT&CK Navigator v4.5 layer for this actor.

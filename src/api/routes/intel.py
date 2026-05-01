@@ -558,3 +558,37 @@ async def list_cves(
         q = q.where(CveRecord.cvss_severity == severity.lower())
     q = q.order_by(CveRecord.epss_score.desc().nulls_last(), CveRecord.cve_id).limit(limit)
     return list((await db.execute(q)).scalars().all())
+
+
+# ─── Arabic phishing analyzer (P1 #1.6) ───────────────────────────────
+
+
+class PhishingAnalyzeRequest(BaseModel):
+    """Free-form message scoring — no DB lookups, no auth-context
+    mutation. Pass whatever you have; missing fields contribute 0
+    confidence to the result."""
+    subject: str = ""
+    body: str = ""
+    sender: str = ""
+    urls: list[str] = []
+
+
+@router.post("/phishing/analyze")
+async def analyze_phishing(
+    body: PhishingAnalyzeRequest,
+    analyst: AnalystUser,
+):
+    """Score an email/message against the Arabic-phishing analyzer.
+
+    Returns the full scoreboard (homoglyphs, bidi-overrides,
+    mixed-script domains, GCC pretexts, impersonated brands) so the
+    dashboard can render each signal individually. Pure compute — no
+    DB or external calls — so admin gating is intentionally not required.
+    """
+    from src.intel.arabic_phishing import analyze_message
+
+    score = analyze_message(
+        subject=body.subject, body=body.body,
+        sender=body.sender, urls=body.urls,
+    )
+    return score.to_dict()
