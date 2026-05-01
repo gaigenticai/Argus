@@ -55,6 +55,11 @@ stix-shifter-modules-azure-sentinel>=8.1.0
 yara-x>=1.0.0
 flare-capa>=9.0.0
 
+# PyMISP — Argus calls customer-private + CIRCL public MISP servers
+# (P2 #2.11). We consume the API only; the AGPL MISP server itself is
+# not bundled.
+pymisp>=2.5.0
+
 # Notifications
 aiosmtplib>=3.0.0
 

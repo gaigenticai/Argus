@@ -654,6 +654,59 @@ async def sigma_translate(
     }
 
 
+@router.get("/misp/availability")
+async def misp_availability(analyst: AnalystUser):
+    from src.integrations import misp as misp_mod
+    return {"configured": misp_mod.is_configured()}
+
+
+@router.get("/misp/events")
+async def misp_events(
+    analyst: AnalystUser,
+    days: int = Query(default=7, ge=1, le=90),
+    tag: str | None = None,
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    """List MISP events updated in the last N days. Optional tag filter."""
+    import asyncio
+    from src.integrations import misp as misp_mod
+
+    events = await asyncio.to_thread(
+        misp_mod.fetch_recent_events, days, tag=tag, limit=limit,
+    )
+    return {"events": [e.to_dict() for e in events]}
+
+
+@router.get("/misp/events/{event_uuid}/attributes")
+async def misp_event_attributes(
+    event_uuid: str,
+    analyst: AnalystUser,
+    to_ids_only: bool = Query(default=True),
+):
+    import asyncio
+    from src.integrations import misp as misp_mod
+
+    attrs = await asyncio.to_thread(
+        misp_mod.fetch_event_attributes, event_uuid, to_ids_only=to_ids_only,
+    )
+    return {"attributes": [a.to_dict() for a in attrs]}
+
+
+@router.get("/misp/galaxies/{galaxy_type}")
+async def misp_galaxy_clusters(
+    galaxy_type: str,
+    analyst: AnalystUser,
+    limit: int = Query(default=100, ge=1, le=500),
+):
+    import asyncio
+    from src.integrations import misp as misp_mod
+
+    clusters = await asyncio.to_thread(
+        misp_mod.fetch_galaxy_clusters, galaxy_type, limit=limit,
+    )
+    return {"clusters": [c.to_dict() for c in clusters]}
+
+
 class YaraScanRequest(BaseModel):
     """yara-x scan over a base64-encoded blob (P2 #2.10)."""
     rules_text: str
