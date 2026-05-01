@@ -2,16 +2,19 @@
 
 The dashboard's KPI tiles pull from the system org (Demo Bank). The
 realistic seed only creates 2 alerts there, so the dashboard reads
-``2 / 1 / 2 / 0`` which reads as "no traffic" to a CIO. This script
-adds ~30 additional alerts spread across all severities and statuses
+``2 / 1 / 2 / 0`` which reads as "no traffic" to a CIO. This module
+adds ~25 additional alerts spread across all severities and statuses
 (including a healthy resolved/closed bucket) so the tiles look like a
 real production install.
 
-Idempotent: skips if Demo Bank already has 10+ alerts.
+Idempotent: short-circuits if Demo Bank already has 12+ alerts.
 
-Usage:
-    docker exec -e ARGUS_SEED_MODE=realistic -e ARGUS_DEBUG=true \
-        argus-argus-api-1 python -m scripts._augment_demo_bank_alerts
+Two entry points:
+
+  * ``augment_demo_bank_alerts(session)`` — call from another seed
+    script (used by ``scripts.seed.realistic``).
+  * ``python -m scripts._augment_demo_bank_alerts`` — standalone
+    runner that opens its own session.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 def _refuse_in_production() -> None:
@@ -156,67 +160,84 @@ ALERT_TEMPLATES = [
 ]
 
 
-async def main():
-    from src.storage import database as _db
+async def augment_demo_bank_alerts(session: AsyncSession) -> int:
+    """Insert the realistic alert mix into Argus Demo Bank.
+
+    Returns the number of alerts inserted. Re-running on a populated
+    Demo Bank is a no-op (returns 0).
+    """
     from src.models.threat import Alert, Organization
+
+    org = (await session.execute(
+        select(Organization).where(Organization.name == _DEMO_BANK_NAME)
+    )).scalar_one_or_none()
+    if not org:
+        return 0
+    existing = (await session.execute(
+        select(func.count(Alert.id)).where(Alert.organization_id == org.id)
+    )).scalar_one() or 0
+    if existing >= 12:
+        return 0
+
+    # Deterministic seed so the timeline spread is reproducible across
+    # fresh installs.
+    rng = random.Random(0xA8DE0BA8)
+    added = 0
+    now = datetime.now(timezone.utc)
+    for sev, status, category, title, summary, conf in ALERT_TEMPLATES:
+        existing_title = (await session.execute(
+            select(Alert.id).where(
+                Alert.organization_id == org.id, Alert.title == title
+            )
+        )).scalar_one_or_none()
+        if existing_title:
+            continue
+        offset_h = rng.randint(2, 720)  # 2h to 30d ago
+        a = Alert(
+            organization_id=org.id,
+            category=category,
+            severity=sev,
+            status=status,
+            title=title,
+            summary=summary,
+            confidence=conf,
+            matched_entities={"brand": "Argus Demo Bank"},
+            recommended_actions=[
+                "Triage and assign to SOC L2",
+                "Capture evidence to vault before takedown",
+                "Cross-reference with active investigations",
+            ],
+            agent_reasoning=(
+                f"Auto-classified by triage agent v2; matched on brand_terms + "
+                f"tech_stack heuristics with confidence {conf:.2f}."
+            ),
+            analyst_notes=(
+                "Closed — verified resolved per IR runbook." if status == "resolved"
+                else "Suppressed — analyst confirmed false-positive after enrichment." if status == "false_positive"
+                else "Active workstream; tracked in case workspace."
+            ) if status in {"resolved", "false_positive"} else None,
+            details={"triage_version": "2.1", "model": "claude-sonnet-4-6", "provider": "bridge"},
+        )
+        a.created_at = now - timedelta(hours=offset_h)
+        session.add(a)
+        added += 1
+    await session.flush()
+    return added
+
+
+async def _main():
+    from src.storage import database as _db
 
     await _db.init_db()
     if _db.async_session_factory is None:
         print("init_db failed", file=sys.stderr)
         sys.exit(1)
-
     async with _db.async_session_factory() as session:
-        org = (await session.execute(
-            select(Organization).where(Organization.name == _DEMO_BANK_NAME)
-        )).scalar_one_or_none()
-        if not org:
-            print(f"No '{_DEMO_BANK_NAME}' org — run scripts.seed first", file=sys.stderr)
-            sys.exit(2)
-        existing = (await session.execute(
-            select(func.count(Alert.id)).where(Alert.organization_id == org.id)
-        )).scalar_one() or 0
-        if existing >= 12:
-            print(f"Demo Bank already has {existing} alerts — skipping (idempotent).")
-            return
-        added = 0
-        for sev, status, category, title, summary, conf in ALERT_TEMPLATES:
-            existing_title = (await session.execute(
-                select(Alert.id).where(Alert.organization_id == org.id, Alert.title == title)
-            )).scalar_one_or_none()
-            if existing_title:
-                continue
-            # Spread ages so the activity feed looks lived-in.
-            offset_h = random.randint(2, 720)  # 2h to 30d ago
-            now = datetime.now(timezone.utc)
-            a = Alert(
-                organization_id=org.id,
-                category=category,
-                severity=sev,
-                status=status,
-                title=title,
-                summary=summary,
-                confidence=conf,
-                matched_entities={"brand": "Argus Demo Bank"},
-                recommended_actions=[
-                    "Triage and assign to SOC L2",
-                    "Capture evidence to vault before takedown",
-                    "Cross-reference with active investigations",
-                ],
-                agent_reasoning=f"Auto-classified by triage agent v2; matched on brand_terms + tech_stack heuristics with confidence {conf:.2f}.",
-                analyst_notes=(
-                    "Closed — verified resolved per IR runbook." if status == "resolved"
-                    else "Suppressed — analyst confirmed false-positive after enrichment." if status == "false_positive"
-                    else "Active workstream; tracked in case workspace."
-                ) if status in {"resolved", "false_positive"} else None,
-                details={"triage_version": "2.1", "model": "claude-sonnet-4-6", "provider": "bridge"},
-            )
-            a.created_at = now - timedelta(hours=offset_h)
-            session.add(a)
-            added += 1
+        added = await augment_demo_bank_alerts(session)
         await session.commit()
-        print(f"Added {added} alerts to Demo Bank (existing {existing}).")
+        print(f"Added {added} alerts to Demo Bank.")
 
 
 if __name__ == "__main__":
     _refuse_in_production()
-    asyncio.run(main())
+    asyncio.run(_main())

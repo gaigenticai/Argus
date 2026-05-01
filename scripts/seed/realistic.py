@@ -118,6 +118,13 @@ async def run(
         await _seed_example_threat_hunt(session)
         await session.commit()
 
+    # Phase 4b — augment Demo Bank with ~25 realistic alerts so the
+    # dashboard KPI tiles (Total / Critical / New / Resolved) read as
+    # a live install instead of "2 / 1 / 2 / 0".
+    async with session_factory() as session:
+        await _augment_demo_bank_phase(session)
+        await session.commit()
+
     # Phase 5 — comprehensive seed_extra fills the long tail that the
     # phases above don't cover (per-industry-org cases, evidence,
     # exposures, brand abuse, dlp, fraud, vulnerability scans, ratings,
@@ -172,6 +179,17 @@ async def _seed_social_platforms_lookup(session: AsyncSession) -> None:
             "ON CONFLICT (name) DO NOTHING"
         )
     )
+
+
+@section("Demo Bank realistic alert volume (full severity × status mix)")
+async def _augment_demo_bank_phase(session: AsyncSession) -> None:
+    from scripts._augment_demo_bank_alerts import augment_demo_bank_alerts
+
+    added = await augment_demo_bank_alerts(session)
+    if added:
+        logger.info(f"    ↳ inserted {added} Demo Bank alerts")
+    else:
+        logger.info("    ↳ Demo Bank already has enough alerts; skipping")
 
 
 @section("comprehensive seed_extra (long-tail per-industry-org fixtures)")
