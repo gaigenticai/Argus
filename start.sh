@@ -10,6 +10,16 @@
 #   ./start.sh wipe             # docker compose down -v (DESTROYS data)
 #   ./start.sh --no-open        # don't auto-open the browser
 #   ./start.sh --seed realistic # override seed mode (minimal|realistic|none)
+#   ./start.sh --with caldera   # bring up opt-in OSS sidekicks alongside
+#                                  Argus. Comma-separated. Names map to
+#                                  profiles in compose.optional.yml:
+#                                    caldera     → MITRE Caldera 5.x
+#                                    shuffle     → Shuffle SOAR
+#                                    velociraptor → Velociraptor IR
+#                                    misp        → MISP threat-sharing
+#                                  Each ``--with NAME`` also fills the
+#                                  matching ARGUS_*_URL env var so the
+#                                  connector finds the in-network host.
 #
 # Idempotent: re-running with no flags brings up the existing stack
 # without re-prompting.
@@ -39,6 +49,7 @@ NO_OPEN=0
 NO_PROMPT=0
 SEED_OVERRIDE=""
 SUBCMD=""
+EXTRA_PROFILES=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --reconfigure)  shift ;;            # legacy no-op — every run reconfigures
@@ -46,6 +57,8 @@ while [ $# -gt 0 ]; do
     --no-open)      NO_OPEN=1; shift ;;
     --seed)         SEED_OVERRIDE="$2"; shift 2 ;;
     --seed=*)       SEED_OVERRIDE="${1#*=}"; shift ;;
+    --with)         EXTRA_PROFILES="$2"; shift 2 ;;
+    --with=*)       EXTRA_PROFILES="${1#*=}"; shift ;;
     stop|wipe|logs|status) SUBCMD="$1"; shift ;;
     -h|--help)
       # Print the leading comment block (the file header) as the
@@ -598,12 +611,60 @@ if [ "$NEED_SEED" -eq 1 ]; then
     PROFILES="seed"
   fi
 fi
+
+# --with caldera,shuffle,velociraptor,misp brings up the matching
+# opt-in OSS sidekicks from compose.optional.yml. Each profile name
+# also auto-populates the matching ARGUS_*_URL env var so the
+# connector finds the service at its in-network hostname.
+COMPOSE_FILES="-f docker-compose.yml"
+if [ -n "$EXTRA_PROFILES" ]; then
+  COMPOSE_FILES="$COMPOSE_FILES -f compose.optional.yml"
+  for prof in $(echo "$EXTRA_PROFILES" | tr ',' ' '); do
+    case "$prof" in
+      caldera)
+        env_set ARGUS_CALDERA_URL "http://caldera:8888"
+        log "  ↪ caldera profile — set ARGUS_CALDERA_URL"
+        ;;
+      shuffle)
+        env_set ARGUS_SHUFFLE_URL "http://shuffle-frontend:80"
+        log "  ↪ shuffle profile — set ARGUS_SHUFFLE_URL"
+        ;;
+      velociraptor)
+        env_set ARGUS_VELOCIRAPTOR_URL "https://velociraptor:8889"
+        env_set ARGUS_VELOCIRAPTOR_VERIFY_SSL "false"
+        log "  ↪ velociraptor profile — set ARGUS_VELOCIRAPTOR_URL"
+        ;;
+      misp)
+        env_set ARGUS_MISP_URL "https://misp"
+        env_set ARGUS_MISP_VERIFY_SSL "false"
+        warn "  ↪ misp profile — generate the API key in MISP's web UI (https://localhost:8443) and put it in ARGUS_MISP_API_KEY"
+        ;;
+      opencti)
+        warn "  ↪ opencti profile — uncomment the opencti block in compose.optional.yml first (8 GB RAM)"
+        ;;
+      *)
+        warn "  ↪ unknown profile '$prof' — ignored"
+        ;;
+    esac
+    if [ -n "$PROFILES" ]; then
+      PROFILES="${PROFILES},$prof"
+    else
+      PROFILES="$prof"
+    fi
+  done
+fi
+
 if [ -n "$PROFILES" ]; then
   export COMPOSE_PROFILES="$PROFILES"
 fi
 
+# Re-export so all subsequent ``docker compose`` invocations see the
+# multi-file flag set when --with was used.
+export COMPOSE_FILE_OVERRIDE="$COMPOSE_FILES"
+dc() { docker compose $COMPOSE_FILE_OVERRIDE "$@"; }
+
 step "Building images (cached layers will be skipped)"
-docker compose build --quiet
+dc build --quiet
 log "build complete"
 
 if [ "$NEED_SEED" -eq 1 ]; then
@@ -611,7 +672,7 @@ if [ "$NEED_SEED" -eq 1 ]; then
 else
   step "Bringing up backend stack (postgres, redis, minio, api, worker)"
 fi
-docker compose up -d
+dc up -d
 log "containers running — waiting for API to pass /health"
 if [ "$NEED_SEED" -eq 1 ]; then
   log "  • argus-seed runs first; realistic mode takes ~60s, minimal ~10s"

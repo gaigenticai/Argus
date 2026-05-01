@@ -379,12 +379,14 @@ async def test_taxii_objects_emits_date_added_headers(
     org_id = await _system_org(session)
     now = datetime.now(timezone.utc)
     # Per-run unique IPs so the iocs uq_type_value index doesn't fight
-    # us across test re-runs in the same DB.
-    import uuid as _uuid
-    suffix = _uuid.uuid4().hex[:6]
-    last_octet_base = (int(suffix[:2], 16) % 200) + 10
+    # us across test re-runs (and parallel tests) in the same DB.
+    import secrets as _secrets
+    second_octet = (_secrets.randbelow(200) + 1)
+    third_octet = (_secrets.randbelow(200) + 1)
+    last_octet_base = (_secrets.randbelow(200) + 10)
     ips = tuple(
-        f"203.0.113.{last_octet_base + i}" for i in range(3)
+        f"10.{second_octet}.{third_octet}.{last_octet_base + i}"
+        for i in range(3)
     )
     for i, val in enumerate(ips):
         session.add(IOC(

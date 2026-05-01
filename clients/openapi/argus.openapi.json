@@ -17873,6 +17873,24 @@
         "title": "TriageRunResponse",
         "type": "object"
       },
+      "UrlscanSubmitRequest": {
+        "properties": {
+          "url": {
+            "title": "Url",
+            "type": "string"
+          },
+          "visibility": {
+            "default": "unlisted",
+            "title": "Visibility",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "title": "UrlscanSubmitRequest",
+        "type": "object"
+      },
       "UserListResponse": {
         "properties": {
           "total": {
@@ -30705,6 +30723,157 @@
           }
         ],
         "summary": "Telegram Health",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/urlscan/availability": {
+      "get": {
+        "operationId": "urlscan_availability_api_v1_intel_urlscan_availability_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Urlscan Availability",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/urlscan/health": {
+      "get": {
+        "operationId": "urlscan_health_api_v1_intel_urlscan_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Urlscan Health",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/urlscan/search": {
+      "get": {
+        "description": "Look up urlscan.io's recent scans for a domain or URL.\nRead-only, analyst-callable \u2014 surfaces existing public scans.",
+        "operationId": "urlscan_search_api_v1_intel_urlscan_search_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "target",
+            "required": true,
+            "schema": {
+              "title": "Target",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Urlscan Search",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/urlscan/submit": {
+      "post": {
+        "description": "Submit a fresh URL scan to urlscan.io. Admin-gated because\nsubmitting URLs to a third-party SaaS is the same data-leaving-\ntenant decision as sandbox submission \u2014 analysts request, admins\napprove.",
+        "operationId": "urlscan_submit_api_v1_intel_urlscan_submit_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UrlscanSubmitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Urlscan Submit",
         "tags": [
           "Threat Intelligence"
         ]

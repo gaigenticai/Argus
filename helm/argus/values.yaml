@@ -119,6 +119,8 @@ argus:
       apiId: ""                 # from my.telegram.org
       apiHash: ""
       sessionPath: "/var/lib/argus/telegram.session"
+    urlscan:                    # free signup at urlscan.io/user/signup/
+      apiKey: ""                # ~10 k scans / day on free tier
 
 # ── argus-api (FastAPI) ─────────────────────────────────────────────
 api:

@@ -21,3 +21,5 @@ GeoLite2-City.mmdb
 .dashboard.log
 logs/
 .local/
+
+var/backup-drill/

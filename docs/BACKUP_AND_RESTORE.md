@@ -132,3 +132,44 @@ VALUES ('backup_run', 'postgres', '{"size_bytes":..., "duration_ms":...}'::jsonb
 
 We intentionally do not let retention prune `backup_run` rows (override
 in `RetentionPolicy.audit_logs_days` = 3650 if any customer demands it).
+
+---
+
+## Automated drill — `scripts/backup_restore_drill.sh`
+
+Exec'able end-to-end drill that satisfies the SOC2 / SAMA "we tested
+restore on $DATE" evidence ask. Run quarterly + as part of every
+release-readiness check:
+
+```bash
+# Full drill — backup, restore into argus_restore, verify
+./scripts/backup_restore_drill.sh full
+
+# Just produce versioned artefacts under var/backup-drill/<TS>/
+./scripts/backup_restore_drill.sh backup
+
+# Restore from an existing backup dir
+./scripts/backup_restore_drill.sh restore var/backup-drill/2026-05-01T11-00-00Z
+
+# Re-hash artefacts vs the sealed MANIFEST.json
+./scripts/backup_restore_drill.sh verify var/backup-drill/2026-05-01T11-00-00Z
+```
+
+What the drill verifies:
+
+1. `pg_dump` against the live `argus` DB succeeds.
+2. Every object in the `argus-evidence` MinIO bucket is mirrored and
+   SHA-256'd; the manifest records each object's pre-mirror hash.
+3. A disposable `argus_restore` Postgres DB is dropped, recreated, and
+   `pg_restore`d from the captured dump.
+4. Sentinel-table row counts (`organizations`, `users`, `alerts`,
+   `iocs`, `cases`, `evidence_blobs`, `audit_logs`,
+   `feed_subscriptions`, `compliance_evidence`) match between the
+   source and the restore — non-zero exit if any drifts.
+5. The MinIO mirror is replayed into a sibling bucket and every
+   object's SHA-256 is recomputed and compared against the manifest —
+   non-zero exit if any hash drifts.
+
+The drill leaves a sealed `MANIFEST.json` next to the artefacts that
+records the timestamp + the dump's SHA-256 + the per-object hashes;
+attach this to your SOC2 audit binder as the per-quarter evidence row.

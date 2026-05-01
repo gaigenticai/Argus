@@ -1627,6 +1627,69 @@ async def adversary_emulation_coverage_score(
     return report.to_dict()
 
 
+# ── urlscan.io enrichment ──────────────────────────────────────────
+
+
+@router.get("/urlscan/availability")
+async def urlscan_availability(analyst: AnalystUser):
+    from src.enrichment.urlscan import is_configured
+    return {"configured": is_configured()}
+
+
+@router.get("/urlscan/health")
+async def urlscan_health(analyst: AnalystUser):
+    from src.enrichment.urlscan import health_check
+    r = await health_check()
+    return r.to_dict()
+
+
+@router.get("/urlscan/search")
+async def urlscan_search(
+    target: str,
+    analyst: AnalystUser,
+    limit: int = Query(default=10, ge=1, le=100),
+):
+    """Look up urlscan.io's recent scans for a domain or URL.
+    Read-only, analyst-callable — surfaces existing public scans."""
+    from src.enrichment.urlscan import search_recent
+    r = await search_recent(target, limit=limit)
+    return r.to_dict()
+
+
+class UrlscanSubmitRequest(BaseModel):
+    url: str
+    visibility: str = "unlisted"
+
+
+@router.post("/urlscan/submit")
+async def urlscan_submit(
+    body: UrlscanSubmitRequest,
+    request: Request,
+    admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """Submit a fresh URL scan to urlscan.io. Admin-gated because
+    submitting URLs to a third-party SaaS is the same data-leaving-
+    tenant decision as sandbox submission — analysts request, admins
+    approve."""
+    from src.enrichment.urlscan import submit_scan
+    r = await submit_scan(body.url, visibility=body.visibility)
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db, AuditAction.SANDBOX_SUBMIT, user=admin,
+        resource_type="urlscan", resource_id=body.url[:120],
+        details={
+            "url": body.url,
+            "visibility": body.visibility,
+            "success": r.success,
+            "error": r.error,
+        },
+        ip_address=ip, user_agent=ua,
+    )
+    await db.commit()
+    return r.to_dict()
+
+
 # ── Telegram collector (P3 #3.10) ───────────────────────────────────
 
 

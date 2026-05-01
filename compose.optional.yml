@@ -1,0 +1,176 @@
+# Opt-in OSS sidekicks (P3 audit closeout).
+#
+# Argus integrates with several open-source security tools that operators
+# typically run on their own infrastructure. For a single-host demo /
+# evaluation, ``./start.sh --with caldera,shuffle`` brings them up next to
+# Argus and auto-populates the matching ``ARGUS_*_URL`` env vars so the
+# connectors find them at ``http://<service>:<port>``.
+#
+# Per-service profiles:
+#   caldera        MITRE Caldera 5.x — adversary emulation
+#   shuffle        Shuffle SOAR
+#   velociraptor   Velociraptor live-endpoint forensics
+#   misp           MISP threat-sharing platform (~4 GB RAM)
+#   opencti        OpenCTI threat-intel platform (~8 GB RAM, needs ES + Redis)
+#
+# The heavyweights (MISP, OpenCTI, Wazuh) ship as skeleton blocks here —
+# they're documented for completeness but not auto-pulled. For production,
+# point Argus at your existing instance via the ARGUS_*_URL / TOKEN env
+# vars; you don't need this compose to use those connectors.
+
+name: argus
+
+services:
+
+  # ── MITRE Caldera ──────────────────────────────────────────────────
+  caldera:
+    image: mitre/caldera:latest
+    profiles: ["caldera"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8888:8888"
+    environment:
+      # Default red/admin creds the public image ships with — overrideable
+      # via a mounted conf file when an operator wants something other
+      # than the demo defaults.
+      - CALDERA_USER=red
+      - CALDERA_PASSWORD=${CALDERA_DEFAULT_PASSWORD:-admin}
+    volumes:
+      - calderadata:/usr/src/app/data
+
+  # ── Shuffle SOAR ───────────────────────────────────────────────────
+  shuffle-frontend:
+    image: ghcr.io/shuffle/shuffle-frontend:latest
+    profiles: ["shuffle"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3443:80"
+    environment:
+      - BACKEND_HOSTNAME=shuffle-backend
+
+  shuffle-backend:
+    image: ghcr.io/shuffle/shuffle-backend:latest
+    profiles: ["shuffle"]
+    restart: unless-stopped
+    environment:
+      - SHUFFLE_APP_HOTLOAD_FOLDER=/shuffle-apps
+      - SHUFFLE_FILE_LOCATION=/shuffle-files
+    volumes:
+      - shuffleapps:/shuffle-apps
+      - shufflefiles:/shuffle-files
+    depends_on:
+      - shuffle-opensearch
+
+  shuffle-opensearch:
+    image: opensearchproject/opensearch:2
+    profiles: ["shuffle"]
+    restart: unless-stopped
+    environment:
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+      - DISABLE_SECURITY_PLUGIN=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+      - discovery.type=single-node
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    volumes:
+      - shuffleopensearch:/usr/share/opensearch/data
+
+  # ── Velociraptor ───────────────────────────────────────────────────
+  # The official wlambert image ships a self-signed-cert demo mode. For a
+  # real deployment, generate server.config.yaml externally and mount it.
+  velociraptor:
+    image: wlambert/velociraptor:latest
+    profiles: ["velociraptor"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8889:8889"   # gRPC API
+      - "127.0.0.1:8000:8000"   # GUI
+    environment:
+      - VELOX_USER=admin
+      - VELOX_PASSWORD=${VELOCIRAPTOR_DEFAULT_PASSWORD:-velociraptor}
+      - VELOX_ROLE=administrator
+    volumes:
+      - veloxdata:/velociraptor
+
+  # ── MISP (heavyweight: ~4 GB RAM, MariaDB + Redis) ─────────────────
+  # Brought up under ``--with misp``. The Argus connector looks for
+  # ARGUS_MISP_URL and ARGUS_MISP_API_KEY; start.sh auto-fills the URL
+  # and prints a one-liner the operator runs in MISP's web UI to mint a
+  # key (MISP's first-launch UI generates the admin key interactively).
+  misp-db:
+    image: mariadb:10.11
+    profiles: ["misp"]
+    restart: unless-stopped
+    environment:
+      - MYSQL_USER=misp
+      - MYSQL_PASSWORD=${MISP_DB_PASSWORD:-misp}
+      - MYSQL_ROOT_PASSWORD=${MISP_DB_ROOT_PASSWORD:-mispRoot}
+      - MYSQL_DATABASE=misp
+    volumes:
+      - mispdb:/var/lib/mysql
+
+  misp-redis:
+    image: redis:7-alpine
+    profiles: ["misp"]
+    restart: unless-stopped
+
+  misp:
+    image: coolacid/misp-docker:core-latest
+    profiles: ["misp"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8443:443"
+    environment:
+      - MYSQL_HOST=misp-db
+      - MYSQL_USER=misp
+      - MYSQL_PASSWORD=${MISP_DB_PASSWORD:-misp}
+      - MYSQL_DATABASE=misp
+      - REDIS_FQDN=misp-redis
+      - DISIPV6=true
+    depends_on:
+      - misp-db
+      - misp-redis
+    volumes:
+      - mispconfig:/var/www/MISP/app/Config
+      - misplogs:/var/www/MISP/app/tmp/logs
+      - mispfiles:/var/www/MISP/app/files
+
+  # ── OpenCTI (heaviest: ~8 GB RAM, Elasticsearch + RabbitMQ) ───────
+  # Skeleton only — operators who want OpenCTI usually deploy it on a
+  # dedicated host. Argus's OpenCTI connector takes ``ARGUS_OPENCTI_URL``
+  # + ``ARGUS_OPENCTI_TOKEN`` and works against any reachable instance.
+  # Uncomment + tune when you actually want to co-host it.
+  #
+  # opencti-redis:
+  #   image: redis:7-alpine
+  #   profiles: ["opencti"]
+  # opencti-elasticsearch:
+  #   image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+  #   profiles: ["opencti"]
+  #   environment: [discovery.type=single-node, xpack.security.enabled=false]
+  # opencti-minio:
+  #   image: minio/minio:latest
+  #   profiles: ["opencti"]
+  # opencti-rabbitmq:
+  #   image: rabbitmq:3-management
+  #   profiles: ["opencti"]
+  # opencti:
+  #   image: opencti/platform:6.4.6
+  #   profiles: ["opencti"]
+  #   ports: ["127.0.0.1:8080:8080"]
+  #   environment:
+  #     - APP__ADMIN__EMAIL=admin@argus.local
+  #     - APP__ADMIN__PASSWORD=${OPENCTI_DEFAULT_PASSWORD:-opencti}
+  #     - APP__ADMIN__TOKEN=${OPENCTI_ADMIN_TOKEN:-}
+
+volumes:
+  calderadata:
+  shuffleapps:
+  shufflefiles:
+  shuffleopensearch:
+  veloxdata:
+  mispdb:
+  mispconfig:
+  misplogs:
+  mispfiles:

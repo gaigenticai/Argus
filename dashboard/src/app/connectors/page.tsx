@@ -4,22 +4,18 @@
  * Connectors page (P3 #3.4 closeout — answers the audit's "no
  * dashboard UI for any P3 connector" finding).
  *
- * One page, one table per P3 group: EDR, email-gateway, sandbox, SOAR,
- * breach providers, forensics, telegram collector, adversary
- * emulation. Each row shows the connector's configured state and a
- * "Health check" action that hits the backend's per-name health
- * endpoint. The page is read-only — credentials are configured via
- * env vars / Helm values on the server.
+ * One page, one Section per P3 group. Read-only — credentials live in
+ * env vars / Helm values; this page surfaces config state and
+ * on-demand health probes.
  */
 
 import { useEffect, useState } from "react";
 import {
   Plug,
+  Lock,
   CheckCircle2,
   XCircle,
-  Loader2,
   RefreshCw,
-  Lock,
   Shield,
   Mail,
   FlaskConical,
@@ -28,6 +24,7 @@ import {
   HardDrive,
   Send,
   Crosshair,
+  Globe,
 } from "lucide-react";
 import {
   api,
@@ -35,10 +32,21 @@ import {
   type ConnectorHealth,
   type P3ConnectorGroup,
 } from "@/lib/api";
+import {
+  Empty,
+  PageHeader,
+  Section,
+  SkeletonRows,
+} from "@/components/shared/page-primitives";
 import { useToast } from "@/components/shared/toast";
 
 interface GroupSpec {
-  group: P3ConnectorGroup | "telegram" | "adversary-emulation" | "forensics";
+  key:
+    | P3ConnectorGroup
+    | "telegram"
+    | "adversary-emulation"
+    | "forensics"
+    | "urlscan";
   label: string;
   blurb: string;
   icon: typeof Plug;
@@ -46,77 +54,126 @@ interface GroupSpec {
 
 const GROUPS: GroupSpec[] = [
   {
-    group: "edr",
-    label: "EDR (Endpoint Detection & Response)",
-    blurb: "CrowdStrike Falcon, SentinelOne, Microsoft Defender for Endpoint.",
+    key: "edr",
+    label: "EDR — Endpoint Detection & Response",
+    blurb: "CrowdStrike Falcon · SentinelOne · Microsoft Defender for Endpoint.",
     icon: Shield,
   },
   {
-    group: "email-gateway",
-    label: "Email Gateway",
-    blurb: "Proofpoint TAP, Mimecast, Abnormal Security.",
+    key: "email-gateway",
+    label: "Email gateway",
+    blurb: "Proofpoint TAP · Mimecast · Abnormal Security.",
     icon: Mail,
   },
   {
-    group: "sandbox",
-    label: "Sandbox / Detonation",
-    blurb: "CAPEv2 (self-host), Joe Sandbox, Hybrid-Analysis, VirusTotal Enterprise.",
+    key: "sandbox",
+    label: "Sandbox / detonation",
+    blurb: "CAPEv2 (self-host) · Joe Sandbox · Hybrid-Analysis · VirusTotal Enterprise.",
     icon: FlaskConical,
   },
   {
-    group: "soar",
+    key: "soar",
     label: "SOAR",
-    blurb: "Cortex XSOAR, Tines, Splunk SOAR (Phantom).",
+    blurb: "Cortex XSOAR · Tines · Splunk SOAR (Phantom).",
     icon: Workflow,
   },
   {
-    group: "breach",
-    label: "Breach / Credential Providers",
-    blurb: "HIBP Enterprise, IntelX, Dehashed.",
+    key: "breach",
+    label: "Breach / credential providers",
+    blurb: "HaveIBeenPwned Enterprise · IntelX · Dehashed.",
     icon: Database,
   },
   {
-    group: "forensics",
-    label: "IR Workbench",
+    key: "forensics",
+    label: "IR workbench",
     blurb: "Volatility 3 (memory) + Velociraptor (live endpoints).",
     icon: HardDrive,
   },
   {
-    group: "telegram",
-    label: "Telegram MTProto Collector",
+    key: "telegram",
+    label: "Telegram MTProto collector",
     blurb: "Iranian-APT + Arabic hacktivist channel monitor (legal-gated).",
     icon: Send,
   },
   {
-    group: "adversary-emulation",
-    label: "Adversary Emulation",
+    key: "adversary-emulation",
+    label: "Adversary emulation",
     blurb: "Atomic Red Team + MITRE Caldera. Coverage scoring per ATT&CK technique.",
     icon: Crosshair,
+  },
+  {
+    key: "urlscan",
+    label: "urlscan.io enrichment",
+    blurb: "Search historical URL scans · submit fresh scans (admin).",
+    icon: Globe,
   },
 ];
 
 export default function ConnectorsPage() {
   return (
-    <div className="space-y-8">
-      <header className="flex items-center gap-3">
-        <Plug className="size-6 text-[var(--color-accent)]" aria-hidden />
-        <div>
-          <h1 className="text-2xl font-semibold">Connectors</h1>
-          <p className="text-sm text-[var(--color-muted)]">
-            Phase 3 vendor and tooling integrations. Credentials are pinned via
-            environment variables / Helm values; this page surfaces config
-            state and on-demand health probes.
+    <div className="space-y-6">
+      <PageHeader
+        eyebrow={{ icon: Plug, label: "Phase 3" }}
+        title="Connectors"
+        description="Vendor and tooling integrations. Credentials are pinned via environment variables / Helm values; this page surfaces config state and on-demand health probes."
+      />
+
+      <div className="space-y-4">
+        {GROUPS.map((g) => {
+          if (g.key === "telegram") return <TelegramSection key={g.key} spec={g} />;
+          if (g.key === "adversary-emulation")
+            return <AdversaryEmulationSection key={g.key} spec={g} />;
+          if (g.key === "forensics") return <ForensicsSection key={g.key} spec={g} />;
+          if (g.key === "urlscan") return <UrlscanSection key={g.key} spec={g} />;
+          return <StandardGroup key={g.key} spec={g} />;
+        })}
+      </div>
+    </div>
+  );
+}
+
+
+// ── Group section shell ─────────────────────────────────────────────
+
+
+function GroupShell({
+  spec,
+  children,
+}: {
+  spec: GroupSpec;
+  children: React.ReactNode;
+}) {
+  const Icon = spec.icon;
+  return (
+    <Section>
+      <div
+        className="flex items-start gap-3 px-5 py-4"
+        style={{ borderBottom: "1px solid var(--color-border)" }}
+      >
+        <div
+          className="w-9 h-9 flex items-center justify-center shrink-0"
+          style={{
+            background: "var(--color-surface-muted)",
+            border: "1px solid var(--color-border)",
+            borderRadius: "5px",
+          }}
+        >
+          <Icon className="w-4 h-4" style={{ color: "var(--color-accent)" }} />
+        </div>
+        <div className="min-w-0">
+          <h2
+            className="text-[14px] font-semibold leading-tight"
+            style={{ color: "var(--color-ink)" }}
+          >
+            {spec.label}
+          </h2>
+          <p className="text-[12px] mt-0.5" style={{ color: "var(--color-muted)" }}>
+            {spec.blurb}
           </p>
         </div>
-      </header>
-
-      {GROUPS.map((g) => {
-        if (g.group === "telegram") return <TelegramSection key="telegram" spec={g} />;
-        if (g.group === "adversary-emulation") return <AdversaryEmulationSection key="ae" spec={g} />;
-        if (g.group === "forensics") return <ForensicsSection key="forensics" spec={g} />;
-        return <StandardGroup key={g.group} spec={g} />;
-      })}
-    </div>
+      </div>
+      {children}
+    </Section>
   );
 }
 
@@ -125,10 +182,12 @@ export default function ConnectorsPage() {
 
 
 function StandardGroup({ spec }: { spec: GroupSpec }) {
-  const group = spec.group as P3ConnectorGroup;
+  const group = spec.key as P3ConnectorGroup;
   const [rows, setRows] = useState<ConnectorRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [healths, setHealths] = useState<Record<string, ConnectorHealth | "checking" | undefined>>({});
+  const [healths, setHealths] = useState<
+    Record<string, ConnectorHealth | "checking" | undefined>
+  >({});
   const { toast } = useToast();
 
   useEffect(() => {
@@ -137,8 +196,7 @@ function StandardGroup({ spec }: { spec: GroupSpec }) {
       .listConnectors(group)
       .then((data) => {
         if (!mounted) return;
-        const rows = data.connectors ?? data.providers ?? [];
-        setRows(rows);
+        setRows(data.connectors ?? data.providers ?? []);
       })
       .catch(() => mounted && setRows([]))
       .finally(() => mounted && setLoading(false));
@@ -162,50 +220,79 @@ function StandardGroup({ spec }: { spec: GroupSpec }) {
   };
 
   return (
-    <Section spec={spec}>
+    <GroupShell spec={spec}>
       {loading ? (
-        <SectionLoading />
+        <SkeletonRows rows={3} columns={4} />
       ) : rows.length === 0 ? (
-        <SectionEmpty />
+        <Empty
+          icon={spec.icon}
+          title="No connectors discovered"
+          description="Verify the API service is reachable and re-load. If the connector module is missing, check src/integrations/ on the backend."
+        />
       ) : (
-        <table className="w-full text-sm">
-          <thead className="text-left text-xs uppercase text-[var(--color-muted)]">
-            <tr>
-              <th className="py-2 pr-4">Connector</th>
-              <th className="py-2 pr-4">Configured</th>
-              <th className="py-2 pr-4">Health</th>
-              <th className="py-2" />
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr
+              className="text-[10px] uppercase tracking-[0.8px]"
+              style={{
+                background: "var(--color-surface-muted)",
+                color: "var(--color-muted)",
+              }}
+            >
+              <th className="text-left px-5 py-2 font-semibold">Connector</th>
+              <th className="text-left px-3 py-2 font-semibold">Status</th>
+              <th className="text-left px-3 py-2 font-semibold">Health</th>
+              <th className="text-right px-5 py-2 font-semibold">Action</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => {
               const health = healths[r.name];
               return (
-                <tr key={r.name} className="border-t border-[var(--color-border)]">
-                  <td className="py-2 pr-4">
-                    <div className="font-medium">{r.label ?? r.name}</div>
-                    <div className="text-xs text-[var(--color-muted)]">{r.name}</div>
+                <tr
+                  key={r.name}
+                  style={{ borderTop: "1px solid var(--color-border)" }}
+                >
+                  <td className="px-5 py-3">
+                    <div
+                      className="font-semibold"
+                      style={{ color: "var(--color-ink)" }}
+                    >
+                      {r.label ?? r.name}
+                    </div>
+                    <div
+                      className="text-[11px] mt-0.5 font-mono"
+                      style={{ color: "var(--color-muted)" }}
+                    >
+                      {r.name}
+                    </div>
                   </td>
-                  <td className="py-2 pr-4">
+                  <td className="px-3 py-3">
                     <ConfiguredPill ok={r.configured} />
                   </td>
-                  <td className="py-2 pr-4">
+                  <td className="px-3 py-3">
                     <HealthCell health={health} />
                   </td>
-                  <td className="py-2 text-right">
+                  <td className="px-5 py-3 text-right">
                     <button
                       type="button"
                       onClick={() => probe(r.name)}
                       disabled={!r.configured || health === "checking"}
-                      className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-xs hover:bg-[var(--color-surface-muted)] disabled:opacity-50"
+                      className="inline-flex items-center gap-1.5 text-[12px] font-medium px-3 py-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                      style={{
+                        border: "1px solid var(--color-border)",
+                        borderRadius: "5px",
+                        background: "var(--color-canvas)",
+                        color: "var(--color-ink)",
+                      }}
                       title={
                         r.configured
                           ? "Run a live health probe"
                           : "Connector is not configured"
                       }
                     >
-                      <RefreshCw className="size-3" aria-hidden />
-                      Health
+                      <RefreshCw className="w-3 h-3" aria-hidden />
+                      Probe
                     </button>
                   </td>
                 </tr>
@@ -214,12 +301,46 @@ function StandardGroup({ spec }: { spec: GroupSpec }) {
           </tbody>
         </table>
       )}
-    </Section>
+    </GroupShell>
   );
 }
 
 
-// ── Forensics — Volatility + Velociraptor (separate availability shape) ──
+// ── Forensics / Telegram / Adversary-emulation / urlscan ───────────
+
+
+function StatGrid({ items }: { items: { label: string; ok: boolean; sub: string }[] }) {
+  return (
+    <div className="px-5 py-4 grid gap-3 sm:grid-cols-2">
+      {items.map((it) => (
+        <div
+          key={it.label}
+          className="px-4 py-3"
+          style={{
+            border: "1px solid var(--color-border)",
+            borderRadius: "5px",
+          }}
+        >
+          <div className="flex items-center justify-between gap-3">
+            <span
+              className="text-[13px] font-semibold"
+              style={{ color: "var(--color-ink)" }}
+            >
+              {it.label}
+            </span>
+            <ConfiguredPill ok={it.ok} />
+          </div>
+          <p
+            className="text-[12px] mt-1.5 font-mono"
+            style={{ color: "var(--color-muted)" }}
+          >
+            {it.sub}
+          </p>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 
 function ForensicsSection({ spec }: { spec: GroupSpec }) {
@@ -228,49 +349,48 @@ function ForensicsSection({ spec }: { spec: GroupSpec }) {
     velociraptor: { configured: boolean };
   } | null>(null);
   const [loading, setLoading] = useState(true);
-
   useEffect(() => {
-    let mounted = true;
+    let m = true;
     api
       .forensicsAvailability()
-      .then((d) => mounted && setData(d))
-      .catch(() => mounted && setData(null))
-      .finally(() => mounted && setLoading(false));
+      .then((d) => m && setData(d))
+      .catch(() => m && setData(null))
+      .finally(() => m && setLoading(false));
     return () => {
-      mounted = false;
+      m = false;
     };
   }, []);
-
   return (
-    <Section spec={spec}>
+    <GroupShell spec={spec}>
       {loading ? (
-        <SectionLoading />
+        <SkeletonRows rows={2} columns={2} />
       ) : !data ? (
-        <SectionEmpty />
+        <Empty
+          icon={spec.icon}
+          title="Forensics availability unknown"
+          description="API didn't respond — check that the worker container is running and reachable."
+        />
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Stat
-            label="Volatility 3"
-            ok={data.volatility.available}
-            sub={data.volatility.cli_path ?? "vol3 binary not on PATH"}
-          />
-          <Stat
-            label="Velociraptor"
-            ok={data.velociraptor.configured}
-            sub={
-              data.velociraptor.configured
+        <StatGrid
+          items={[
+            {
+              label: "Volatility 3",
+              ok: data.volatility.available,
+              sub: data.volatility.cli_path ?? "vol3 not on PATH — set ARGUS_VOLATILITY_CLI",
+            },
+            {
+              label: "Velociraptor",
+              ok: data.velociraptor.configured,
+              sub: data.velociraptor.configured
                 ? "ARGUS_VELOCIRAPTOR_URL + token present"
-                : "Set ARGUS_VELOCIRAPTOR_URL + ARGUS_VELOCIRAPTOR_TOKEN"
-            }
-          />
-        </div>
+                : "Set ARGUS_VELOCIRAPTOR_URL + ARGUS_VELOCIRAPTOR_TOKEN",
+            },
+          ]}
+        />
       )}
-    </Section>
+    </GroupShell>
   );
 }
-
-
-// ── Telegram MTProto collector ─────────────────────────────────────
 
 
 function TelegramSection({ spec }: { spec: GroupSpec }) {
@@ -280,63 +400,59 @@ function TelegramSection({ spec }: { spec: GroupSpec }) {
     curated_active: number;
   } | null>(null);
   const [loading, setLoading] = useState(true);
-
   useEffect(() => {
-    let mounted = true;
+    let m = true;
     api
       .telegramAvailability()
-      .then((d) => mounted && setAvail(d))
-      .catch(() => mounted && setAvail(null))
-      .finally(() => mounted && setLoading(false));
+      .then((d) => m && setAvail(d))
+      .catch(() => m && setAvail(null))
+      .finally(() => m && setLoading(false));
     return () => {
-      mounted = false;
+      m = false;
     };
   }, []);
-
   return (
-    <Section spec={spec}>
+    <GroupShell spec={spec}>
       {loading ? (
-        <SectionLoading />
+        <SkeletonRows rows={2} columns={2} />
       ) : !avail ? (
-        <SectionEmpty />
+        <Empty
+          icon={spec.icon}
+          title="Telegram availability unknown"
+          description="API didn't respond."
+        />
       ) : (
-        <div className="space-y-3">
-          <div className="flex flex-wrap items-center gap-3 text-sm">
+        <div className="px-5 py-4 space-y-3">
+          <div className="flex flex-wrap items-center gap-3 text-[13px]">
             <ConfiguredPill ok={avail.configured} />
-            <span className="text-[var(--color-muted)]">
+            <span style={{ color: "var(--color-muted)" }}>
               {avail.curated_active} active / {avail.curated_total} curated channels
             </span>
           </div>
           {!avail.configured && (
-            <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3 text-xs text-[var(--color-muted)]">
-              <Lock className="mr-1 inline size-3" aria-hidden />
-              Telethon collector is opt-in. Set{" "}
-              <code className="rounded bg-[var(--color-surface)] px-1 py-0.5 text-[10px]">
-                ARGUS_TELEGRAM_ENABLED=true
-              </code>{" "}
-              after legal review, plus{" "}
-              <code className="rounded bg-[var(--color-surface)] px-1 py-0.5 text-[10px]">
-                ARGUS_TELEGRAM_API_ID
-              </code>
-              ,{" "}
-              <code className="rounded bg-[var(--color-surface)] px-1 py-0.5 text-[10px]">
-                ARGUS_TELEGRAM_API_HASH
-              </code>
-              ,{" "}
-              <code className="rounded bg-[var(--color-surface)] px-1 py-0.5 text-[10px]">
-                ARGUS_TELEGRAM_SESSION_PATH
-              </code>
-              .
+            <div
+              className="px-3 py-2 text-[12px] flex items-start gap-2"
+              style={{
+                border: "1px solid var(--color-border)",
+                background: "var(--color-surface-muted)",
+                borderRadius: "5px",
+                color: "var(--color-body)",
+              }}
+            >
+              <Lock className="w-3.5 h-3.5 mt-0.5 shrink-0" aria-hidden />
+              <span>
+                Telethon collector is opt-in. Set <code>ARGUS_TELEGRAM_ENABLED=true</code>{" "}
+                after legal review, plus <code>ARGUS_TELEGRAM_API_ID</code>,{" "}
+                <code>ARGUS_TELEGRAM_API_HASH</code>,{" "}
+                <code>ARGUS_TELEGRAM_SESSION_PATH</code>.
+              </span>
             </div>
           )}
         </div>
       )}
-    </Section>
+    </GroupShell>
   );
 }
-
-
-// ── Adversary emulation (Caldera + Atomic Red Team) ────────────────
 
 
 function AdversaryEmulationSection({ spec }: { spec: GroupSpec }) {
@@ -350,125 +466,131 @@ function AdversaryEmulationSection({ spec }: { spec: GroupSpec }) {
     caldera: { configured: boolean };
   } | null>(null);
   const [loading, setLoading] = useState(true);
-
   useEffect(() => {
-    let mounted = true;
+    let m = true;
     api
       .adversaryEmulationAvailability()
-      .then((d) => mounted && setData(d))
-      .catch(() => mounted && setData(null))
-      .finally(() => mounted && setLoading(false));
+      .then((d) => m && setData(d))
+      .catch(() => m && setData(null))
+      .finally(() => m && setLoading(false));
     return () => {
-      mounted = false;
+      m = false;
     };
   }, []);
-
   return (
-    <Section spec={spec}>
+    <GroupShell spec={spec}>
       {loading ? (
-        <SectionLoading />
+        <SkeletonRows rows={2} columns={2} />
       ) : !data ? (
-        <SectionEmpty />
-      ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Stat
-            label="Atomic Red Team"
-            ok={data.atomic_red_team.techniques_indexed > 0}
-            sub={
-              data.atomic_red_team.filesystem_active
-                ? `Loaded from ${data.atomic_red_team.filesystem_path}`
-                : `Curated starter (${data.atomic_red_team.curated_count} tests · ${data.atomic_red_team.techniques_indexed} techniques)`
-            }
-          />
-          <Stat
-            label="MITRE Caldera"
-            ok={data.caldera.configured}
-            sub={
-              data.caldera.configured
-                ? "ARGUS_CALDERA_URL + ARGUS_CALDERA_API_KEY set"
-                : "Caldera URL + API key not configured"
-            }
-          />
-        </div>
-      )}
-    </Section>
-  );
-}
-
-
-// ── Shared bits ────────────────────────────────────────────────────
-
-
-function Section({
-  spec,
-  children,
-}: {
-  spec: GroupSpec;
-  children: React.ReactNode;
-}) {
-  const Icon = spec.icon;
-  return (
-    <section className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
-      <div className="mb-3 flex items-start gap-3">
-        <Icon
-          className="mt-0.5 size-5 text-[var(--color-accent)]"
-          aria-hidden
+        <Empty
+          icon={spec.icon}
+          title="Emulation availability unknown"
+          description="API didn't respond."
         />
-        <div>
-          <h2 className="text-base font-medium">{spec.label}</h2>
-          <p className="text-xs text-[var(--color-muted)]">{spec.blurb}</p>
-        </div>
-      </div>
-      {children}
-    </section>
+      ) : (
+        <StatGrid
+          items={[
+            {
+              label: "Atomic Red Team",
+              ok: data.atomic_red_team.techniques_indexed > 0,
+              sub: data.atomic_red_team.filesystem_active
+                ? `Loaded from ${data.atomic_red_team.filesystem_path}`
+                : `Curated starter — ${data.atomic_red_team.curated_count} tests · ${data.atomic_red_team.techniques_indexed} techniques`,
+            },
+            {
+              label: "MITRE Caldera",
+              ok: data.caldera.configured,
+              sub: data.caldera.configured
+                ? "ARGUS_CALDERA_URL + ARGUS_CALDERA_API_KEY set"
+                : "Caldera URL + API key not configured",
+            },
+          ]}
+        />
+      )}
+    </GroupShell>
   );
 }
 
-function SectionLoading() {
+
+function UrlscanSection({ spec }: { spec: GroupSpec }) {
+  const [configured, setConfigured] = useState<boolean | null>(null);
+  useEffect(() => {
+    let m = true;
+    fetch("/api/v1/intel/urlscan/availability", {
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${
+          typeof window !== "undefined"
+            ? localStorage.getItem("argus_access_token") ?? ""
+            : ""
+        }`,
+      },
+    })
+      .then((r) => r.json())
+      .then((j) => m && setConfigured(Boolean(j?.configured)))
+      .catch(() => m && setConfigured(false));
+    return () => {
+      m = false;
+    };
+  }, []);
   return (
-    <div className="flex items-center gap-2 py-6 text-sm text-[var(--color-muted)]">
-      <Loader2 className="size-4 animate-spin" aria-hidden />
-      Loading…
-    </div>
+    <GroupShell spec={spec}>
+      {configured === null ? (
+        <SkeletonRows rows={1} columns={2} />
+      ) : (
+        <StatGrid
+          items={[
+            {
+              label: "urlscan.io",
+              ok: configured,
+              sub: configured
+                ? "ARGUS_URLSCAN_API_KEY present — search + submit enabled"
+                : "Free signup at https://urlscan.io/user/signup/, then set ARGUS_URLSCAN_API_KEY",
+            },
+          ]}
+        />
+      )}
+    </GroupShell>
   );
 }
 
-function SectionEmpty() {
-  return (
-    <div className="py-6 text-sm text-[var(--color-muted)]">
-      No connectors discovered. Check that the service is reachable.
-    </div>
-  );
-}
+
+// ── Atoms ───────────────────────────────────────────────────────────
+
 
 function ConfiguredPill({ ok }: { ok: boolean }) {
   if (ok) {
     return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-[rgba(0,167,111,0.1)] px-2 py-0.5 text-xs font-medium text-[#007B55]">
-        <CheckCircle2 className="size-3" aria-hidden />
+      <span
+        className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5"
+        style={{
+          background: "rgba(16,185,129,0.08)",
+          color: "var(--color-success-dark)",
+          border: "1px solid rgba(16,185,129,0.25)",
+          borderRadius: "999px",
+        }}
+      >
+        <CheckCircle2 className="w-3 h-3" aria-hidden />
         Configured
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-surface-muted)] px-2 py-0.5 text-xs text-[var(--color-muted)]">
-      <Lock className="size-3" aria-hidden />
+    <span
+      className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5"
+      style={{
+        background: "var(--color-surface-muted)",
+        color: "var(--color-muted)",
+        border: "1px solid var(--color-border)",
+        borderRadius: "999px",
+      }}
+    >
+      <Lock className="w-3 h-3" aria-hidden />
       Not configured
     </span>
   );
 }
 
-function Stat({ label, ok, sub }: { label: string; ok: boolean; sub: string }) {
-  return (
-    <div className="rounded-md border border-[var(--color-border)] p-3">
-      <div className="flex items-center justify-between">
-        <span className="text-sm font-medium">{label}</span>
-        <ConfiguredPill ok={ok} />
-      </div>
-      <p className="mt-2 text-xs text-[var(--color-muted)]">{sub}</p>
-    </div>
-  );
-}
 
 function HealthCell({
   health,
@@ -476,23 +598,31 @@ function HealthCell({
   health: ConnectorHealth | "checking" | undefined;
 }) {
   if (health === undefined) {
-    return <span className="text-xs text-[var(--color-muted)]">—</span>;
+    return (
+      <span className="text-[11px]" style={{ color: "var(--color-muted)" }}>
+        —
+      </span>
+    );
   }
   if (health === "checking") {
     return (
-      <span className="inline-flex items-center gap-1 text-xs text-[var(--color-muted)]">
-        <Loader2 className="size-3 animate-spin" aria-hidden />
-        Checking…
+      <span
+        className="inline-flex items-center gap-1 text-[11px]"
+        style={{ color: "var(--color-muted)" }}
+      >
+        <RefreshCw className="w-3 h-3 animate-spin" aria-hidden />
+        Probing…
       </span>
     );
   }
   if (health.success) {
     return (
       <span
-        className="inline-flex items-center gap-1 text-xs text-[#007B55]"
+        className="inline-flex items-center gap-1 text-[11px] font-semibold"
+        style={{ color: "var(--color-success-dark)" }}
         title={typeof health.note === "string" ? health.note : undefined}
       >
-        <CheckCircle2 className="size-3" aria-hidden />
+        <CheckCircle2 className="w-3 h-3" aria-hidden />
         Reachable
       </span>
     );
@@ -503,11 +633,12 @@ function HealthCell({
     "Unreachable";
   return (
     <span
-      className="inline-flex items-center gap-1 text-xs text-[#B71D18]"
+      className="inline-flex items-center gap-1 text-[11px] font-semibold max-w-[280px] truncate"
+      style={{ color: "var(--color-error-dark)" }}
       title={detail}
     >
-      <XCircle className="size-3" aria-hidden />
-      <span className="max-w-[280px] truncate">{detail}</span>
+      <XCircle className="w-3 h-3 shrink-0" aria-hidden />
+      <span className="truncate">{detail}</span>
     </span>
   );
 }

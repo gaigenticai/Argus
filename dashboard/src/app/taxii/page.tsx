@@ -1,22 +1,17 @@
 "use client";
 
 /**
- * TAXII discovery page (P3 #3.4 — closes the audit's "no dashboard
- * surface for TAXII discovery" demo-killer).
- *
- * One screen the customer can hand to their downstream Splunk ES /
- * Anomali / ThreatConnect engineer:
- *
- *   - Discovery URL
- *   - API root URL
- *   - Collection ID + URL
- *   - "Copy" buttons + a Bearer-token banner reminding the operator
- *     to mint an API key for the subscriber rather than re-using a
- *     human user's JWT.
+ * TAXII discovery page (P3 #3.4).
  */
 
 import { useEffect, useState } from "react";
-import { Copy, ExternalLink, Loader2, Rss } from "lucide-react";
+import { Copy, ExternalLink, Rss, ShieldAlert } from "lucide-react";
+import {
+  Empty,
+  PageHeader,
+  Section,
+  SkeletonRows,
+} from "@/components/shared/page-primitives";
 import { useToast } from "@/components/shared/toast";
 
 
@@ -24,13 +19,11 @@ export default function TaxiiPage() {
   const [origin, setOrigin] = useState<string>("");
   const [collectionId, setCollectionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
   useEffect(() => {
     setOrigin(window.location.origin);
-    // Fetch the collection list to surface the live id. The TAXII
-    // routes are mounted at the root, not under /api/v1, so we hit
-    // them directly with the user's bearer token.
     const token = localStorage.getItem("argus_access_token") || "";
     fetch("/taxii2/api/collections/", {
       headers: {
@@ -42,9 +35,10 @@ export default function TaxiiPage() {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const body = await r.json();
         const id = body?.collections?.[0]?.id ?? null;
+        if (!id) throw new Error("no collections returned");
         setCollectionId(id);
       })
-      .catch(() => setCollectionId(null))
+      .catch((err) => setError((err as Error).message))
       .finally(() => setLoading(false));
   }, []);
 
@@ -59,83 +53,117 @@ export default function TaxiiPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex items-center gap-3">
-        <Rss className="size-6 text-[var(--color-accent)]" aria-hidden />
-        <div>
-          <h1 className="text-2xl font-semibold">TAXII 2.1 publish</h1>
-          <p className="text-sm text-[var(--color-muted)]">
-            Wire your downstream Splunk ES / Anomali / ThreatConnect /
-            OpenCTI / MISP at the URLs below. Argus serves STIX 2.1
-            indicators per TAXII 2.1.
+      <PageHeader
+        eyebrow={{ icon: Rss, label: "TAXII 2.1 publish" }}
+        title="Argus as a TAXII feed"
+        description="Wire your downstream Splunk ES / Anomali / ThreatConnect / OpenCTI / MISP at the URLs below. Argus serves STIX 2.1 indicators per the TAXII 2.1 spec; subscribers paginate via ?added_after."
+      />
+
+      <Section>
+        <div
+          className="px-5 py-3 flex items-start gap-2"
+          style={{
+            background: "rgba(245,158,11,0.05)",
+            borderBottom: "1px solid var(--color-border)",
+            color: "var(--color-warning-dark)",
+          }}
+        >
+          <ShieldAlert className="w-4 h-4 mt-0.5 shrink-0" aria-hidden />
+          <div className="text-[12px]">
+            <strong>Use a service API key</strong> as the subscriber's Bearer
+            token, not a human user's JWT. Mint one under{" "}
+            <a className="underline" href="/settings">
+              Settings → API keys
+            </a>{" "}
+            and assign it the analyst role.
+          </div>
+        </div>
+
+        <div className="px-5 py-4 space-y-2">
+          <UrlRow
+            label="Discovery URL"
+            value={origin ? `${origin}/taxii2/` : ""}
+            onCopy={(v) => copy("Discovery URL", v)}
+          />
+          <UrlRow
+            label="API root"
+            value={origin ? `${origin}/taxii2/api/` : ""}
+            onCopy={(v) => copy("API root", v)}
+          />
+          <UrlRow
+            label="Collections list"
+            value={origin ? `${origin}/taxii2/api/collections/` : ""}
+            onCopy={(v) => copy("Collections URL", v)}
+          />
+          {loading ? (
+            <SkeletonRows rows={1} columns={3} />
+          ) : error ? (
+            <Empty
+              icon={Rss}
+              title="Collection id unavailable"
+              description={`Resolving the live collection failed: ${error}. Make sure the deployment has at least one organization row and that you're authenticated.`}
+            />
+          ) : collectionId ? (
+            <>
+              <UrlRow
+                label="Collection id"
+                value={collectionId}
+                onCopy={(v) => copy("Collection ID", v)}
+                mono
+              />
+              <UrlRow
+                label="Objects endpoint"
+                value={
+                  origin
+                    ? `${origin}/taxii2/api/collections/${collectionId}/objects/`
+                    : ""
+                }
+                onCopy={(v) => copy("Objects URL", v)}
+              />
+            </>
+          ) : null}
+        </div>
+      </Section>
+
+      <Section>
+        <div
+          className="px-5 py-3"
+          style={{ borderBottom: "1px solid var(--color-border)" }}
+        >
+          <h2
+            className="text-[14px] font-semibold leading-tight"
+            style={{ color: "var(--color-ink)" }}
+          >
+            curl example
+          </h2>
+          <p
+            className="text-[12px] mt-0.5"
+            style={{ color: "var(--color-muted)" }}
+          >
+            Stream every indicator added since 2026-04-01:
           </p>
         </div>
-      </header>
-
-      <div className="rounded-md border border-[var(--color-border)] bg-[rgba(255,171,0,0.08)] p-3 text-sm text-[#996200]">
-        <strong>Use a service API key</strong> as the subscriber's
-        Bearer token, not a human user's JWT. Mint one at{" "}
-        <a className="underline" href="/settings">
-          Settings → API keys
-        </a>{" "}
-        and assign it the analyst role.
-      </div>
-
-      <div className="space-y-3">
-        <UrlRow
-          label="Discovery URL"
-          value={`${origin}/taxii2/`}
-          onCopy={(v) => copy("Discovery URL", v)}
-        />
-        <UrlRow
-          label="API root"
-          value={`${origin}/taxii2/api/`}
-          onCopy={(v) => copy("API root", v)}
-        />
-        <UrlRow
-          label="Collections list"
-          value={`${origin}/taxii2/api/collections/`}
-          onCopy={(v) => copy("Collections URL", v)}
-        />
-        {loading ? (
-          <div className="flex items-center gap-2 text-sm text-[var(--color-muted)]">
-            <Loader2 className="size-4 animate-spin" aria-hidden />
-            Resolving collection id…
-          </div>
-        ) : collectionId ? (
-          <>
-            <UrlRow
-              label="Collection id"
-              value={collectionId}
-              onCopy={(v) => copy("Collection ID", v)}
-              mono
-            />
-            <UrlRow
-              label="Objects endpoint"
-              value={`${origin}/taxii2/api/collections/${collectionId}/objects/`}
-              onCopy={(v) => copy("Objects URL", v)}
-            />
-          </>
-        ) : (
-          <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-muted)] p-3 text-xs text-[var(--color-muted)]">
-            Collection id unavailable — make sure the deployment has at
-            least one organization row and that you're authenticated.
-          </div>
-        )}
-      </div>
-
-      <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4 text-sm">
-        <h2 className="text-base font-medium">curl example</h2>
-        <p className="mt-1 text-xs text-[var(--color-muted)]">
-          Stream every indicator added since 2026-04-01:
-        </p>
-        <pre className="mt-2 overflow-x-auto rounded-md bg-[var(--color-surface-muted)] p-3 text-xs">
+        <pre
+          className="m-5 p-3 overflow-x-auto text-[12px] font-mono"
+          style={{
+            border: "1px solid var(--color-border)",
+            background: "var(--color-surface-muted)",
+            borderRadius: "5px",
+            color: "var(--color-ink)",
+          }}
+        >
           {`curl -H "Accept: application/taxii+json;version=2.1" \\
      -H "Authorization: Bearer <ARGUS_API_KEY>" \\
-     "${origin}/taxii2/api/collections/${collectionId ?? "<COLLECTION_ID>"}/objects/?added_after=2026-04-01T00:00:00Z"`}
+     "${origin || "https://argus.example"}/taxii2/api/collections/${
+            collectionId ?? "<COLLECTION_ID>"
+          }/objects/?added_after=2026-04-01T00:00:00Z"`}
         </pre>
-      </div>
+      </Section>
 
-      <p className="text-xs text-[var(--color-muted)]">
+      <p
+        className="text-[11px]"
+        style={{ color: "var(--color-muted)" }}
+      >
         Spec reference:{" "}
         <a
           className="inline-flex items-center gap-1 underline"
@@ -144,7 +172,7 @@ export default function TaxiiPage() {
           rel="noreferrer noopener"
         >
           OASIS TAXII 2.1
-          <ExternalLink className="size-3" aria-hidden />
+          <ExternalLink className="w-3 h-3" aria-hidden />
         </a>
       </p>
     </div>
@@ -164,25 +192,47 @@ function UrlRow({
   mono?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-3 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] p-3">
-      <div className="w-32 shrink-0 text-xs uppercase text-[var(--color-muted)]">
+    <div
+      className="flex items-center gap-3 px-3 py-2"
+      style={{
+        border: "1px solid var(--color-border)",
+        background: "var(--color-canvas)",
+        borderRadius: "5px",
+      }}
+    >
+      <div
+        className="w-32 shrink-0 text-[10px] uppercase tracking-[0.8px] font-semibold"
+        style={{ color: "var(--color-muted)" }}
+      >
         {label}
       </div>
       <code
         className={
-          "flex-1 truncate rounded bg-[var(--color-surface-muted)] px-2 py-1 text-xs " +
-          (mono ? "font-mono" : "")
+          "flex-1 truncate px-2 py-1 text-[12px] " + (mono ? "font-mono" : "")
         }
+        style={{
+          background: "var(--color-surface-muted)",
+          borderRadius: "5px",
+          color: "var(--color-ink)",
+        }}
         title={value}
       >
-        {value}
+        {value || "—"}
       </code>
       <button
         type="button"
         onClick={() => onCopy(value)}
-        className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-1 text-xs hover:bg-[var(--color-surface-muted)]"
+        disabled={!value}
+        className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1"
+        style={{
+          border: "1px solid var(--color-border)",
+          background: "var(--color-canvas)",
+          borderRadius: "5px",
+          color: "var(--color-ink)",
+          opacity: value ? 1 : 0.4,
+        }}
       >
-        <Copy className="size-3" aria-hidden />
+        <Copy className="w-3 h-3" aria-hidden />
         Copy
       </button>
     </div>
