@@ -132,14 +132,17 @@ def render_hunt(
     if not iocs:
         raise ValueError("at least one IOC required to render a Kestrel hunt")
 
-    # Build patterns per IOC.
-    patterns: list[str] = []
+    # Group IOCs by Kestrel entity type so each ``GET`` statement
+    # queries the right SCO (ipv4-addr / domain-name / file / …).
+    # Kestrel's GET reads one entity type per statement; mixing types
+    # in a single WHERE clause was the original bug — it always issued
+    # ``GET ipv4-addr`` no matter the IOC kind, so domain / hash hunts
+    # silently fetched zero rows.
+    grouped: dict[str, list[str]] = {}
     for kind, val in iocs:
-        kestrel_kind = _IOC_KESTREL_MAP.get(
+        ent_type, attr = _IOC_KESTREL_MAP.get(
             kind.lower(), (kind.lower(), "value"),
         )
-        ent_type, attr = kestrel_kind
-        # Hash by length when caller said "hash"
         if kind.lower() == "hash":
             n = len(val)
             if n == 32:
@@ -149,32 +152,36 @@ def render_hunt(
             else:
                 attr = "hashes.'SHA-256'"
         safe = val.replace("'", "''")
-        patterns.append(f"[{ent_type}:{attr} = '{safe}']")
+        grouped.setdefault(ent_type, []).append(f"[{ent_type}:{attr} = '{safe}']")
 
-    pattern_union = " OR ".join(patterns) if len(patterns) > 1 else patterns[0]
-
-    # Compose the hunt. Kestrel syntax:
-    #   nthits = GET ipv4-addr FROM stixshifter://splunk
-    #            WHERE [ipv4-addr:value = '203.0.113.7']
-    #            START 1d
-    var_name = f"hits_{(technique_id or 'argus').replace('.', '_').lower()}"
     title_comment = f"# Argus hunt: {title}"
     technique_comment = (
         f"# MITRE ATT&CK technique: {technique_id}" if technique_id else ""
     )
-    script_lines = [
-        title_comment,
-    ]
+    base_var = (technique_id or "argus").replace(".", "_").lower()
+
+    script_lines: list[str] = [title_comment]
     if technique_comment:
         script_lines.append(technique_comment)
-    script_lines += [
-        "",
-        f"{var_name} = GET ipv4-addr FROM stixshifter://{source_name}",
-        f"   WHERE {pattern_union}",
-        "   START 7d STOP now",
-        "",
-        f"DISP {var_name} ATTR id, value, src, dst",
-    ]
+    script_lines.append("")
+
+    # Emit one ``GET`` per entity type; DISP each so a mixed-IOC hunt
+    # produces multiple result tables rather than one type-mismatched
+    # empty table. The variable name encodes the entity for readability
+    # in the Kestrel REPL.
+    var_names: list[str] = []
+    for ent_type, patterns in grouped.items():
+        union = " OR ".join(patterns) if len(patterns) > 1 else patterns[0]
+        var_name = f"hits_{base_var}_{ent_type.replace('-', '_')}"
+        var_names.append(var_name)
+        script_lines.extend([
+            f"{var_name} = GET {ent_type} FROM stixshifter://{source_name}",
+            f"   WHERE {union}",
+            "   START 7d STOP now",
+            "",
+        ])
+    for vn in var_names:
+        script_lines.append(f"DISP {vn}")
     script = "\n".join(script_lines) + "\n"
 
     return HuntScript(

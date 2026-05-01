@@ -77,14 +77,31 @@ def test_render_routes_hash_by_length():
     assert "'SHA-256'" in sha256.script
 
 
-def test_render_unions_multiple_iocs():
+def test_render_groups_iocs_by_entity_type():
+    """Mixed-type IOCs split into one GET per entity type — Kestrel's
+    GET reads one SCO per statement, so a single ``GET ipv4-addr`` with
+    a domain pattern would silently return zero rows."""
     h = render_hunt(
         title="multi", source_name="elastic_ecs",
         iocs=[("ip", "1.1.1.1"), ("domain", "evil.example.com")],
     )
-    assert " OR " in h.script
     assert "1.1.1.1" in h.script
     assert "evil.example.com" in h.script
+    # Both entity-type GET statements present.
+    assert "GET ipv4-addr" in h.script
+    assert "GET domain-name" in h.script
+    # Each gets its own DISP.
+    assert h.script.count("DISP ") == 2
+
+
+def test_render_unions_iocs_of_same_type():
+    """Two IPs go into a single GET with `` OR `` between patterns."""
+    h = render_hunt(
+        title="multi-ip", source_name="splunk",
+        iocs=[("ip", "1.1.1.1"), ("ip", "2.2.2.2")],
+    )
+    assert " OR " in h.script
+    assert h.script.count("GET ipv4-addr") == 1
 
 
 def test_render_quotes_apostrophes():
