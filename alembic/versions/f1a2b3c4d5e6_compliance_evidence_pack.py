@@ -15,14 +15,20 @@ Tenant-scoped (organization_id, RLS via app.current_org GUC):
                                   their generated artifact metadata
 
 Retention:
-  - compliance_exports: hard expiry via expires_at column. Default policy
-    is 365 days (NCA-ECC requires evidence retention; SAMA-CSF requires
-    2y for regulated banks — tenants can override per-policy in
-    src/api/routes/retention.py).
-  - compliance_evidence: lifecycle is tied to its source row. When a
-    source alert/case is purged by retention, the corresponding evidence
-    rows are removed (handled in retention worker, not by FK CASCADE,
-    because source_id is polymorphic).
+  - compliance_exports: hard expiry via expires_at column (default 365
+    days, set in src/api/routes/compliance.py at create-export time).
+    The artifact bytes live in MinIO under
+    compliance/<org_id>/<export_id>.<ext>; lifecycle is operator-managed
+    rather than swept by the time-based retention worker — regulators
+    require deliberate retention of compliance evidence (NCA-ECC,
+    SAMA-CSF 2y for regulated banks).
+  - compliance_evidence: rows are deduped on (org, framework, control,
+    source_kind, source_id) by the mapper at export time and otherwise
+    untouched. ``source_id`` is polymorphic (alerts / cases / findings)
+    so cross-row purge would need either a polymorphic FK CASCADE (not
+    portable) or a dedicated retention bucket — both deferred to a
+    future phase. Today the table grows monotonically; the row count is
+    bounded by (alerts_in_window × controls_per_alert) per export.
 
 Revision ID: f1a2b3c4d5e6
 Revises: e9f0a1b2c3d4
