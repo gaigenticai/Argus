@@ -573,6 +573,30 @@ class PhishingAnalyzeRequest(BaseModel):
     urls: list[str] = []
 
 
+class DeciderClassifyRequest(BaseModel):
+    """Free-text → MITRE technique mapping. Pure compute."""
+    text: str
+    top_n: int = 5
+
+
+@router.post("/decider/classify")
+async def decider_classify(
+    body: DeciderClassifyRequest,
+    analyst: AnalystUser,
+):
+    """Run the curated CISA-Decider-style classifier (P2 #2.2) against
+    arbitrary text and return ranked technique hits with confidence
+    scores and the keywords that matched. Pure compute, analyst-gated."""
+    from src.intel.decider import classify_text, corpus_version, rule_count
+
+    hits = classify_text(body.text or "", top_n=body.top_n or 5)
+    return {
+        "corpus_version": corpus_version(),
+        "rule_count": rule_count(),
+        "hits": [h.to_dict() for h in hits],
+    }
+
+
 @router.post("/phishing/analyze")
 async def analyze_phishing(
     body: PhishingAnalyzeRequest,

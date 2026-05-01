@@ -225,6 +225,27 @@ class IngestionPipeline:
         if alerts:
             await self.db.flush()
 
+            # P2 #2.2 — auto-tag every newly-ingested alert with MITRE
+            # techniques via the CISA-Decider-style classifier. Runs
+            # AFTER the LLM triage agent so we get keyword-anchored
+            # backstop coverage even when the LLM bridge is offline,
+            # and idempotent on (alert, technique) so a re-ingestion
+            # path doesn't double-tag.
+            from src.intel.decider import apply_decider_to_alert
+
+            for alert in alerts:
+                try:
+                    await apply_decider_to_alert(
+                        self.db, alert_id=alert.id, top_n=3,
+                    )
+                except Exception as exc:  # noqa: BLE001 — don't break
+                    # ingestion if classifier hits an edge case
+                    logger.warning(
+                        "[pipeline] decider auto-tag failed for alert %s: %s",
+                        alert.id, exc,
+                    )
+            await self.db.flush()
+
             # Dispatch webhooks only for NEW alerts (not NEEDS_REVIEW)
             for alert in alerts:
                 if alert.status == AlertStatus.NEW.value:
