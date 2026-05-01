@@ -745,6 +745,18 @@ if [ ! -d node_modules ]; then
   npm install --silent
 fi
 
+# Clean up any prior ``next dev`` that survived a previous run — stale
+# processes hold a lockfile under .next/dev/lock and break this boot
+# with "Unable to acquire lock". The dashboard lives on the host (not
+# in Docker) so ``./start.sh stop`` doesn't touch it.
+if pgrep -f "next dev" >/dev/null 2>&1; then
+  warn "found a leftover ``next dev`` from a previous run — terminating"
+  pkill -f "next dev" 2>/dev/null || true
+  pkill -f "/dashboard/.next/dev/build/postcss.js" 2>/dev/null || true
+  sleep 1
+fi
+rm -f "$ROOT/dashboard/.next/dev/lock" 2>/dev/null || true
+
 # Tell the dashboard which API to talk to. Required by ``src/lib/api.ts``
 # which reads ``NEXT_PUBLIC_API_URL`` at build time. Exporting before
 # ``npm run dev`` ensures the chosen port flows into the bundle.
