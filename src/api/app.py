@@ -385,6 +385,8 @@ app.include_router(onboarding.router, prefix="/api/v1")
 app.include_router(evidence.router, prefix="/api/v1")
 app.include_router(cases.router, prefix="/api/v1")
 app.include_router(notifications.router, prefix="/api/v1")
+from src.api.routes import feed_subscriptions as feed_subscriptions_routes
+app.include_router(feed_subscriptions_routes.router, prefix="/api/v1")
 app.include_router(mitre.router, prefix="/api/v1")
 app.include_router(easm.router, prefix="/api/v1")
 app.include_router(ratings.router, prefix="/api/v1")

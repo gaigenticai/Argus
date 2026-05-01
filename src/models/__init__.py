@@ -17,3 +17,4 @@ from . import threat_hunts  # noqa: F401 — register ThreatHuntRun table
 from . import org_agent_settings  # noqa: F401 — register agent settings
 from . import compliance  # noqa: F401 — register compliance tables (P1 #1.3)
 from . import d3fend_oscal  # noqa: F401 — register D3FEND + OSCAL tables (P2 #2.12)
+from . import feed_subscription  # noqa: F401 — P3 #3.4 user-self-service feeds

@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "argus-sdk"
+version = "0.1.0"
+description = "Official Python client for the Argus / Marsad threat-intel platform"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Argus / Marsad" }]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Security",
+]
+dependencies = [
+  "httpx>=0.25",
+]
+
+[project.urls]
+Source = "https://github.com/gaigenticai/Argus"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["argus_sdk*"]
