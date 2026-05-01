@@ -573,6 +573,39 @@ class PhishingAnalyzeRequest(BaseModel):
     urls: list[str] = []
 
 
+class CIRCLLookupRequest(BaseModel):
+    """IOC enrichment via CIRCL public APIs (P2 #2.8). Provide one of
+    ``hash`` / ``domain`` / ``ip`` per request — multiple ignored."""
+    hash: str | None = None
+    domain: str | None = None
+    ip: str | None = None
+
+
+@router.post("/circl/enrich")
+async def circl_enrich(
+    body: CIRCLLookupRequest,
+    analyst: AnalystUser,
+):
+    """Run CIRCL hashlookup / Passive DNS / Passive SSL on the supplied
+    IOC and return the classification + records. pDNS and Passive SSL
+    require ARGUS_CIRCL_USERNAME / _PASSWORD; the wrappers no-op
+    silently when creds are absent so the route remains usable for
+    hash lookups against the anonymous endpoint."""
+    from src.enrichment import circl as circl_mod
+
+    if body.hash:
+        result = await circl_mod.hashlookup(body.hash)
+        return {"kind": "hash", "result":
+                result.to_dict() if result else None}
+    if body.domain:
+        records = await circl_mod.pdns_query(body.domain)
+        return {"kind": "pdns", "records": [r.to_dict() for r in records]}
+    if body.ip:
+        certs = await circl_mod.passive_ssl_query(body.ip)
+        return {"kind": "passive_ssl", "certs": [c.to_dict() for c in certs]}
+    raise HTTPException(400, "supply one of hash / domain / ip")
+
+
 class DeciderClassifyRequest(BaseModel):
     """Free-text → MITRE technique mapping. Pure compute."""
     text: str
