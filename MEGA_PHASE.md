@@ -211,21 +211,21 @@ Sovereign deployment on KSA STC Cloud / UAE Core42 / Khazna *plus* native NCA-EC
 | # | Item | Effort | Rationale |
 |---|---|---|---|
 | 2.1 | **OpenCTI integration** (Apache-2.0 graph) — wire the existing stub to a co-deployed OpenCTI; project Argus entities (alerts, IOCs, actors, cases) and relationships into OpenCTI; keep PostgreSQL as system-of-record; expose graph queries as a new `/graph/*` API; embed an OpenCTI graph view inside the dashboard. | 10d | Closes the knowledge-graph gap. RF charges $150K/yr for STIX export — we'd give it free. |
-| 2.2 | **CISA Decider** — auto-map free-text alert / IOC content to ATT&CK technique IDs with confidence scores. Wire into `triage_agent` + `feed_triage`. | 3d | Every alert auto-tagged to ATT&CK. Top-3 strategic move per audit. |
+| 2.2 | ✅ **SHIPPED 2026-05-01** — Decider-style classifier in `src/intel/decider.py`. 67-rule curated corpus (Phishing/Exec/Persistence/PrivEsc/Defense Evasion/CredAccess/Discovery/Lateral/C2/Exfil/Impact/Resource Dev). Wired into the alert ingestion pipeline so every newly-ingested alert is auto-tagged after the LLM triage. POST `/intel/decider/classify` route + 14/14 tests. | 3d | Every alert auto-tagged to ATT&CK. Top-3 strategic move per audit. |
 | 2.3 | **pySigma** + **sigma-cli** — auto-generate Sigma rules per IOC / per technique attachment; convert to 25+ SIEM dialects (Splunk SPL, Sentinel KQL, Elastic ES|QL, QRadar AQL, Chronicle YARA-L, Sumo Logic, Devo, Arctic Wolf …). | 4d | "Executable intel" promise. |
 | 2.4 | **Kestrel** threat-hunting DSL — embed `kestrel-lang` as a tool inside `threat_hunter_agent`; produce hunt scripts as artefacts on case timelines. | 4d | Mandiant charges $400/hr consulting; we ship the hunt itself. |
 | 2.5 | **STIX-Shifter** — embed the IBM/OCA library; translate STIX patterns into customer's data-source query language for 35+ sources (Splunk, Elastic, Sentinel, QRadar, CrowdStrike Falcon Data Replicator, Carbon Black, Sysmon, Snowflake, BigQuery, …). | 3d | Pairs with Kestrel + Sigma. |
-| 2.6 | **ATT&CK Navigator layer auto-generated per alert** — every alert detail page exports a Navigator layer JSON capturing matched techniques + actor TTPs; one-click "open in Navigator". | 2d | Visual proof of coverage; competitor parity. |
+| 2.6 | ✅ **SHIPPED 2026-05-01** — `src/intel/navigator_layer.py` generic v4.5 builder + `GET /api/v1/alerts/{id}/navigator-layer`. Combines AttackTechniqueAttachment rows + sighted-actor `known_ttps`. Per-square comments preserve provenance (triage_agent / actor:APT34 / manual). Dashboard "Navigator layer ↓" button on alert detail page. 9/9 tests. | 2d | Visual proof of coverage; competitor parity. |
 | 2.7 | **SIEM connectors** (4) | 10d | 80 % dealbreaker. |
 | | • Splunk HEC (HTTP Event Collector) — push every alert/IOC + Sigma rule | | |
 | | • Microsoft Sentinel webhook + Logs API + watchlist export | | |
 | | • Elastic bulk-ingest + ECS-shaped events + watcher rule | | |
 | | • IBM QRadar reference set + AQL via STIX-Shifter | | |
-| 2.8 | **CIRCL hashlookup** + **CIRCL pDNS** + **CIRCL Passive SSL** — public/free APIs, attribution required; wire as enrichment provider on IOC detail pages and inside `investigation_agent`. | 3d | Cheap, free, ME-relevant (CIRCL has strong Iran-APT coverage). |
+| 2.8 | ✅ **SHIPPED 2026-05-01** — `src/enrichment/circl.py` with three async wrappers (hashlookup, pDNS, Passive SSL) + circuit-breaker + graceful no-op when CIRCL creds aren't set. POST `/intel/circl/enrich` route. 17/17 tests with mocked aiohttp. | 3d | Cheap, free, ME-relevant (CIRCL has strong Iran-APT coverage). |
 | 2.9 | **Threat-actor attribution scoring** — confidence-weighted; combine sighting freshness, IOC overlap, TTP-in-scope, infrastructure-cluster proximity. Add `actor_confidence` model + UI badge. | 4d | "85 % likely vs 40 % likely" — a CISO question RF answers poorly on niche actors. |
 | 2.10 | **YARA → yara-x + capa** upgrade — replace existing YARA shell with the Rust yara-x (faster) + Mandiant capa (capability extraction); pull the **Loki / Thor Lite rule corpus** as ground-truth content. | 4d | Faster scans + replicated capability without bundling AGPL. |
 | 2.11 | **MISP integration via PyMISP only** — call CIRCL public + customer-private MISP servers; don't bundle the AGPL server. | 3d | Sharing communities + galaxy clusters. |
-| 2.12 | **MITRE D3FEND** + **MITRE OSCAL** — pull D3FEND defensive technique DB; map OSCAL machine-readable controls (NIST 800-53 / CSF 2.0 / ISO 27001 / PCI-DSS). | 3d | Backbone of compliance auto-mapping; underpins Phase 1 #1.3 with real data. |
+| 2.12 | ✅ **SHIPPED 2026-05-01** — Two new lookup tables (`d3fend_techniques`, `oscal_catalog_entries`). 24-row D3FEND curated subset + 30-row NIST 800-53 r5 curated subset ship with the seed; admin-triggered `refresh_from_upstream()` pulls the full ontology / OSCAL JSON when online. `defenses_for_attack(attack_ids)` matches base + sub-techniques. 7/7 tests. | 3d | Backbone of compliance auto-mapping; underpins Phase 1 #1.3 with real data. |
 
 ### Phase 2 — Definition of Done
 
