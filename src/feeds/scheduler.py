@@ -26,6 +26,12 @@ from src.feeds.tor_nodes_feed import TorNodesFeed
 from src.feeds.greynoise_feed import GreyNoiseFeed
 from src.feeds.otx_feed import OTXFeed
 from src.feeds.bgp_hijack_feed import BGPHijackFeed
+# P1 #1.7 — five commercial-licensable feeds
+from src.feeds.certstream_feed import CertStreamFeed
+from src.feeds.circl_misp_feed import CIRCLMispFeed
+from src.feeds.phishtank_certpl_feed import PhishTankCertPLFeed
+from src.feeds.ghsa_exploitdb_feed import GHSAExploitDBFeed
+from src.feeds.abusech_tls_feed import AbuseChTLSFeed
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +70,14 @@ DEFAULT_FEED_SCHEDULES: list[FeedSchedule] = [
     FeedSchedule(GreyNoiseFeed, interval_seconds=3600),      # 1 hour — GNQL scanner intel
     FeedSchedule(OTXFeed, interval_seconds=3600),            # 1 hour — OTX community pulses
     FeedSchedule(BGPHijackFeed, interval_seconds=3600),      # 1 hour — Cloudflare Radar BGP hijacks
+    # P1 #1.7 — five commercial-licensable feeds (license verified
+    # against each provider's published terms; all four below are CC0
+    # / open-data / public, no operator API key required to bootstrap).
+    FeedSchedule(CertStreamFeed, interval_seconds=1800),     # 30 min — crt.sh CT logs
+    FeedSchedule(CIRCLMispFeed, interval_seconds=21600),     # 6 hours — CIRCL OSINT MISP
+    FeedSchedule(PhishTankCertPLFeed, interval_seconds=21600),  # 6 hours
+    FeedSchedule(GHSAExploitDBFeed, interval_seconds=86400),    # 24 hours
+    FeedSchedule(AbuseChTLSFeed, interval_seconds=21600),    # 6 hours — SSLBL + JA3
 ]
 
 
