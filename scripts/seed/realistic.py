@@ -136,11 +136,12 @@ async def run(
         await _seed_extra_phase(session)
         await session.commit()
 
-    # Phase 6 — Compliance Evidence Pack catalog (P1 #1.3). Seeds the 4
-    # framework definitions + ~45 controls + ~95 mappings so the
-    # Compliance UI is populated immediately and a fresh ``POST
-    # /compliance/exports`` produces a non-empty pack against the demo
-    # alerts that already exist by this point in the pipeline.
+    # Phase 6 — Compliance Evidence Pack catalog (P1 #1.3). Seeds the
+    # 12 framework definitions + their reachable controls + signal
+    # mappings so the Compliance UI is populated immediately and a
+    # fresh ``POST /compliance/exports`` produces a non-empty pack
+    # against the demo alerts that already exist by this point in the
+    # pipeline.
     async with session_factory() as session:
         from src.compliance.catalog import seed_compliance_catalog
         await seed_compliance_catalog(session)
