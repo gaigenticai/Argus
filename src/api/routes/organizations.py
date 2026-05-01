@@ -245,6 +245,56 @@ async def update_current_organization(
     return org
 
 
+@router.get("/current/locale")
+async def get_current_locale(
+    analyst: AnalystUser = None,  # noqa: B008
+    db: AsyncSession = Depends(get_session),
+):
+    """Return the tenant's timezone + calendar (for the dashboard's
+    formatDate helper) along with the picker's allowed values."""
+    from src.core.locale import extract_locale, list_supported
+
+    org = await _resolve(db, "current")
+    locale = extract_locale(org)
+    return {**locale, "supported": list_supported()}
+
+
+@router.patch("/current/locale")
+async def update_current_locale(
+    body: dict,
+    request: Request,
+    admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """Patch one or both locale fields. Body: {timezone?, calendar_system?}."""
+    from src.core.locale import update_locale
+
+    org = await _resolve(db, "current")
+    try:
+        resolved = await update_locale(
+            db,
+            org.id,
+            timezone=body.get("timezone"),
+            calendar_system=body.get("calendar_system"),
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db,
+        AuditAction.ORG_UPDATE,
+        user=admin,
+        resource_type="organization",
+        resource_id=str(org.id),
+        details={"locale": resolved},
+        ip_address=ip,
+        user_agent=ua,
+    )
+    await db.commit()
+    return resolved
+
+
 @router.get("/{org_id}", response_model=OrgResponse)
 async def get_organization(
     org_id: str = Path(...),
