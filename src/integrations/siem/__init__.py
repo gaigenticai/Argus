@@ -10,8 +10,8 @@ existing SIEM:
 
 Each connector:
   - reads its config from env vars (operator-set)
-  - exposes is_configured(), push_alert(), push_ioc(), push_batch(),
-    health_check()
+  - exposes is_configured(), push_events(), push_alert() / push_alerts(),
+    push_ioc() / push_iocs(), health_check()
   - degrades gracefully when unconfigured (returns
     PushResult(success=False, note="not configured"))
   - uses src.core.http_circuit so a customer SIEM outage doesn't tar-pit
