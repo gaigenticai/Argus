@@ -1,5 +1,8 @@
 """Base crawler — all crawlers inherit from this."""
 
+from __future__ import annotations
+
+
 import asyncio
 import hashlib
 import logging
@@ -14,9 +17,9 @@ from aiohttp_socks import ProxyConnector
 from bs4 import BeautifulSoup, Tag
 
 from src.config.settings import settings
-from src.models.threat import SourceType
-
 from src.core.activity import ActivityType, emit as activity_emit
+from src.core.http_circuit import CircuitBreakerOpenError, get_breaker
+from src.models.threat import SourceType
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +135,13 @@ class BaseCrawler(ABC):
             )
             return None
 
+        # Adversarial audit D-16 — wrap the per-host fetch in the
+        # shared circuit breaker so one failing onion doesn't keep
+        # hammering its own service forever. Breaker is keyed by
+        # destination host; failure across attempts opens it.
+        host = (urlparse(url).hostname or "unknown")
+        breaker = get_breaker(f"crawl:{host}")
+
         async with self._semaphore:
             await activity_emit(
                 ActivityType.CRAWLER_FETCH,
@@ -139,29 +149,52 @@ class BaseCrawler(ABC):
                 f"Fetching {url}",
                 {"url": url, "use_tor": use_tor, "method": method},
             )
-            for attempt in range(settings.crawler.max_retries):
-                try:
-                    session = await self._get_session(use_tor=use_tor)
-                    async with session.request(method, url) as resp:
-                        if resp.status == 200:
-                            return await resp.text()
-                        logger.warning(
-                            f"[{self.name}] {url} returned {resp.status} (attempt {attempt + 1})"
-                        )
-                except Exception as e:
-                    logger.error(f"[{self.name}] Error fetching {url}: {e} (attempt {attempt + 1})")
-                    await activity_emit(
-                        ActivityType.CRAWLER_ERROR,
-                        self.name,
-                        f"Fetch error: {e}",
-                        {"url": url, "attempt": attempt + 1},
-                        severity="warning",
-                    )
+            try:
+                async with breaker:
+                    last_error: Exception | None = None
+                    for attempt in range(settings.crawler.max_retries):
+                        try:
+                            session = await self._get_session(use_tor=use_tor)
+                            async with session.request(method, url) as resp:
+                                if resp.status == 200:
+                                    return await resp.text()
+                                logger.warning(
+                                    f"[{self.name}] {url} returned {resp.status} (attempt {attempt + 1})"
+                                )
+                                last_error = RuntimeError(
+                                    f"HTTP {resp.status} from {url}"
+                                )
+                        except Exception as e:  # noqa: BLE001
+                            last_error = e
+                            logger.error(
+                                f"[{self.name}] Error fetching {url}: {e} (attempt {attempt + 1})"
+                            )
+                            await activity_emit(
+                                ActivityType.CRAWLER_ERROR,
+                                self.name,
+                                f"Fetch error: {e}",
+                                {"url": url, "attempt": attempt + 1},
+                                severity="warning",
+                            )
 
-                if attempt < settings.crawler.max_retries - 1:
-                    await self._delay()
+                        if attempt < settings.crawler.max_retries - 1:
+                            await self._delay()
 
-            return None
+                    # Surface the last error so the breaker counts the
+                    # failure; otherwise consecutive 5xx pages would not
+                    # contribute to opening the circuit.
+                    if last_error is not None:
+                        raise last_error
+                    return None
+            except CircuitBreakerOpenError:
+                logger.warning(
+                    "[%s] circuit OPEN for %s — skipping fetch", self.name, host
+                )
+                return None
+            except Exception:  # noqa: BLE001
+                # Breaker has now recorded the failure; suppress so the
+                # caller still gets None like the legacy contract.
+                return None
 
     # ── Structure hash computation ────────────────────────────────
 

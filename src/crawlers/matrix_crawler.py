@@ -10,6 +10,9 @@ All crawling is passive (read-only). Only public rooms are accessed.
 No accounts are created, no messages are sent, no interactions occur.
 """
 
+from __future__ import annotations
+
+
 import logging
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator
@@ -342,8 +345,16 @@ class MatrixCrawler(BaseCrawler):
                 published_at = datetime.fromtimestamp(
                     origin_ts / 1000.0, tz=timezone.utc,
                 )
-            except (ValueError, TypeError, OSError):
-                pass
+            except (ValueError, TypeError, OSError) as ts_exc:
+                # Single-event timestamp garbage isn't operationally
+                # meaningful — published_at falls back to None and the
+                # ingestion pipeline stamps server time. We log at
+                # DEBUG so a cluster of these is still visible when
+                # an analyst opts into verbose logging.
+                logger.debug(
+                    "matrix.parse: bad origin_server_ts=%r: %s",
+                    origin_ts, ts_exc,
+                )
 
         room_label = room_config.get("room_alias") or room_config.get("room_id", "")
         homeserver = room_config.get("homeserver_url", "")

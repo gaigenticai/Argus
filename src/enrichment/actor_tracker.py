@@ -1,5 +1,8 @@
 """Threat actor identification, tracking, and risk scoring."""
 
+from __future__ import annotations
+
+
 import logging
 import uuid as _uuid
 from datetime import datetime, timezone

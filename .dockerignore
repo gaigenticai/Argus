@@ -1,0 +1,58 @@
+# Audit F2 — keep build context tight. Without this file, the
+# Dockerfile COPY copies dev artefacts (venv, node_modules, caches,
+# tests) into the layer cache, bloating images and leaking secrets.
+
+# Python build artefacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.cache/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Node / dashboard
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
+dashboard/dist/
+node_modules/
+
+# Local data / secrets — must NEVER end up in an image
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+.argus_local/
+data/
+backups/
+
+# Tests + dev fixtures (keep out of the runtime image — F3 multi-stage
+# would make this redundant, but defense-in-depth is cheap)
+tests/
+.github/
+docs/
+*.md
+!README.md
+
+# Editor / VCS
+.git/
+.gitignore
+.idea/
+.vscode/
+.DS_Store
+*.swp

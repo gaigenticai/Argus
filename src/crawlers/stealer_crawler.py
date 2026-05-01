@@ -11,6 +11,9 @@ domains/keywords so the security team can detect credential compromise and
 respond before attackers weaponize stolen sessions.
 """
 
+from __future__ import annotations
+
+
 import logging
 import re
 from datetime import datetime, timezone

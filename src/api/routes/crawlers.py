@@ -1,30 +1,46 @@
 """Crawler management and manual trigger endpoints."""
 
+from __future__ import annotations
+
+
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import AnalystUser, audit_log
-from src.core.scheduler import Scheduler
+from src.core.scheduler import _CRAWLER_REGISTRY, Scheduler
 from src.core.activity import ActivityType, emit as activity_emit
 from src.models.auth import AuditAction
 from src.storage.database import get_session
 
-router = APIRouter(prefix="/crawlers", tags=["crawlers"])
+router = APIRouter(prefix="/crawlers", tags=["Threat Intelligence"])
 
+# Singleton — used by ``trigger_crawler`` below to share state across
+# requests. ``list_crawlers`` reads from the module-level registry
+# instead, since the per-instance ``schedules`` attribute was removed
+# when the scheduler was rewritten around ``_CRAWLER_REGISTRY``.
 scheduler = Scheduler()
 
 
 @router.get("/")
 async def list_crawlers():
-    """List all registered crawlers and their status."""
+    """List all registered crawlers and their last-run timestamps.
+
+    The scheduler keeps a per-process ``_last_tick`` dict keyed on
+    :class:`CrawlerKind`; we expose those alongside the static registry
+    so the dashboard can render "last seen" without each crawler
+    needing its own database row.
+    """
+    last_ticks = scheduler._last_tick  # noqa: SLF001 — intentional read
     return [
         {
-            "name": s.crawler_class.__name__,
-            "crawler_name": s.crawler_class.name if hasattr(s.crawler_class, 'name') else s.crawler_class.__name__,
-            "interval_seconds": s.interval,
-            "last_run": s.last_run.isoformat() if s.last_run else None,
+            "name": kind.value,
+            "crawler_name": crawler_class.__name__,
+            "interval_seconds": interval_minutes * 60,
+            "last_run": (
+                last_ticks[kind].isoformat() if kind in last_ticks else None
+            ),
         }
-        for s in scheduler.schedules
+        for kind, (crawler_class, _kwarg, interval_minutes) in _CRAWLER_REGISTRY.items()
     ]
 
 

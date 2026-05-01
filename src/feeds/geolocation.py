@@ -3,6 +3,9 @@
 Chain: DB-IP Lite MMDB (instant, offline) → ipwho.is (free, commercial OK) → ip-api.com (last resort).
 """
 
+from __future__ import annotations
+
+
 import asyncio
 import ipaddress
 import logging
@@ -61,7 +64,11 @@ class GeoLocator:
             if asn_path.exists():
                 self._asn_reader = geoip2.database.Reader(str(asn_path))
             logger.info("GeoIP MMDB loaded from %s", db_path)
-        except Exception as e:
+        except (OSError, ImportError) as e:
+            # OSError covers a corrupt / truncated MMDB file; ImportError
+            # covers the case where geoip2 is missing in a stripped
+            # install. Either way, locate() falls back to the network
+            # layer.
             logger.warning("Failed to load MaxMind DB: %s", e)
 
     def _is_public_ip(self, ip_str: str) -> bool:
@@ -86,9 +93,16 @@ class GeoLocator:
             if self._asn_reader:
                 try:
                     asn_resp = self._asn_reader.asn(ip)
-                    asn_str = f"AS{asn_resp.autonomous_system_number} {asn_resp.autonomous_system_organization}"
-                except Exception:
-                    pass
+                    asn_str = (
+                        f"AS{asn_resp.autonomous_system_number} "
+                        f"{asn_resp.autonomous_system_organization}"
+                    )
+                except Exception as asn_exc:  # noqa: BLE001
+                    # geoip2 raises AddressNotFoundError for IPs the
+                    # ASN db doesn't know — common for residential
+                    # ranges and not actionable. Log at DEBUG so a
+                    # cluster of failures is visible if needed.
+                    logger.debug("ASN lookup miss for %s: %s", ip, asn_exc)
             return GeoResult(
                 latitude=resp.location.latitude,
                 longitude=resp.location.longitude,
@@ -96,7 +110,13 @@ class GeoLocator:
                 city=resp.city.name,
                 asn=asn_str,
             )
-        except Exception:
+        except Exception as exc:  # noqa: BLE001
+            # geoip2 throws a family of exceptions (AddressNotFoundError,
+            # InvalidDatabaseError, ValueError on bad IP). Treat them
+            # all as "miss" rather than failing the caller — the geo
+            # data is best-effort enrichment, not a correctness
+            # signal. Logged at DEBUG.
+            logger.debug("MMDB lookup miss for %s: %s", ip, exc)
             return _EMPTY
 
     async def locate_batch(self, ips: list[str]) -> dict[str, GeoResult]:
@@ -129,10 +149,27 @@ class GeoLocator:
         return results
 
     async def _ipapi_batch(self, ips: list[str]) -> dict[str, GeoResult]:
-        """Resolve IPs via ip-api.com batch endpoint (POST, max 100 per request)."""
+        """Resolve IPs via ip-api.com batch endpoint (POST, max 100 per request).
+
+        Adversarial audit D-17 — wrap in the shared circuit breaker so
+        an ip-api outage doesn't keep stalling the feed pipeline on
+        30s timeouts.
+        """
+        from src.core.http_circuit import CircuitBreakerOpenError, get_breaker
+
         results: dict[str, GeoResult] = {}
         batch_size = settings.feeds.ipapi_batch_size
         timeout = aiohttp.ClientTimeout(total=30)
+        breaker = get_breaker("geo:ipapi")
+
+        try:
+            async with breaker:
+                pass  # acquire-release just to short-circuit when open
+        except CircuitBreakerOpenError:
+            logger.warning("geo:ipapi breaker OPEN — skipping ip-api batch")
+            for ip in ips:
+                results[ip] = _EMPTY
+            return results
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
             for i in range(0, len(ips), batch_size):
@@ -173,7 +210,7 @@ class GeoLocator:
                                     )
                                 else:
                                     results[ip] = _EMPTY
-                    except Exception as e:
+                    except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError) as e:
                         logger.error("ip-api.com batch failed: %s", e)
                         for ip in batch:
                             results[ip] = _EMPTY
@@ -189,10 +226,24 @@ class GeoLocator:
 
         Single-IP endpoint, so we run up to 20 concurrent requests.
         Used as last-resort for IPs that MMDB and ip-api.com both missed.
+
+        Adversarial audit D-17 — gated by the shared circuit breaker so
+        an upstream blip doesn't snowball into a global feed stall.
         """
+        from src.core.http_circuit import CircuitBreakerOpenError, get_breaker
+
         results: dict[str, GeoResult] = {}
         sem = asyncio.Semaphore(20)
         timeout = aiohttp.ClientTimeout(total=10)
+        breaker = get_breaker("geo:ipwho")
+        try:
+            async with breaker:
+                pass
+        except CircuitBreakerOpenError:
+            logger.warning("geo:ipwho breaker OPEN — skipping ipwho fallback")
+            for ip in ips:
+                results[ip] = _EMPTY
+            return results
 
         async def _fetch_one(session: aiohttp.ClientSession, ip: str) -> None:
             async with sem:
@@ -216,7 +267,10 @@ class GeoLocator:
                             )
                         else:
                             results[ip] = _EMPTY
-                except Exception:
+                except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ValueError):
+                    # Per-IP failure isolation — one bad lookup must
+                    # never fail the whole batch. ValueError covers
+                    # JSON parse / unexpected schema.
                     results[ip] = _EMPTY
 
         async with aiohttp.ClientSession(timeout=timeout) as session:

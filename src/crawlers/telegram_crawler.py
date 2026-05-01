@@ -4,6 +4,9 @@ Uses Telegram's public channel web preview (no API key needed for public channel
 For private channels, a Telegram API key + session would be needed.
 """
 
+from __future__ import annotations
+
+
 import json
 import logging
 import re
@@ -73,12 +76,16 @@ class TelegramCrawler(BaseCrawler):
             time_el = msg.select_one("time")
             published_at = None
             if time_el and time_el.get("datetime"):
+                raw_ts = time_el["datetime"]
                 try:
                     published_at = datetime.fromisoformat(
-                        time_el["datetime"].replace("Z", "+00:00")
+                        raw_ts.replace("Z", "+00:00")
                     )
-                except ValueError:
-                    pass
+                except ValueError as ts_exc:
+                    logger.debug(
+                        "telegram.parse: bad message timestamp %r: %s",
+                        raw_ts, ts_exc,
+                    )
 
             # Extract author (forwarded from)
             author = channel

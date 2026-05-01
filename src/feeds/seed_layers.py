@@ -1,5 +1,8 @@
 """Seed default threat map layers and integration configs."""
 
+from __future__ import annotations
+
+
 import logging
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,7 +21,7 @@ DEFAULT_LAYERS = [
     {"name": "ip_reputation", "display_name": "Malicious IPs", "icon": "ban", "color": "#B71D18", "feed_names": ["ipsum", "blocklist_de", "firehol_l1", "abuseipdb", "greynoise", "otx_pulse"], "refresh_interval_seconds": 3600, "description": "Aggregated malicious IP blocklists"},
     {"name": "exploited_cve", "display_name": "Exploited CVEs", "icon": "shield-alert", "color": "#FF5630", "feed_names": ["cisa_kev", "greynoise", "otx_pulse"], "refresh_interval_seconds": 86400, "description": "CISA known exploited vulnerabilities"},
     {"name": "ssl_abuse", "display_name": "SSL Blacklist", "icon": "lock", "color": "#00A76F", "feed_names": ["sslbl", "ja3_fingerprints"], "refresh_interval_seconds": 3600, "description": "Malicious SSL certificates and JA3 fingerprints"},
-    {"name": "bgp_hijack", "display_name": "BGP Hijacks", "icon": "network", "color": "#FF5630", "feed_names": ["ripe_ris_live"], "refresh_interval_seconds": 0, "description": "Real-time BGP route hijack detection"},
+    {"name": "bgp_hijack", "display_name": "BGP Hijacks", "icon": "network", "color": "#FF5630", "feed_names": ["ripe_ris_live"], "refresh_interval_seconds": 3600, "description": "BGP prefix hijack events from Cloudflare Radar (requires ARGUS_FEED_CF_RADAR_API_KEY)"},
     {"name": "underground", "display_name": "Underground Intel", "icon": "message-circle", "color": "#8E33FF", "feed_names": [], "refresh_interval_seconds": 0, "description": "Argus underground crawler findings (Tor, I2P, Lokinet, Matrix)"},
 ]
 

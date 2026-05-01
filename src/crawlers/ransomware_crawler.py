@@ -12,6 +12,9 @@ appear on leak sites so the security team can respond to active incidents.  No
 data is downloaded — only listing metadata is collected.
 """
 
+from __future__ import annotations
+
+
 import hashlib
 import logging
 import re

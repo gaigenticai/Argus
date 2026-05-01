@@ -65,55 +65,121 @@ export function Header() {
   const hasResults = alertResults.length > 0 || orgResults.length > 0;
 
   return (
-    <header className="sticky top-0 z-30 h-16 bg-white/80 backdrop-blur-md border-b border-grey-200 flex items-center justify-between px-8">
-      <div ref={wrapperRef} className="relative flex items-center flex-1 max-w-lg">
+    <header
+      className="sticky top-0 z-30 h-14 flex items-center justify-between px-6"
+      style={{
+        background: "var(--color-canvas)",
+        borderBottom: "1px solid var(--color-border)",
+      }}
+    >
+      <div ref={wrapperRef} className="relative flex items-center flex-1 max-w-md">
         <div className="relative w-full">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-[18px] h-[18px] text-grey-400" />
+          <Search
+            className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none"
+            style={{ color: "var(--color-muted)" }}
+          />
           <input
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search alerts, organizations..."
-            className="w-full h-10 pl-10 pr-9 bg-grey-100 rounded-lg text-[14px] text-grey-800 placeholder:text-grey-400 border border-transparent outline-none focus:border-grey-300 focus:bg-white transition-colors"
+            placeholder="Search alerts, organizations…"
+            className="w-full h-9 pl-9 pr-8 text-[13px] outline-none transition-colors"
+            style={{
+              background: "var(--color-canvas)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "5px",
+              color: "var(--color-ink)",
+            }}
+            onFocus={(e) => {
+              (e.target as HTMLInputElement).style.borderColor = "var(--color-accent)";
+            }}
+            onBlur={(e) => {
+              (e.target as HTMLInputElement).style.borderColor = "var(--color-border)";
+            }}
           />
           {query && (
             <button
               onClick={() => { setQuery(""); setOpen(false); }}
-              className="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded hover:bg-grey-200"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 transition-colors"
+              style={{ color: "var(--color-muted)", borderRadius: "3px" }}
             >
-              <X className="w-4 h-4 text-grey-500" />
+              <X className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
 
         {open && (
-          <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-z16 border border-grey-200 overflow-hidden z-50 max-h-[400px] overflow-y-auto">
+          <div
+            className="absolute top-full left-0 right-0 mt-1 overflow-hidden z-50 max-h-[380px] overflow-y-auto"
+            style={{
+              background: "var(--color-canvas)",
+              border: "1px solid var(--color-border)",
+              borderRadius: "5px",
+              boxShadow: "var(--shadow-z16)",
+            }}
+          >
             {searching && (
-              <div className="px-4 py-3 text-[13px] text-grey-500">Searching...</div>
+              <div
+                className="px-4 py-3 text-[12px]"
+                style={{ color: "var(--color-muted)" }}
+              >
+                Searching…
+              </div>
             )}
             {!searching && !hasResults && (
-              <div className="px-4 py-6 text-center text-[13px] text-grey-500">
+              <div
+                className="px-4 py-6 text-center text-[13px]"
+                style={{ color: "var(--color-muted)" }}
+              >
                 No results for &ldquo;{query}&rdquo;
               </div>
             )}
 
             {orgResults.length > 0 && (
               <div>
-                <div className="px-4 py-2 text-[11px] font-bold text-grey-500 uppercase tracking-wider bg-grey-50">
+                <div
+                  className="px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.8px]"
+                  style={{
+                    color: "var(--color-muted)",
+                    background: "var(--color-surface-muted)",
+                    borderBottom: "1px solid var(--color-border)",
+                  }}
+                >
                   Organizations
                 </div>
                 {orgResults.map((org) => (
                   <button
                     key={org.id}
                     onClick={() => { router.push(`/organizations`); setOpen(false); setQuery(""); }}
-                    className="w-full px-4 py-2.5 text-left hover:bg-grey-50 transition-colors flex items-center gap-3"
+                    className="w-full px-4 py-2.5 text-left flex items-center gap-3 transition-colors"
+                    style={{ borderBottom: "1px solid var(--color-border)" }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLElement).style.background = "var(--color-surface-muted)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.background = "";
+                    }}
                   >
-                    <span className="w-7 h-7 rounded-md bg-grey-100 flex items-center justify-center text-grey-600 text-[11px] font-bold">
+                    <span
+                      className="w-7 h-7 flex items-center justify-center text-[11px] font-bold shrink-0"
+                      style={{
+                        background: "var(--color-surface-muted)",
+                        color: "var(--color-body)",
+                        borderRadius: "4px",
+                        border: "1px solid var(--color-border)",
+                      }}
+                    >
                       {org.name.charAt(0)}
                     </span>
                     <div>
-                      <div className="text-[13px] font-semibold text-grey-800">{org.name}</div>
-                      {org.industry && <div className="text-[11px] text-grey-500">{org.industry}</div>}
+                      <div className="text-[13px] font-semibold" style={{ color: "var(--color-ink)" }}>
+                        {org.name}
+                      </div>
+                      {org.industry && (
+                        <div className="text-[11px]" style={{ color: "var(--color-muted)" }}>
+                          {org.industry}
+                        </div>
+                      )}
                     </div>
                   </button>
                 ))}
@@ -122,19 +188,43 @@ export function Header() {
 
             {alertResults.length > 0 && (
               <div>
-                <div className="px-4 py-2 text-[11px] font-bold text-grey-500 uppercase tracking-wider bg-grey-50">
+                <div
+                  className="px-4 py-2 text-[10px] font-semibold uppercase tracking-[0.8px]"
+                  style={{
+                    color: "var(--color-muted)",
+                    background: "var(--color-surface-muted)",
+                    borderBottom: "1px solid var(--color-border)",
+                  }}
+                >
                   Alerts
                 </div>
                 {alertResults.map((alert) => (
                   <button
                     key={alert.id}
                     onClick={() => { router.push(`/alerts/${alert.id}`); setOpen(false); setQuery(""); }}
-                    className="w-full px-4 py-2.5 text-left hover:bg-grey-50 transition-colors flex items-center gap-3"
+                    className="w-full px-4 py-2.5 text-left flex items-center gap-3 transition-colors"
+                    style={{ borderBottom: "1px solid var(--color-border)" }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLElement).style.background = "var(--color-surface-muted)";
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLElement).style.background = "";
+                    }}
                   >
                     <SeverityBadge severity={alert.severity} />
                     <div className="min-w-0 flex-1">
-                      <div className="text-[13px] font-semibold text-grey-800 truncate">{alert.title}</div>
-                      <div className="text-[11px] text-grey-500 truncate">{alert.summary}</div>
+                      <div
+                        className="text-[13px] font-semibold truncate"
+                        style={{ color: "var(--color-ink)" }}
+                      >
+                        {alert.title}
+                      </div>
+                      <div
+                        className="text-[11px] truncate"
+                        style={{ color: "var(--color-muted)" }}
+                      >
+                        {alert.summary}
+                      </div>
                     </div>
                   </button>
                 ))}
@@ -144,21 +234,32 @@ export function Header() {
         )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5">
         <button
           onClick={() => router.push("/alerts?status=new")}
-          className="relative p-2 rounded-lg hover:bg-grey-100 transition-colors"
+          className="relative p-2 transition-colors"
+          style={{ borderRadius: "5px", color: "var(--color-body)" }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLElement).style.background = "var(--color-surface-muted)";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLElement).style.background = "";
+          }}
         >
-          <Bell className="w-5 h-5 text-grey-600" />
+          <Bell className="w-4 h-4" />
           {unreviewed > 0 && (
-            <span className="absolute top-0.5 right-0.5 min-w-[18px] h-[18px] bg-error rounded-full flex items-center justify-center text-white text-[10px] font-bold px-1">
+            <span
+              className="absolute top-0.5 right-0.5 min-w-[16px] h-[16px] flex items-center justify-center text-[9px] font-bold px-1"
+              style={{
+                background: "var(--color-accent)",
+                color: "#fffefb",
+                borderRadius: "20px",
+              }}
+            >
               {unreviewed > 99 ? "99+" : unreviewed}
             </span>
           )}
         </button>
-        <div className="w-8 h-8 rounded-full bg-grey-800 flex items-center justify-center text-white text-[12px] font-bold">
-          A
-        </div>
       </div>
     </header>
   );

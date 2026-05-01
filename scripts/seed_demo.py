@@ -2,14 +2,41 @@
 
 Usage:
     python -m scripts.seed_demo
+
+Adversarial audit D-4 — this script bootstraps users; it must refuse
+to run against a production database. The legacy literal passwords
+that used to live near line 932 have been replaced with
+``secrets.token_urlsafe`` and printed once at the top of the run.
 """
 
 import asyncio
+import os as _os
+import secrets as _secrets
+import sys as _sys
 import uuid
 import random
 from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select
+
+
+def _refuse_in_production() -> None:
+    """Same gate as scripts/seed_full_demo.py — see audit D-4."""
+    seed_mode = (_os.environ.get("ARGUS_SEED_MODE") or "").strip().lower()
+    env = (_os.environ.get("ARGUS_ENVIRONMENT") or "").strip().lower()
+    debug = (_os.environ.get("ARGUS_DEBUG") or "").strip().lower() in ("1", "true", "yes")
+    if seed_mode not in {"demo", "realistic", "stress"}:
+        _sys.stderr.write(
+            "scripts/seed_demo.py refuses to run unless ARGUS_SEED_MODE is one of "
+            "{demo, realistic, stress}.\n"
+        )
+        _sys.exit(2)
+    if env == "production" and not debug:
+        _sys.stderr.write(
+            "scripts/seed_demo.py refuses to run when ARGUS_ENVIRONMENT=production. "
+            "Set ARGUS_DEBUG=true on a non-prod database to override.\n"
+        )
+        _sys.exit(2)
 
 from src.config.settings import settings
 from src.core.auth import hash_password, audit_log
@@ -26,6 +53,7 @@ from src.models.threat import (
     ThreatSeverity,
     VIPTarget,
 )
+from scripts._seed_extra import seed_extra
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +196,7 @@ ASSETS = {
         {"asset_type": "subdomain", "value": "vpn.meridianfg.com", "details": {"ip": "52.14.201.80", "service": "Cisco AnyConnect"}},
         {"asset_type": "subdomain", "value": "mail.meridianfg.com", "details": {"ip": "52.14.201.81", "service": "Exchange Online"}},
         {"asset_type": "subdomain", "value": "jenkins.meridianfg.com", "details": {"ip": "52.14.201.90", "service": "Jenkins 2.414"}},
-        {"asset_type": "ip", "value": "52.14.201.73", "details": {"asn": "AS16509 Amazon", "region": "us-east-1"}},
+        {"asset_type": "ip_address", "value": "52.14.201.73", "details": {"asn": "AS16509 Amazon", "region": "us-east-1"}},
         {"asset_type": "service", "value": "meridianfg.com:443", "details": {"tls": "1.3", "cert_expiry": "2026-09-15"}},
     ],
     "NovaMed Health Systems": [
@@ -176,7 +204,7 @@ ASSETS = {
         {"asset_type": "subdomain", "value": "api.novamed.health", "details": {"ip": "20.84.10.56"}},
         {"asset_type": "subdomain", "value": "telehealth.novamed.health", "details": {"ip": "20.84.10.60", "service": "Zoom Health"}},
         {"asset_type": "subdomain", "value": "imaging.novamed.health", "details": {"ip": "20.84.10.62", "service": "PACS"}},
-        {"asset_type": "ip", "value": "20.84.10.55", "details": {"asn": "AS8075 Microsoft", "region": "East US 2"}},
+        {"asset_type": "ip_address", "value": "20.84.10.55", "details": {"asn": "AS8075 Microsoft", "region": "East US 2"}},
     ],
     "Helios Semiconductor": [
         {"asset_type": "subdomain", "value": "git.heliossemi.com", "details": {"ip": "198.51.100.20", "service": "GitLab CE 16.8"}},
@@ -922,14 +950,24 @@ async def seed():
 
         org_map: dict[str, Organization] = {}
         raw_map: dict[str, RawIntel] = {}
+        user_map: dict[str, User] = {}
+        asset_map: dict[str, list[Asset]] = {}
+        vip_map: dict[str, list[VIPTarget]] = {}
+        alert_map: dict[str, Alert] = {}
 
-        # 0. Create Users
+        # 0. Create Users — adversarial audit D-4: random passwords per
+        # run, printed once. Never store working credentials in source.
         existing_users = await session.execute(select(User))
-        if not existing_users.scalars().first():
+        existing_user_rows = existing_users.scalars().all()
+        for u in existing_user_rows:
+            user_map[u.username] = u
+        if not existing_user_rows:
+            admin_pwd = _secrets.token_urlsafe(18)
+            analyst_pwd = _secrets.token_urlsafe(18)
             admin_user = User(
                 email="admin@argus.local",
                 username="admin",
-                password_hash=hash_password("argus-admin-2026"),
+                password_hash=hash_password(admin_pwd),
                 display_name="Argus Admin",
                 role=UserRole.ADMIN.value,
                 is_active=True,
@@ -939,13 +977,18 @@ async def seed():
             analyst_user = User(
                 email="analyst@argus.local",
                 username="analyst",
-                password_hash=hash_password("argus-analyst-2026"),
+                password_hash=hash_password(analyst_pwd),
                 display_name="Argus Analyst",
                 role=UserRole.ANALYST.value,
                 is_active=True,
             )
             session.add(analyst_user)
             await session.flush()
+            print("============================================================")
+            print("DEMO USERS (random passwords — copy now, shown only once):")
+            print(f"  admin:    admin@argus.local  /  {admin_pwd}")
+            print(f"  analyst:  analyst@argus.local  /  {analyst_pwd}")
+            print("============================================================")
 
             await audit_log(
                 session,
@@ -964,6 +1007,8 @@ async def seed():
                 details={"email": analyst_user.email, "role": "analyst", "source": "seed"},
             )
             await session.flush()
+            user_map["admin"] = admin_user
+            user_map["analyst"] = analyst_user
             print(f"Created 2 users (admin + analyst)")
         else:
             print("Users already exist — skipping user seed")
@@ -986,6 +1031,7 @@ async def seed():
         vip_count = 0
         for org_name, vips in VIPS.items():
             org = org_map[org_name]
+            vip_map.setdefault(org_name, [])
             for vip_data in vips:
                 vip = VIPTarget(
                     organization_id=org.id,
@@ -996,6 +1042,7 @@ async def seed():
                     phone_numbers=vip_data["phone_numbers"],
                 )
                 session.add(vip)
+                vip_map[org_name].append(vip)
                 vip_count += 1
         await session.flush()
         print(f"Created {vip_count} VIP targets")
@@ -1004,6 +1051,7 @@ async def seed():
         asset_count = 0
         for org_name, assets in ASSETS.items():
             org = org_map[org_name]
+            asset_map.setdefault(org_name, [])
             for asset_data in assets:
                 asset = Asset(
                     organization_id=org.id,
@@ -1013,6 +1061,7 @@ async def seed():
                     is_active=True,
                 )
                 session.add(asset)
+                asset_map[org_name].append(asset)
                 asset_count += 1
         await session.flush()
         print(f"Created {asset_count} assets")
@@ -1077,19 +1126,37 @@ async def seed():
             # Override created_at for realistic spread
             alert.created_at = created_at
             session.add(alert)
+            alert_map[alert_data["title"]] = alert
             alert_count += 1
         await session.flush()
         print(f"Created {alert_count} alerts")
 
+        # 6. Comprehensive seed — populate every dashboard-visible table
+        # with rich, FK-correct data so list pages have rows and detail
+        # pages resolve.
+        print("Seeding remaining tables (this populates ~60 tables)...")
+        extra_counts = await seed_extra(
+            session,
+            org_map=org_map,
+            alert_map=alert_map,
+            user_map=user_map,
+            asset_map=asset_map,
+            raw_intel_map=raw_map,
+            vip_map=vip_map,
+        )
+
         await session.commit()
         print("\nSeed complete! Your Argus demo is ready.")
-        print(f"  Users:         2 (admin@argus.local / analyst@argus.local)")
+        print(f"  Users:         {len(user_map)}")
         print(f"  Organizations: {len(ORGS)}")
         print(f"  VIP targets:   {vip_count}")
         print(f"  Assets:        {asset_count}")
         print(f"  Raw intel:     {len(RAW_INTEL)}")
         print(f"  Alerts:        {alert_count}")
+        for k in sorted(extra_counts):
+            print(f"  {k:<30} {extra_counts[k]}")
 
 
 if __name__ == "__main__":
+    _refuse_in_production()
     asyncio.run(seed())

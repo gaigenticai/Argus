@@ -5,6 +5,9 @@ email addresses, CVE IDs, cryptocurrency addresses, JA3 fingerprints,
 and file paths from arbitrary text.  Handles defanged notation.
 """
 
+from __future__ import annotations
+
+
 import ipaddress
 import re
 from dataclasses import dataclass, field
@@ -177,7 +180,16 @@ def _is_private_ipv4(ip_str: str) -> bool:
                 if 16 <= second <= 31:
                     return True
             except ValueError:
-                pass
+                # parts[1] isn't an integer — not a valid IPv4. The
+                # caller treats False as "not private", which then
+                # falls through to the regex-based extractor which
+                # rejects the malformed string anyway. Logged at DEBUG
+                # so a flood of malformed inputs is still visible.
+                import logging as _logging
+
+                _logging.getLogger(__name__).debug(
+                    "ioc_extractor: malformed RFC-1918 candidate %r", ip_str,
+                )
     return False
 
 

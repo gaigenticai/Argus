@@ -1,5 +1,8 @@
 """Crawler source management endpoints."""
 
+from __future__ import annotations
+
+
 import time
 import uuid
 from datetime import datetime, timezone
@@ -12,14 +15,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config.settings import settings
 from src.core.auth import AdminUser, AnalystUser, CurrentUser, audit_log
+from src.core.url_safety import UnsafeUrlError, assert_safe_url
 from src.models.auth import AuditAction
 from src.models.intel import CrawlerSource, CrawlerSourceType, SourceHealthStatus
 from src.storage.database import get_session
 
-router = APIRouter(prefix="/sources", tags=["sources"])
+router = APIRouter(prefix="/sources", tags=["Threat Intelligence"])
 
 
 # --- Schemas ---
+
+
+# Adversarial audit D-9 — auth_config is operator-supplied; pin it to a
+# known shape so an attacker can't smuggle arbitrary keys (e.g.,
+# `{"proxy_url": "http://169.254.169.254"}`) into the crawler config.
+class SourceAuthConfig(BaseModel):
+    """Allowed keys for crawler source auth. Anything else is rejected."""
+
+    kind: str | None = None  # "basic" | "bearer" | "cookie" — adapter discriminator
+    username: str | None = None
+    password: str | None = None
+    token: str | None = None
+    cookie_header: str | None = None
+
+    model_config = {"extra": "forbid"}
 
 
 class SourceCreate(BaseModel):
@@ -29,7 +48,7 @@ class SourceCreate(BaseModel):
     mirror_urls: list[str] | None = None
     selectors: dict | None = None
     fallback_selectors: dict | None = None
-    auth_config: dict | None = None
+    auth_config: SourceAuthConfig | None = None
     language: str = "en"
     enabled: bool = True
     priority: int = 50
@@ -44,13 +63,31 @@ class SourceUpdate(BaseModel):
     mirror_urls: list[str] | None = None
     selectors: dict | None = None
     fallback_selectors: dict | None = None
-    auth_config: dict | None = None
+    auth_config: SourceAuthConfig | None = None
     language: str | None = None
     enabled: bool | None = None
     priority: int | None = None
     crawl_interval_minutes: int | None = None
     max_pages: int | None = None
     notes: str | None = None
+
+
+def _validate_source_urls(primary: str | None, mirrors: list[str] | None) -> None:
+    """Audit D-9 — primary + mirror URLs go to a crawler that fetches
+    them. Reject anything pointing at loopback / cloud-metadata / RFC1918
+    (unless ARGUS_URL_SAFETY_ALLOW_PRIVATE is on). The crawler stack uses
+    plain HTTP often (Tor onion, http-only forums), so allow_http=True.
+    """
+    candidates: list[str] = []
+    if primary:
+        candidates.append(primary)
+    if mirrors:
+        candidates.extend(mirrors)
+    for u in candidates:
+        try:
+            assert_safe_url(u, allow_http=True)
+        except UnsafeUrlError as exc:
+            raise HTTPException(400, f"unsafe URL {u!r}: {exc}")
 
 
 class SourceResponse(BaseModel):
@@ -257,6 +294,8 @@ async def create_source(
         valid = [t.value for t in CrawlerSourceType]
         raise HTTPException(400, f"Invalid source_type. Valid: {valid}")
 
+    _validate_source_urls(body.url, body.mirror_urls)
+
     source = CrawlerSource(
         name=body.name,
         source_type=body.source_type,
@@ -264,7 +303,7 @@ async def create_source(
         mirror_urls=body.mirror_urls,
         selectors=body.selectors,
         fallback_selectors=body.fallback_selectors,
-        auth_config=body.auth_config,
+        auth_config=body.auth_config.model_dump(exclude_unset=True) if body.auth_config else None,
         language=body.language,
         enabled=body.enabled,
         priority=body.priority,
@@ -314,8 +353,15 @@ async def update_source(
     if not source:
         raise HTTPException(404, "Crawler source not found")
 
-    changes = {}
     update_data = body.model_dump(exclude_unset=True)
+
+    # Audit D-9 — re-validate URL fields whenever they're touched.
+    if "url" in update_data or "mirror_urls" in update_data:
+        new_url = update_data.get("url", source.url)
+        new_mirrors = update_data.get("mirror_urls", source.mirror_urls)
+        _validate_source_urls(new_url, new_mirrors)
+
+    changes = {}
     for field, value in update_data.items():
         old_value = getattr(source, field)
         if old_value != value:

@@ -1,5 +1,8 @@
 """Activity feed — SSE streaming + REST history endpoint."""
 
+from __future__ import annotations
+
+
 import asyncio
 
 from fastapi import APIRouter
@@ -7,7 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from src.core.activity import activity_bus
 
-router = APIRouter(prefix="/activity", tags=["activity"])
+router = APIRouter(prefix="/activity", tags=["Auth & Identity"])
 
 
 @router.get("/stream")

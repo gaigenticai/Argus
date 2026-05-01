@@ -1,10 +1,21 @@
-"""Argus configuration — all settings from environment variables."""
+"""Argus configuration — all settings from environment variables.
+
+Argus is a single-tenant, self-hosted product: one customer per docker
+install. The settings object exposes infrastructure addresses, secrets,
+and runtime tunables. *Domain* configuration that operators tune at
+runtime — fraud thresholds, rating weights, brand allowlists, crawler
+targets — is stored in the database (see ``src/models/admin.py``) and
+edited through the dashboard, not via env vars.
+"""
+
+from __future__ import annotations
+
 
 from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, model_validator
 from typing import Optional
 
 # Load .env from project root
@@ -19,7 +30,27 @@ class DatabaseSettings(BaseSettings):
     port: int = 5432
     name: str = "argus"
     user: str = "argus"
-    password: Optional[str] = "argus"
+    password: Optional[str] = None
+
+    pool_size: int = 10
+    max_overflow: int = 20
+    pool_timeout: int = 30
+    pool_recycle: int = 280
+
+    @model_validator(mode="after")
+    def _require_password(self) -> "DatabaseSettings":
+        import os as _os
+        if self.password is None:
+            _testing = bool(_os.environ.get("PYTEST_CURRENT_TEST")) or bool(
+                _os.environ.get("ARGUS_ALLOW_EPHEMERAL_DB_PASSWORD")
+            )
+            if not _testing:
+                raise RuntimeError(
+                    "ARGUS_DB_PASSWORD must be set. "
+                    "Refusing to start with no database password — "
+                    "set ARGUS_DB_PASSWORD in your environment or .env file."
+                )
+        return self
 
     @property
     def _credentials(self) -> str:
@@ -33,12 +64,10 @@ class DatabaseSettings(BaseSettings):
         import os
         override = os.environ.get("DATABASE_URL")
         if override:
-            # Normalize: ensure asyncpg driver
             if override.startswith("postgresql://"):
                 override = override.replace("postgresql://", "postgresql+asyncpg://", 1)
             elif override.startswith("postgres://"):
                 override = override.replace("postgres://", "postgresql+asyncpg://", 1)
-            # Strip sslmode param — asyncpg uses ssl connect_arg instead
             if "sslmode=" in override:
                 import re
                 override = re.sub(r'[?&]sslmode=[^&]*', '', override)
@@ -80,8 +109,8 @@ class TorSettings(BaseSettings):
     socks_host: str = "localhost"
     socks_port: int = 9050
     control_port: int = 9051
-    control_password: str = "argus"
-    circuit_rotate_interval: int = 300  # seconds
+    control_password: str = ""
+    circuit_rotate_interval: int = 300
 
     @property
     def socks_proxy(self) -> str:
@@ -89,12 +118,58 @@ class TorSettings(BaseSettings):
 
 
 class LLMSettings(BaseSettings):
+    """LLM provider configuration.
+
+    Argus is sold to regulated banks. Sending raw intel + asset lists
+    + VIP emails to a third-party LLM SaaS is a deal-killer in vendor
+    review. The default points at a local Ollama instance the customer
+    runs themselves; pointing at any external provider is an explicit
+    operator choice that requires both a base URL and an API key.
+
+    Supported providers:
+        * ``ollama``     — local; HTTP at ``base_url``, no key required
+        * ``openai``     — any OpenAI-compatible endpoint (Azure OpenAI,
+                           on-prem vLLM, OpenAI proper); requires api_key.
+                           Also covers ``vllm`` deployments serving
+                           Gemma-4-31B / Llama-3 etc. via the OpenAI API.
+        * ``anthropic``  — Anthropic Messages API; requires api_key
+        * ``bridge``     — Redis-RPC to the local bridge worker which
+                           shells out to the operator's installed
+                           ``claude`` CLI. No api_key, no HTTP base_url —
+                           just Redis. See ``bridge/bridge.py`` and
+                           ``src/llm/bridge_client.py``.
+
+    When ``provider`` is set but the required credentials are missing,
+    LLM-dependent agents will refuse to run rather than silently fall
+    back to a degraded result.
+    """
+
     model_config = {"env_prefix": "ARGUS_LLM_"}
 
-    provider: str = "openai"  # ollama | openai | anthropic (z.ai uses openai-compatible)
-    base_url: str = "https://api.z.ai/api/coding/paas/v4"
-    model: str = "glm-5"
+    provider: str = "ollama"
+    base_url: str = "http://localhost:11434"
+    model: str = "llama3.1:8b"
     api_key: Optional[str] = None
+    request_timeout_seconds: int = 120
+    max_concurrent_calls: int = 4
+
+    @property
+    def is_configured(self) -> bool:
+        """True if the provider has everything it needs to dispatch a request."""
+        if not self.provider:
+            return False
+        if self.provider == "ollama":
+            return bool(self.base_url and self.model)
+        if self.provider in ("openai", "anthropic"):
+            return bool(self.base_url and self.model and self.api_key)
+        if self.provider == "bridge":
+            # Bridge talks to the local claude CLI through redis. Redis
+            # is a hard dependency of the platform anyway, so the only
+            # thing we need is a non-empty model id (used for audit
+            # provenance — the worker overrides with the real model id
+            # on each successful call).
+            return bool(self.model)
+        return False
 
 
 class NotificationSettings(BaseSettings):
@@ -114,10 +189,10 @@ class CrawlerSettings(BaseSettings):
     model_config = {"env_prefix": "ARGUS_CRAWLER_"}
 
     max_concurrent: int = 5
-    request_delay_min: float = 2.0  # seconds
-    request_delay_max: float = 8.0  # seconds
+    request_delay_min: float = 2.0
+    request_delay_max: float = 8.0
     max_retries: int = 3
-    timeout: int = 60  # seconds
+    timeout: int = 60
     user_agent_rotate: bool = True
 
 
@@ -125,9 +200,9 @@ class I2PSettings(BaseSettings):
     model_config = {"env_prefix": "ARGUS_I2P_"}
 
     proxy_host: str = "127.0.0.1"
-    proxy_port: int = 4444  # I2P HTTP proxy default
-    timeout: int = 120  # I2P is slow — longer timeout
-    enabled: bool = False  # disabled until I2P router is running
+    proxy_port: int = 4444
+    timeout: int = 120
+    enabled: bool = False
 
     @property
     def proxy_url(self) -> str:
@@ -138,7 +213,7 @@ class LokinetSettings(BaseSettings):
     model_config = {"env_prefix": "ARGUS_LOKINET_"}
 
     timeout: int = 90
-    enabled: bool = False  # disabled until lokinet daemon is running
+    enabled: bool = False
 
 
 class FeedSettings(BaseSettings):
@@ -155,6 +230,7 @@ class FeedSettings(BaseSettings):
     greynoise_api_key: Optional[str] = None
     abuseipdb_api_key: Optional[str] = None
     abuse_ch_api_key: Optional[str] = None
+    cf_radar_api_key: Optional[str] = None
 
 
 class IntegrationSettings(BaseSettings):
@@ -166,15 +242,61 @@ class IntegrationSettings(BaseSettings):
     wazuh_user: Optional[str] = None
     wazuh_password: Optional[str] = None
     nuclei_binary: str = "nuclei"
-    nuclei_templates: str = "data/nuclei-templates"
-    yara_rules_dir: str = "data/yara_rules"
-    sigma_rules_dir: str = "data/sigma_rules"
+    nuclei_templates: str = "/app/data/nuclei-templates"
+    nuclei_templates_version: str = ""  # locked at build time; informational
+    yara_rules_dir: str = "/app/data/yara_rules"
+    sigma_rules_dir: str = "/app/data/sigma_rules"
     spiderfoot_url: Optional[str] = None
     spiderfoot_api_key: Optional[str] = None
     shuffle_url: Optional[str] = None
     shuffle_api_key: Optional[str] = None
     gophish_url: Optional[str] = None
     gophish_api_key: Optional[str] = None
+    subfinder_binary: str = "subfinder"
+    httpx_binary: str = "httpx"
+    naabu_binary: str = "naabu"
+    nmap_binary: str = "nmap"
+    testssl_binary: str = "testssl.sh"
+
+
+class EvidenceSettings(BaseSettings):
+    """MinIO / S3-compatible evidence vault configuration."""
+
+    model_config = {"env_prefix": "ARGUS_EVIDENCE_"}
+
+    endpoint_url: str = "http://localhost:9000"
+    region: str = "us-east-1"
+    access_key: str = ""
+    secret_key: str = ""
+    bucket: str = "argus-evidence"
+    use_path_style: bool = True
+    signed_url_ttl_seconds: int = 300
+    max_blob_bytes: int = 50 * 1024 * 1024  # 50 MB hard cap
+
+
+class TakedownSettings(BaseSettings):
+    """Takedown partner credentials.
+
+    Each partner is opt-in. Missing credentials cause the corresponding
+    adapter to refuse submission — never to fake success.
+    """
+
+    model_config = {"env_prefix": "ARGUS_TAKEDOWN_"}
+
+    netcraft_base_url: str = "https://takedown.netcraft.com/api/v1"
+    netcraft_api_key: Optional[str] = None
+
+    phishlabs_smtp_recipient: Optional[str] = None
+    phishlabs_account_reference: Optional[str] = None
+
+    groupib_smtp_recipient: Optional[str] = None
+    groupib_account_reference: Optional[str] = None
+
+    internal_legal_smtp_recipients: list[str] = []
+    internal_legal_jira_url: Optional[str] = None
+    internal_legal_jira_user: Optional[str] = None
+    internal_legal_jira_token: Optional[str] = None
+    internal_legal_jira_project: Optional[str] = None
 
 
 class Settings(BaseSettings):
@@ -185,9 +307,31 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     api_host: str = "0.0.0.0"
     api_port: int = 8000
-    cors_origins: list[str] = ["http://localhost:3000", "http://localhost:8000"]
-    secret_key: str = ""  # Set via ARGUS_SECRET_KEY env var
-    jwt_secret: str = ""  # Falls back to secret_key if not set
+    cors_origins: list[str] = []
+    secret_key: str = ""
+    jwt_secret: str = ""
+
+    # Single-tenant identity. Empty string = first-provisioned organisation.
+    # When set (e.g. to "argus-demo-bank"), the org with the matching
+    # slugified name wins; mismatch with multiple rows raises at first use.
+    system_organization_slug: str = ""
+
+    # JWT signing.
+    #
+    # ``HS256`` (the default) uses ``ARGUS_JWT_SECRET`` directly.
+    # ``RS256`` / ``ES256`` use an asymmetric private key from
+    # ``ARGUS_JWT_PRIVATE_KEY_PATH`` and publish the matching public
+    # key via the ``/.well-known/jwks.json`` endpoint so downstream
+    # services can verify tokens without sharing the secret.
+    #
+    # Bank prospects who require a JWKS endpoint set:
+    #     ARGUS_JWT_ALGORITHM=RS256
+    #     ARGUS_JWT_PRIVATE_KEY_PATH=/run/secrets/jwt-private.pem
+    #     ARGUS_JWT_KEY_ID=<rotation marker, e.g. "2026-04">
+    jwt_algorithm: str = "HS256"
+    jwt_private_key_path: str = ""
+    jwt_public_key_path: str = ""
+    jwt_key_id: str = "hs256-default"
 
     db: DatabaseSettings = Field(default_factory=DatabaseSettings)
     redis: RedisSettings = Field(default_factory=RedisSettings)
@@ -199,6 +343,8 @@ class Settings(BaseSettings):
     notify: NotificationSettings = Field(default_factory=NotificationSettings)
     feeds: FeedSettings = Field(default_factory=FeedSettings)
     integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)
+    evidence: EvidenceSettings = Field(default_factory=EvidenceSettings)
+    takedown: TakedownSettings = Field(default_factory=TakedownSettings)
 
 
 settings = Settings()

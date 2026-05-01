@@ -1,5 +1,8 @@
 """Threat map endpoints — layers, entries, stats, heatmap, timeline, live WebSocket."""
 
+from __future__ import annotations
+
+
 import asyncio
 import json
 import logging
@@ -18,7 +21,7 @@ from src.storage.database import get_session
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/threat-map", tags=["threat-map"])
+router = APIRouter(prefix="/threat-map", tags=["Threat Intelligence"])
 
 _MAX_HOURS = 168  # 7 days
 
@@ -470,7 +473,47 @@ async def threat_map_live(ws: WebSocket):
     Subscribes to the global activity bus and filters for feed-related events.
     The client receives JSON messages with the same schema as the SSE activity
     stream, but filtered to threat-map-relevant event types only.
+
+    Adversarial audit D-10 — every other endpoint guards activity events
+    behind ``AnalystUser``; this socket is the same firehose so it must
+    require a valid JWT before accept(). Token may be supplied via
+    ``Authorization: Bearer ...`` header or ``?token=...`` query param.
     """
+    from src.core.auth import decode_token
+    from src.models.auth import User
+    from src.storage.database import async_session_factory
+
+    auth_header = ws.headers.get("authorization") or ws.headers.get("Authorization")
+    raw_token: str | None = None
+    if auth_header and auth_header.lower().startswith("bearer "):
+        raw_token = auth_header.split(None, 1)[1].strip()
+    if raw_token is None:
+        # Browser WebSocket APIs don't expose custom headers, so accept a
+        # short-lived ?token=... query param too. Treat it the same way.
+        raw_token = ws.query_params.get("token")
+    if not raw_token:
+        await ws.close(code=4401, reason="missing token")
+        return
+    try:
+        payload = decode_token(raw_token)
+    except HTTPException:
+        await ws.close(code=4401, reason="invalid token")
+        return
+    if payload.get("type") != "access":
+        await ws.close(code=4401, reason="invalid token type")
+        return
+    if async_session_factory is None:
+        await ws.close(code=1011, reason="db not ready")
+        return
+    async with async_session_factory() as _db:
+        user = await _db.get(User, payload.get("sub"))
+        if not user or not user.is_active:
+            await ws.close(code=4401, reason="user inactive")
+            return
+        if user.role not in {"admin", "analyst"}:
+            await ws.close(code=4403, reason="forbidden")
+            return
+
     await ws.accept()
     queue = activity_bus.subscribe()
 

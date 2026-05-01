@@ -1,5 +1,8 @@
 """Core threat intelligence models."""
 
+from __future__ import annotations
+
+
 import enum
 import uuid
 from datetime import datetime
@@ -25,12 +28,8 @@ except ImportError:
 from .base import Base, TimestampMixin, UUIDMixin
 
 
-class ThreatSeverity(str, enum.Enum):
-    CRITICAL = "critical"
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-    INFO = "info"
+# Audit D5 — alias to the canonical Severity (see src/models/common.py).
+from src.models.common import Severity as ThreatSeverity  # noqa: E402
 
 
 class ThreatCategory(str, enum.Enum):
@@ -111,22 +110,63 @@ class VIPTarget(Base, UUIDMixin, TimestampMixin):
 
 
 class Asset(Base, UUIDMixin, TimestampMixin):
+    """Polymorphic external entity monitored by Argus.
+
+    Asset types span domain/subdomain/ip/service (EASM targets) plus
+    executives, brands, mobile apps, social handles, vendors, code repos,
+    and cloud accounts (DRP/TPRM/brand-protection targets).
+
+    Type-specific structured data lives in ``details`` (JSONB) and is
+    validated by :mod:`src.models.asset_schemas` at the API layer.
+    """
+
     __tablename__ = "assets"
 
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False
     )
-    asset_type: Mapped[str] = mapped_column(String(50))  # domain, subdomain, ip, service
+    asset_type: Mapped[str] = mapped_column(String(50), nullable=False)
     value: Mapped[str] = mapped_column(String(500), nullable=False)
     details: Mapped[dict | None] = mapped_column(JSONB)
+
+    # --- Phase 0 registry extension ---
+    criticality: Mapped[str] = mapped_column(
+        String(20), default="medium", nullable=False
+    )  # crown_jewel | high | medium | low
+    tags: Mapped[list] = mapped_column(ARRAY(String), default=list, nullable=False)
+    monitoring_profile: Mapped[dict | None] = mapped_column(JSONB)
+    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    parent_asset_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE")
+    )
+    discovery_method: Mapped[str] = mapped_column(
+        String(40), default="manual", nullable=False
+    )
+    discovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_change_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    monitoring_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False
+    )
 
     organization = relationship("Organization", back_populates="assets")
+    parent = relationship(
+        "Asset",
+        remote_side="Asset.id",
+        backref="children",
+    )
 
     __table_args__ = (
         Index("ix_assets_org_type", "organization_id", "asset_type"),
         Index("ix_assets_value", "value"),
+        Index("ix_assets_org_value_type", "organization_id", "asset_type", "value", unique=True),
+        Index("ix_assets_criticality", "criticality"),
+        Index("ix_assets_parent", "parent_asset_id"),
+        Index("ix_assets_tags", "tags", postgresql_using="gin"),
     )
 
 

@@ -1,112 +1,173 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap");
 @import "tailwindcss";
 
+/*
+ * Zapier-inspired design system.
+ * Reference: DESIGN.md (getdesign.md/zapier/design-md)
+ *
+ * Core philosophy:
+ *   - Warm cream canvas (#fffefb), never pure white
+ *   - Borders (sand #c5c0b1) define structure — no shadow elevation
+ *   - Single accent: Zapier orange (#ff4f00) for CTAs and active states only
+ *   - Tight border radii (4–8px) — architectural, not bubbly
+ *   - Inter for all functional UI
+ */
 @theme inline {
-  --font-sans: "Public Sans", system-ui, -apple-system, sans-serif;
-  --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", ui-monospace, monospace;
+  --font-sans: "Inter", Helvetica, Arial, sans-serif;
+  --font-display: "Inter", Helvetica, Arial, sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace;
 
-  /* Primary (Teal) */
-  --color-primary-lighter: #C8FAD6;
-  --color-primary-light: #5BE49B;
-  --color-primary: #00A76F;
-  --color-primary-dark: #007867;
-  --color-primary-darker: #004B50;
+  /* ── Canvas & surfaces ────────────────────────────────────────────── */
+  --color-canvas: #fffefb;       /* page background — warm cream */
+  --color-surface: #fffdf9;      /* secondary surface tint */
+  --color-surface-muted: #eceae3; /* light sand — filter buttons, subtle fills */
+  --color-surface-dark: #201515; /* dark reversed sections */
 
-  /* Secondary (Purple) */
-  --color-secondary-lighter: #EFD6FF;
-  --color-secondary-light: #C684FF;
-  --color-secondary: #8E33FF;
-  --color-secondary-dark: #5119B7;
-  --color-secondary-darker: #27097A;
+  /* ── Ink (text) ───────────────────────────────────────────────────── */
+  --color-ink: #201515;          /* primary — warm near-black, reddish */
+  --color-body: #36342e;         /* secondary body text */
+  --color-muted: #939084;        /* tertiary / placeholder */
+  --color-on-dark: #fffefb;      /* text on dark surfaces */
+  --color-on-dark-muted: #c5c0b1; /* muted text on dark surfaces */
 
-  /* Info */
-  --color-info-lighter: #CAFDF5;
-  --color-info-light: #61F3F3;
-  --color-info: #00BBD9;
-  --color-info-dark: #006C9C;
+  /* ── Borders — sand is the structural backbone ────────────────────── */
+  --color-border: #c5c0b1;       /* primary sand border */
+  --color-border-strong: #36342e; /* dark emphasis dividers */
+  --color-border-mid: #b5b2aa;   /* alternate border tone */
+
+  /* ── Brand accent (Zapier orange — CTA & active states ONLY) ─────── */
+  --color-accent: #ff4f00;
+  --color-accent-bg: rgba(255, 79, 0, 0.08);
+  --color-accent-dark: #cc3f00;
+
+  /* ── Semantic status ─────────────────────────────────────────────── */
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+
+  --color-success-lighter: #d3fcd2;
+  --color-success-light: #77ed8b;
+  --color-success-dark: #118d57;
+  --color-success-darker: #065e49;
+  --color-warning-lighter: #fff5cc;
+  --color-warning-light: #ffd666;
+  --color-warning-dark: #b76e00;
+  --color-warning-darker: #7a4100;
+  --color-error-lighter: #ffe4e1;
+  --color-error-light: #ff8a80;
+  --color-error-dark: #b71d18;
+  --color-error-darker: #7a0916;
+  --color-info-lighter: #e8f4fd;
+  --color-info-light: #7ab8e8;
+  --color-info-dark: #006c9c;
   --color-info-darker: #003768;
 
-  /* Success */
-  --color-success-lighter: #D3FCD2;
-  --color-success-light: #77ED8B;
-  --color-success: #22C55E;
-  --color-success-dark: #118D57;
-  --color-success-darker: #065E49;
+  /* ── Legacy grey ladder → re-pointed at warm Zapier neutrals ─────── */
+  --color-grey-0: #ffffff;
+  --color-grey-50: var(--color-canvas);
+  --color-grey-100: var(--color-surface);
+  --color-grey-200: var(--color-surface-muted);
+  --color-grey-300: var(--color-border);
+  --color-grey-400: var(--color-border-mid);
+  --color-grey-500: var(--color-muted);
+  --color-grey-600: var(--color-body);
+  --color-grey-700: var(--color-body);
+  --color-grey-800: var(--color-ink);
+  --color-grey-900: var(--color-ink);
 
-  /* Warning */
-  --color-warning-lighter: #FFF5CC;
-  --color-warning-light: #FFD666;
-  --color-warning: #FFAB00;
-  --color-warning-dark: #B76E00;
-  --color-warning-darker: #7A4100;
+  /* ── Legacy primary/secondary aliases ────────────────────────────── */
+  --color-primary: var(--color-accent);
+  --color-primary-lighter: rgba(255, 79, 0, 0.1);
+  --color-primary-light: rgba(255, 79, 0, 0.3);
+  --color-primary-dark: var(--color-accent-dark);
+  --color-primary-darker: #992f00;
 
-  /* Error */
-  --color-error-lighter: #FFE9D5;
-  --color-error-light: #FFAC82;
-  --color-error: #FF5630;
-  --color-error-dark: #B71D18;
-  --color-error-darker: #7A0916;
+  --color-secondary: var(--color-body);
+  --color-secondary-lighter: var(--color-surface-muted);
+  --color-secondary-light: var(--color-border);
+  --color-secondary-dark: var(--color-ink);
+  --color-secondary-darker: var(--color-ink);
 
-  /* Grey scale */
-  --color-grey-0: #FFFFFF;
-  --color-grey-50: #FCFDFD;
-  --color-grey-100: #F9FAFB;
-  --color-grey-200: #F4F6F8;
-  --color-grey-300: #DFE3E8;
-  --color-grey-400: #C4CDD5;
-  --color-grey-500: #919EAB;
-  --color-grey-600: #637381;
-  --color-grey-700: #454F5B;
-  --color-grey-800: #1C252E;
-  --color-grey-900: #141A21;
+  /* ── Semantic surface aliases ─────────────────────────────────────── */
+  --color-background: var(--color-canvas);
+  --color-foreground: var(--color-ink);
+  --color-surface-card: var(--color-canvas);
+  --color-surface-soft: var(--color-surface);
+  --color-surface-strong: var(--color-surface-muted);
+  --color-hairline: var(--color-border);
+  --color-hairline-soft: rgba(197, 192, 177, 0.45);
+  --color-on-primary: var(--color-on-dark);
 
-  /* Semantic surfaces */
-  --color-surface: #FFFFFF;
-  --color-surface-variant: #F9FAFB;
-  --color-background: #F9FAFB;
-  --color-foreground: #1C252E;
+  /* ── Border radius — tight, architectural ─────────────────────────── */
+  --radius-xs: 3px;
+  --radius-sm: 4px;
+  --radius-md: 5px;
+  --radius-lg: 8px;
+  --radius-xl: 14px;
+  --radius-pill: 20px;
 
-  /* Shadows — Airaa z-depth system */
-  --shadow-z1: 0 1px 2px rgba(145,158,171,0.16);
-  --shadow-z4: 0 0 2px rgba(145,158,171,0.2), 0 2px 4px -1px rgba(145,158,171,0.12);
-  --shadow-z8: 0 0 2px rgba(145,158,171,0.2), 0 4px 8px -2px rgba(145,158,171,0.12);
-  --shadow-z12: 0 0 2px rgba(145,158,171,0.2), 0 6px 12px -3px rgba(145,158,171,0.12);
-  --shadow-z16: 0 0 2px rgba(145,158,171,0.2), 0 8px 16px -4px rgba(145,158,171,0.12);
-  --shadow-z20: 0 0 2px rgba(145,158,171,0.2), 0 10px 20px -5px rgba(145,158,171,0.14);
-  --shadow-z24: 0 0 2px rgba(145,158,171,0.2), 0 12px 24px -6px rgba(145,158,171,0.16);
+  /* ── Shadows — Zapier uses borders, not shadows ───────────────────── */
+  --shadow-z1: 0 1px 2px rgba(32, 21, 21, 0.04);
+  --shadow-z4: 0 1px 4px rgba(32, 21, 21, 0.06);
+  --shadow-z8: 0 2px 8px rgba(32, 21, 21, 0.08);
+  --shadow-z12: 0 4px 12px rgba(32, 21, 21, 0.10);
+  --shadow-z16: 0 4px 16px rgba(32, 21, 21, 0.12);
+  --shadow-z20: 0 8px 24px rgba(32, 21, 21, 0.12);
+  --shadow-z24: 0 8px 32px rgba(32, 21, 21, 0.14);
+
+  /* ── Zapier tab underline (inset box-shadow technique) ────────────── */
+  --shadow-tab-active: rgb(255, 79, 0) 0px -3px 0px 0px inset;
+  --shadow-tab-hover: rgb(197, 192, 177) 0px -3px 0px 0px inset;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html, body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+
 body {
-  background: var(--color-background);
-  color: var(--color-foreground);
   font-family: var(--font-sans);
-  font-size: 14px;
-  line-height: 22px;
+  font-size: 15px;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Scrollbar */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--color-grey-400);
-  border-radius: 3px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-grey-500);
+h1, h2, h3, h4, h5, h6 {
+  color: var(--color-ink);
+  letter-spacing: -0.01em;
 }
 
-/* Selection */
+h1, h2, h3 {
+  font-weight: 500;
+}
+
+h4, h5, h6 {
+  font-weight: 600;
+}
+
+button {
+  font-family: var(--font-sans);
+  font-weight: 600;
+}
+
+/* Warm, on-brand scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 20px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-mid);
+}
+
 ::selection {
-  background: var(--color-primary-lighter);
-  color: var(--color-primary-darker);
+  background: rgba(255, 79, 0, 0.15);
+  color: var(--color-ink);
 }

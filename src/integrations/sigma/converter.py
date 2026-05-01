@@ -1,5 +1,8 @@
 """Sigma rule converter — load, filter, and match Sigma rules against feed data."""
 
+from __future__ import annotations
+
+
 import logging
 from pathlib import Path
 

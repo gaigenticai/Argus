@@ -8,6 +8,9 @@ This feed pulls trending malicious scanners, CVE-exploiting IPs, and
 high-priority GNQL results for the threat map.
 """
 
+from __future__ import annotations
+
+
 import logging
 from datetime import datetime, timezone
 from typing import AsyncIterator
@@ -18,7 +21,6 @@ from src.feeds.base import BaseFeed, FeedEntry
 logger = logging.getLogger(__name__)
 
 GREYNOISE_BASE = "https://api.greynoise.io/v3"
-GREYNOISE_V2 = "https://api.greynoise.io/v2/experimental"
 
 # Classification → severity mapping
 _CLASSIFICATION_SEVERITY: dict[str, str] = {
@@ -61,7 +63,12 @@ class GreyNoiseFeed(BaseFeed):
     async def poll(self) -> AsyncIterator[FeedEntry]:
         api_key = settings.feeds.greynoise_api_key
         if not api_key:
-            logger.info("[%s] GreyNoise: no API key configured, skipping", self.name)
+            self.last_unconfigured_reason = (
+                "ARGUS_FEED_GREYNOISE_API_KEY is not set; GreyNoise will not "
+                "run until the operator adds an API key from "
+                "https://www.greynoise.io/"
+            )
+            logger.info("[%s] GreyNoise: %s", self.name, self.last_unconfigured_reason)
             return
 
         seen_ips: set[str] = set()

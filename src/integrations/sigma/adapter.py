@@ -1,5 +1,8 @@
 """Sigma rule adapter — wraps SigmaConverter as a BaseIntegration-compatible service."""
 
+from __future__ import annotations
+
+
 import logging
 from datetime import datetime, timezone
 

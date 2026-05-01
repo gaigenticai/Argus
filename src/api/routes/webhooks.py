@@ -1,5 +1,8 @@
 """Webhook / integration management endpoints — complete rewrite."""
 
+from __future__ import annotations
+
+
 import hashlib
 import hmac
 import json
@@ -21,7 +24,7 @@ from src.models.intel import (
 )
 from src.storage.database import get_session
 
-router = APIRouter(prefix="/integrations", tags=["integrations"])
+router = APIRouter(prefix="/integrations", tags=["Operations"])
 
 
 # --- Schemas ---

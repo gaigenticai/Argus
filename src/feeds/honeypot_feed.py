@@ -1,5 +1,8 @@
 """Honeypot intelligence feed — polls DShield/SANS ISC API for top attacking IPs and global threat level."""
 
+from __future__ import annotations
+
+
 import ipaddress
 import logging
 from typing import AsyncIterator

@@ -1,5 +1,8 @@
 """Tor exit node IP feed — Tor Project bulk list + dan.me.uk mirror."""
 
+from __future__ import annotations
+
+
 import logging
 import re
 from typing import AsyncIterator

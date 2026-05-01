@@ -1,0 +1,96 @@
+# Test infrastructure for Argus.
+#
+# Brings up an isolated Postgres + MinIO under Docker Compose project "argus"
+# so Docker Desktop groups them under a single parent (matching the
+# gaigenticos layout). Ports are non-default so this won't collide with
+# other projects on this host.
+#
+# Usage:
+#   docker compose -p argus -f docker-compose.test.yml up -d
+#   ARGUS_TEST_DB_URL="postgresql+asyncpg://argus:argus@localhost:55432/argus_test" \
+#   ARGUS_DB_HOST=localhost ARGUS_DB_PORT=55432 ARGUS_DB_NAME=argus_test \
+#   ARGUS_DB_USER=argus ARGUS_DB_PASSWORD=argus \
+#   ARGUS_TEST_MINIO_URL="http://localhost:9100" \
+#   ARGUS_JWT_SECRET="dev-secret-32-chars-minimum-please-change-me" \
+#   .venv/bin/pytest tests/
+#
+#   docker compose -p argus -f docker-compose.test.yml down
+#
+# All container names start with "argus-" so they appear together in
+# Docker Desktop and `docker ps`.
+
+services:
+  argus-test-postgres:
+    image: pgvector/pgvector:pg16
+    container_name: argus-test-postgres
+    environment:
+      POSTGRES_USER: argus
+      POSTGRES_PASSWORD: argus
+      POSTGRES_DB: argus_test
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U argus"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    labels:
+      - "com.argus.role=test-only"
+
+  argus-test-minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    container_name: argus-test-minio
+    command: server /data --console-address ":9001"
+    # Test-only credentials. These containers bind only to 127.0.0.1 and
+    # are torn down between test runs. Production credentials live in .env.
+    environment:
+      MINIO_ROOT_USER: argus_test_only
+      MINIO_ROOT_PASSWORD: argus_test_only_dummy_password
+    ports:
+      - "127.0.0.1:9100:9000"
+      - "127.0.0.1:9101:9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    labels:
+      - "com.argus.role=test-only"
+
+  argus-test-toxiproxy:
+    # Toxiproxy is a TCP proxy that lets fault-injection tests insert
+    # latency, drops, slow_close, and disconnect-after-N-bytes between
+    # the API and its dependencies. Optional — pytest's in-process
+    # FaultInjector covers the common cases without it; this container
+    # is only needed for the full-stack resilience suite under
+    # tests/fault_injection/test_toxiproxy_*.py (skipped automatically
+    # if the toxiproxy container is absent).
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    container_name: argus-test-toxiproxy
+    ports:
+      - "127.0.0.1:58474:8474"   # admin / control API
+      - "127.0.0.1:55433:5433"   # proxied postgres
+      - "127.0.0.1:9200:9200"    # proxied minio
+      - "127.0.0.1:6380:6380"    # proxied redis
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8474/version"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    labels:
+      - "com.argus.role=test-only"
+
+  argus-test-redis:
+    # Required for auth_policy lockout fault tests + dedup window tests.
+    image: redis:7.4-alpine
+    container_name: argus-test-redis
+    command: ["redis-server", "--appendonly", "no", "--save", ""]
+    ports:
+      - "127.0.0.1:56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    labels:
+      - "com.argus.role=test-only"

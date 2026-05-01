@@ -1,9 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Shield } from "lucide-react";
 import { useAuth } from "@/components/auth/auth-provider";
-import { ArgusLogo } from "@/components/shared/argus-logo";
 
 export default function LoginPage() {
   const { login } = useAuth();
@@ -31,31 +30,145 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-grey-100 px-4">
-      <div className="w-full max-w-[420px]">
+    <div
+      className="min-h-screen grid lg:grid-cols-2"
+      style={{ background: "var(--color-canvas)" }}
+    >
+      {/* Left — brand panel */}
+      <div
+        className="hidden lg:flex flex-col justify-between p-12"
+        style={{
+          background: "var(--color-surface-dark)",
+          borderRight: "1px solid var(--color-border-strong)",
+        }}
+      >
         {/* Logo */}
-        <div className="flex items-center justify-center gap-3 mb-10">
-          <ArgusLogo size={44} />
+        <div className="flex items-center gap-2.5">
+          <div
+            className="w-8 h-8 flex items-center justify-center shrink-0"
+            style={{
+              background: "var(--color-accent)",
+              borderRadius: "4px",
+            }}
+          >
+            <Shield className="w-4 h-4" style={{ color: "#fffefb" }} />
+          </div>
           <div className="leading-none">
-            <h1 className="text-grey-900 text-[20px] font-extrabold tracking-wider">ARGUS</h1>
-            <p className="text-grey-500 text-[10px] tracking-[1.5px] uppercase mt-0.5">The All Seeing</p>
+            <span
+              className="text-[16px] font-semibold tracking-[-0.02em]"
+              style={{ color: "var(--color-on-dark)" }}
+            >
+              Argus
+            </span>
+            <p
+              className="text-[9px] tracking-[1.2px] uppercase mt-0.5 font-semibold"
+              style={{ color: "var(--color-on-dark-muted)" }}
+            >
+              The All Seeing
+            </p>
           </div>
         </div>
 
-        {/* Card */}
-        <div className="bg-white rounded-2xl border border-grey-200 shadow-z8 p-8">
-          <h2 className="text-[22px] font-bold text-grey-900 mb-1">Sign in</h2>
-          <p className="text-[14px] text-grey-500 mb-8">Enter your credentials to access the platform</p>
+        {/* Headline */}
+        <div>
+          <h2
+            className="text-[44px] font-medium leading-[1.05] tracking-[-0.03em] max-w-sm"
+            style={{ color: "var(--color-on-dark)" }}
+          >
+            Threat intelligence. Every surface. One platform.
+          </h2>
+          <p
+            className="mt-5 text-[14px] leading-[1.6] max-w-sm"
+            style={{ color: "var(--color-on-dark-muted)" }}
+          >
+            Dark-web crawlers, brand defence, MITRE mapping, and agentic
+            triage — unified behind one interface.
+          </p>
+
+          {/* Feature list */}
+          <div className="mt-8 space-y-2">
+            {[
+              "Dark web & Tor monitoring",
+              "Brand protection & takedowns",
+              "IOC enrichment & MITRE mapping",
+              "AI-powered alert triage",
+            ].map((f) => (
+              <div key={f} className="flex items-center gap-2.5">
+                <span
+                  className="w-1.5 h-1.5 rounded-full shrink-0"
+                  style={{ background: "var(--color-accent)" }}
+                />
+                <span
+                  className="text-[13px]"
+                  style={{ color: "var(--color-on-dark-muted)" }}
+                >
+                  {f}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Footer note */}
+        <p
+          className="text-[11px]"
+          style={{ color: "rgba(197, 192, 177, 0.5)" }}
+        >
+          Secured access. Contact your administrator for credentials.
+        </p>
+      </div>
+
+      {/* Right — sign-in form */}
+      <div className="flex items-center justify-center px-6 py-12">
+        <div className="w-full max-w-[380px]">
+          {/* Mobile wordmark */}
+          <div
+            className="lg:hidden flex items-center gap-2.5 mb-10"
+          >
+            <div
+              className="w-8 h-8 flex items-center justify-center"
+              style={{ background: "var(--color-accent)", borderRadius: "4px" }}
+            >
+              <Shield className="w-4 h-4" style={{ color: "#fffefb" }} />
+            </div>
+            <span
+              className="text-[18px] font-semibold tracking-[-0.02em]"
+              style={{ color: "var(--color-ink)" }}
+            >
+              Argus
+            </span>
+          </div>
+
+          <h2
+            className="text-[32px] font-medium leading-[1.1] tracking-[-0.03em] mb-1"
+            style={{ color: "var(--color-ink)" }}
+          >
+            Sign in
+          </h2>
+          <p className="text-[14px] mb-8" style={{ color: "var(--color-muted)" }}>
+            Enter your credentials to access the platform.
+          </p>
 
           {error && (
-            <div className="mb-6 px-4 py-3 rounded-lg bg-error-lighter border border-error/20 text-[13px] font-semibold text-error-dark">
+            <div
+              className="mb-6 px-4 py-3 text-[13px] font-medium"
+              style={{
+                background: "rgba(239, 68, 68, 0.06)",
+                color: "var(--color-error-dark)",
+                border: "1px solid rgba(239, 68, 68, 0.2)",
+                borderRadius: "5px",
+              }}
+            >
               {error}
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="space-y-4">
             <div>
-              <label className="block text-[13px] font-semibold text-grey-700 mb-1.5">
+              <label
+                className="block text-[11px] font-semibold uppercase tracking-[0.08em] mb-1.5"
+                style={{ color: "var(--color-body)" }}
+              >
                 Email
               </label>
               <input
@@ -64,11 +177,27 @@ export default function LoginPage() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="you@example.com"
                 autoComplete="email"
-                className="w-full h-11 px-3 rounded-lg border border-grey-300 bg-white text-[14px] text-grey-800 placeholder:text-grey-400 outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+                className="w-full h-10 px-3 text-[14px] outline-none transition-colors"
+                style={{
+                  background: "var(--color-canvas)",
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "5px",
+                  color: "var(--color-ink)",
+                }}
+                onFocus={(e) => {
+                  (e.target as HTMLInputElement).style.borderColor = "var(--color-accent)";
+                }}
+                onBlur={(e) => {
+                  (e.target as HTMLInputElement).style.borderColor = "var(--color-border)";
+                }}
               />
             </div>
+
             <div>
-              <label className="block text-[13px] font-semibold text-grey-700 mb-1.5">
+              <label
+                className="block text-[11px] font-semibold uppercase tracking-[0.08em] mb-1.5"
+                style={{ color: "var(--color-body)" }}
+              >
                 Password
               </label>
               <div className="relative">
@@ -78,33 +207,65 @@ export default function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter your password"
                   autoComplete="current-password"
-                  className="w-full h-11 px-3 pr-10 rounded-lg border border-grey-300 bg-white text-[14px] text-grey-800 placeholder:text-grey-400 outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-colors"
+                  className="w-full h-10 px-3 pr-10 text-[14px] outline-none transition-colors"
+                  style={{
+                    background: "var(--color-canvas)",
+                    border: "1px solid var(--color-border)",
+                    borderRadius: "5px",
+                    color: "var(--color-ink)",
+                  }}
+                  onFocus={(e) => {
+                    (e.target as HTMLInputElement).style.borderColor = "var(--color-accent)";
+                  }}
+                  onBlur={(e) => {
+                    (e.target as HTMLInputElement).style.borderColor = "var(--color-border)";
+                  }}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-grey-400 hover:text-grey-600"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 transition-colors"
+                  style={{ color: "var(--color-muted)" }}
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             </div>
+
             <button
               type="submit"
               disabled={loading}
-              className="w-full h-11 rounded-lg text-[14px] font-bold bg-grey-900 text-white hover:bg-grey-800 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+              className="w-full h-10 text-[14px] font-semibold transition-opacity disabled:opacity-60 flex items-center justify-center gap-2 mt-6"
+              style={{
+                background: "var(--color-accent)",
+                color: "#fffefb",
+                borderRadius: "4px",
+                border: "1px solid var(--color-accent)",
+              }}
+              onMouseEnter={(e) => {
+                if (!loading) (e.currentTarget as HTMLElement).style.opacity = "0.88";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.opacity = "";
+              }}
             >
               {loading && (
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <div
+                  className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin"
+                  style={{ borderColor: "rgba(255,254,251,0.4)", borderTopColor: "transparent" }}
+                />
               )}
-              {loading ? "Signing in..." : "Sign in"}
+              {loading ? "Signing in…" : "Sign in"}
             </button>
           </form>
-        </div>
 
-        <p className="text-center text-[13px] text-grey-500 mt-6">
-          First time? Contact your administrator for access.
-        </p>
+          <p
+            className="text-center text-[12px] mt-8"
+            style={{ color: "var(--color-muted)" }}
+          >
+            First time? Contact your administrator for access.
+          </p>
+        </div>
       </div>
     </div>
   );

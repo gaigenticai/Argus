@@ -28,6 +28,42 @@ reportlab>=4.1.0
 # Notifications
 aiosmtplib>=3.0.0
 
+# Multipart form parsing (for /assets/bulk/csv upload)
+python-multipart>=0.0.20
+
+# Evidence Vault — MinIO/S3-compatible blob storage
+boto3>=1.35.0
+
+# Notifications — webhooks, SMTP, and Jasmin SMS gateway
+aiohttp>=3.11.0
+aiosmtpd>=1.4.6
+
+# EASM — DNS + WHOIS for runner pipelines
+dnspython>=2.7.0
+python-whois>=0.9.5
+
+# Hardening — XXE-safe XML parsing + magic-byte file sniffing
+defusedxml>=0.7.1
+python-magic>=0.4.27
+
+# DMARC360 — RUA aggregate report parsing
+parsedmarc>=8.16.0
+
+# Brand Protection — typosquat / lookalike domain generator
+dnstwist>=20240924
+
+# Brand Protection — TLD parsing driven by the Public Suffix List.
+# tldextract ships a bundled PSL snapshot; ``include_psl_private_domains``
+# keeps the snapshot deterministic in offline / air-gap deploys.
+tldextract>=5.1.2
+
+# Logo abuse — perceptual hashing (lightweight CLIP alternative — see docs/HARDWARE_DECISIONS.md)
+imagehash>=4.3.2
+Pillow>=11.0.0
+
+# Impersonation matching — fast string + name similarity
+rapidfuzz>=3.10.0
+
 # Auth
 argon2-cffi>=25.1.0
 PyJWT>=2.9.0
@@ -43,3 +79,48 @@ PyYAML>=6.0.0
 
 # Utils
 python-dotenv>=1.0.0
+
+# Observability (Audit C6) — pure-Python, ~64 KB, no native deps
+prometheus_client>=0.20.0
+
+# 2FA / TOTP (Audit D10) — pure-Python
+pyotp>=2.9.0
+
+# Mobile-app store scrapers (Audit B3 — Phase 4.4)
+#   Android: google-play-scraper, pure-Python, no API key.
+#   iOS: Apple's official public iTunes Search API
+#        (https://itunes.apple.com/search) — no SDK or API key, hit
+#        directly with aiohttp. The third-party `app-store-scraper`
+#        package pins ancient urllib3 incompatible with Py 3.13.
+google-play-scraper>=1.2.7
+
+# Social monitoring (Audit B3 — Phase 4.1) — open-source scrapers
+# that work without paid API keys. Each is opt-in per worker config.
+#   Instagram: instaloader (Bellingcat-recommended OSINT tool, public
+#              profiles work without login at moderate rate limits).
+#   TikTok: davidteather/TikTok-Api — actively maintained, used by
+#          250+ companies, MIT license. Requires Playwright Chromium
+#          to be installed (`playwright install chromium`). Opt-in
+#          via ARGUS_WORKER_TIKTOK_INTERVAL > 0; default 0 (off).
+instaloader>=4.13.0
+TikTokApi>=7.0.0
+#   Twitter/X: Scweet — replays GraphQL via curl_cffi w/ TLS
+#              fingerprinting; multi-account pooling, proxy support.
+#              Operator must seed authenticated sessions via Scweet's
+#              account-session mechanism. Opt-in via
+#              ARGUS_WORKER_TWITTER_INTERVAL > 0 + populated session dir.
+Scweet>=5.3.0
+#   LinkedIn: linkedin-scraper — Selenium-based, requires
+#             ARGUS_LINKEDIN_USERNAME/PASSWORD operator credentials,
+#             very aggressive ban risk: limit to 1 req / 60s and only
+#             scan Company pages (legally scrapable per hiQ Labs v.
+#             LinkedIn 9th Circuit ruling). Opt-in via
+#             ARGUS_WORKER_LINKEDIN_INTERVAL > 0.
+linkedin-scraper>=3.1.0
+
+# Test harness (Phase 0 — required for every later phase)
+pytest>=8.3.0
+pytest-asyncio>=0.24.0
+pytest-cov>=5.0.0
+httpx>=0.27.0
+asgi-lifespan>=2.1.0

@@ -18,23 +18,23 @@ import { api, type IntegrationTool } from "@/lib/api";
 import { useToast } from "@/components/shared/toast";
 import { timeAgo } from "@/lib/utils";
 
-const STATUS_CONFIG: Record<string, { label: string; icon: typeof CheckCircle; color: string; bg: string }> = {
-  connected: { label: "Connected", icon: CheckCircle, color: "text-success-dark", bg: "bg-success-lighter" },
-  error: { label: "Error", icon: AlertTriangle, color: "text-error-dark", bg: "bg-error-lighter" },
-  available: { label: "Available", icon: PackagePlus, color: "text-info-dark", bg: "bg-info-lighter" },
-  unconfigured: { label: "Not Configured", icon: Clock, color: "text-grey-600", bg: "bg-grey-200" },
+const STATUS_CONFIG: Record<string, { label: string; icon: typeof CheckCircle; bg: string; color: string }> = {
+  connected: { label: "Connected", icon: CheckCircle, bg: "rgba(0,167,111,0.1)", color: "#007B55" },
+  error: { label: "Error", icon: AlertTriangle, bg: "rgba(255,86,48,0.1)", color: "#B71D18" },
+  available: { label: "Available", icon: PackagePlus, bg: "rgba(0,187,217,0.1)", color: "#007B8A" },
+  unconfigured: { label: "Not Configured", icon: Clock, bg: "var(--color-surface-muted)", color: "var(--color-muted)" },
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
   "Threat Intelligence": "#2196F3",
   "SIEM / EDR": "#00A76F",
-  "Vulnerability Scanning": "#8E33FF",
+  "Vulnerability Scanning": "var(--color-accent)",
   "Malware Analysis": "#FF5630",
   "Detection Rules": "#FFAB00",
   "OSINT": "#00BBD9",
   "Network IDS": "#FF8B00",
   "SOAR": "#FF6C40",
-  "Phishing Simulation": "#8E33FF",
+  "Phishing Simulation": "var(--color-accent)",
   "Cloud Security": "#00A76F",
 };
 
@@ -52,16 +52,13 @@ export default function IntegrationsPage() {
       const data = await api.getIntegrations();
       setTools(data);
     } catch {
-      // Fallback to empty — endpoint might not exist yet
       setTools([]);
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { load(); }, []);
 
   const handleTest = async (name: string) => {
     setTesting(name);
@@ -101,6 +98,7 @@ export default function IntegrationsPage() {
       });
       toast("success", `${name} configured and enabled`);
       setConfiguring(null);
+      setConfigForm({ api_url: "", api_key: "" });
       await load();
     } catch {
       toast("error", `Failed to save configuration`);
@@ -111,8 +109,11 @@ export default function IntegrationsPage() {
     return (
       <div className="flex items-center justify-center h-[60vh]">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-          <p className="text-[14px] text-grey-500">Loading integrations...</p>
+          <div
+            className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin"
+            style={{ borderColor: "var(--color-accent)", borderTopColor: "transparent" }}
+          />
+          <p className="text-[13px]" style={{ color: "var(--color-muted)" }}>Loading integrations...</p>
         </div>
       </div>
     );
@@ -121,42 +122,65 @@ export default function IntegrationsPage() {
   const connectedCount = tools.filter((t) => t.health_status === "connected").length;
   const availableCount = tools.filter((t) => t.health_status === "available").length;
 
+  const inputCls = "w-full h-10 px-3 text-[13px] outline-none transition-colors";
+  const inputStyle = {
+    borderRadius: "4px",
+    border: "1px solid var(--color-border)",
+    background: "var(--color-canvas)",
+    color: "var(--color-ink)",
+  } as React.CSSProperties;
+
   return (
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-[22px] font-bold text-grey-900">Integrations</h2>
-          <p className="text-[14px] text-grey-500 mt-0.5">
+          <h2 className="text-[24px] font-medium tracking-[-0.02em]" style={{ color: "var(--color-ink)" }}>
+            Integrations
+          </h2>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--color-muted)" }}>
             Open-source security tools — installed locally or connect your own instances
           </p>
         </div>
         <button
           onClick={() => { setLoading(true); load(); }}
-          className="flex items-center gap-2 h-10 px-4 rounded-lg text-[14px] font-bold border border-grey-300 text-grey-700 hover:bg-grey-100 transition-colors"
+          className="flex items-center gap-2 h-9 px-4 text-[13px] font-semibold transition-colors"
+          style={{
+            borderRadius: "4px",
+            border: "1px solid var(--color-border)",
+            background: "var(--color-canvas)",
+            color: "var(--color-body)",
+          }}
         >
           <RefreshCw className="w-4 h-4" />
         </button>
       </div>
 
       {/* Stats bar */}
-      <div className="flex items-center gap-6 px-6 py-4 bg-white rounded-xl border border-grey-200">
+      <div
+        className="flex items-center gap-6 px-6 py-4"
+        style={{
+          background: "var(--color-canvas)",
+          border: "1px solid var(--color-border)",
+          borderRadius: "5px",
+        }}
+      >
         <div>
-          <span className="text-[28px] font-extrabold text-grey-900">{tools.length}</span>
-          <p className="text-[12px] text-grey-500">Total</p>
+          <span className="text-[28px] font-bold" style={{ color: "var(--color-ink)" }}>{tools.length}</span>
+          <p className="text-[12px]" style={{ color: "var(--color-muted)" }}>Total</p>
         </div>
-        <div className="w-px h-10 bg-grey-200" />
+        <div className="w-px h-10" style={{ background: "var(--color-border)" }} />
         <div>
-          <span className="text-[28px] font-extrabold text-success">{connectedCount}</span>
-          <p className="text-[12px] text-grey-500">Installed</p>
+          <span className="text-[28px] font-bold" style={{ color: "#00A76F" }}>{connectedCount}</span>
+          <p className="text-[12px]" style={{ color: "var(--color-muted)" }}>Installed</p>
         </div>
-        <div className="w-px h-10 bg-grey-200" />
+        <div className="w-px h-10" style={{ background: "var(--color-border)" }} />
         <div>
-          <span className="text-[28px] font-extrabold text-info">{availableCount}</span>
-          <p className="text-[12px] text-grey-500">Available</p>
+          <span className="text-[28px] font-bold" style={{ color: "#00BBD9" }}>{availableCount}</span>
+          <p className="text-[12px]" style={{ color: "var(--color-muted)" }}>Available</p>
         </div>
         <div className="flex-1" />
-        <div className="flex items-center gap-2 text-[13px] text-grey-500">
+        <div className="flex items-center gap-2 text-[13px]" style={{ color: "var(--color-muted)" }}>
           <Lock className="w-4 h-4" />
           All open-source with commercial-friendly licenses
         </div>
@@ -167,7 +191,7 @@ export default function IntegrationsPage() {
         {tools.map((tool) => {
           const statusCfg = STATUS_CONFIG[tool.health_status] || STATUS_CONFIG.unconfigured;
           const StatusIcon = statusCfg.icon;
-          const catColor = CATEGORY_COLORS[tool.category] || "#637381";
+          const catColor = CATEGORY_COLORS[tool.category] || "var(--color-muted)";
           const isConfiguring = configuring === tool.tool_name;
           const isTesting = testing === tool.tool_name;
           const isSyncing = syncing === tool.tool_name;
@@ -175,55 +199,86 @@ export default function IntegrationsPage() {
           return (
             <div
               key={tool.tool_name}
-              className="bg-white rounded-xl border border-grey-200 overflow-hidden hover:border-grey-300 transition-colors"
+              className="overflow-hidden transition-colors"
+              style={{
+                background: "var(--color-canvas)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "5px",
+              }}
             >
               <div className="p-5">
                 <div className="flex items-start gap-4">
                   {/* Icon */}
                   <div
-                    className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 text-[16px] font-extrabold text-white"
-                    style={{ backgroundColor: catColor }}
+                    className="w-11 h-11 flex items-center justify-center shrink-0 text-[16px] font-bold text-white"
+                    style={{ borderRadius: "5px", backgroundColor: catColor }}
                   >
                     {tool.display_name.charAt(0)}
                   </div>
 
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 mb-1">
-                      <h3 className="text-[15px] font-bold text-grey-900">{tool.display_name}</h3>
-                      <span className={`inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-full ${statusCfg.bg} ${statusCfg.color}`}>
+                      <h3 className="text-[14px] font-semibold" style={{ color: "var(--color-ink)" }}>{tool.display_name}</h3>
+                      <span
+                        className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5"
+                        style={{
+                          borderRadius: "20px",
+                          background: statusCfg.bg,
+                          color: statusCfg.color,
+                        }}
+                      >
                         <StatusIcon className="w-3 h-3" />
                         {statusCfg.label}
                       </span>
                     </div>
-                    <p className="text-[13px] text-grey-600 leading-snug mb-2">
+                    <p className="text-[13px] leading-snug mb-2" style={{ color: "var(--color-body)" }}>
                       {tool.description}
                     </p>
                     <div className="flex items-center gap-3">
-                      <span className="text-[11px] font-medium text-grey-500 bg-grey-100 px-2 py-0.5 rounded">
+                      <span
+                        className="text-[11px] font-medium px-2 py-0.5"
+                        style={{
+                          borderRadius: "4px",
+                          background: "var(--color-surface-muted)",
+                          color: "var(--color-muted)",
+                        }}
+                      >
                         {tool.category}
                       </span>
-                      <span className="text-[11px] font-mono text-grey-400">{tool.license}</span>
+                      <span className="text-[11px] font-mono" style={{ color: "var(--color-muted)" }}>{tool.license}</span>
                       {tool.last_sync_at && (
-                        <span className="text-[11px] text-grey-500">
+                        <span className="text-[11px]" style={{ color: "var(--color-muted)" }}>
                           Synced {timeAgo(tool.last_sync_at)}
                         </span>
                       )}
                     </div>
                     {tool.last_error && (
-                      <p className="text-[11px] text-error mt-1 truncate">{tool.last_error}</p>
+                      <p className="text-[11px] mt-1 truncate" style={{ color: "var(--color-error)" }}>{tool.last_error}</p>
                     )}
                   </div>
                 </div>
               </div>
 
               {/* Action bar */}
-              <div className="flex items-center gap-2 px-5 py-3 border-t border-grey-100 bg-grey-50">
+              <div
+                className="flex items-center gap-2 px-5 py-3"
+                style={{
+                  borderTop: "1px solid var(--color-border)",
+                  background: "var(--color-surface)",
+                }}
+              >
                 <button
                   onClick={() => {
                     setConfiguring(isConfiguring ? null : tool.tool_name);
                     setConfigForm({ api_url: tool.api_url || "", api_key: "" });
                   }}
-                  className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12px] font-bold border border-grey-300 text-grey-700 hover:bg-white transition-colors"
+                  className="flex items-center gap-1.5 h-8 px-3 text-[12px] font-semibold transition-colors"
+                  style={{
+                    borderRadius: "4px",
+                    border: "1px solid var(--color-border)",
+                    background: "var(--color-canvas)",
+                    color: "var(--color-body)",
+                  }}
                 >
                   <Settings className="w-3.5 h-3.5" />
                   Configure
@@ -233,7 +288,13 @@ export default function IntegrationsPage() {
                     <button
                       onClick={() => handleTest(tool.tool_name)}
                       disabled={isTesting}
-                      className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12px] font-bold border border-grey-300 text-grey-700 hover:bg-white transition-colors disabled:opacity-50"
+                      className="flex items-center gap-1.5 h-8 px-3 text-[12px] font-semibold transition-colors disabled:opacity-50"
+                      style={{
+                        borderRadius: "4px",
+                        border: "1px solid var(--color-border)",
+                        background: "var(--color-canvas)",
+                        color: "var(--color-body)",
+                      }}
                     >
                       {isTesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
                       Test
@@ -242,7 +303,13 @@ export default function IntegrationsPage() {
                       <button
                         onClick={() => handleSync(tool.tool_name)}
                         disabled={isSyncing}
-                        className="flex items-center gap-1.5 h-8 px-3 rounded-lg text-[12px] font-bold bg-primary text-white hover:bg-primary-dark transition-colors disabled:opacity-50"
+                        className="flex items-center gap-1.5 h-8 px-3 text-[12px] font-semibold transition-colors disabled:opacity-50"
+                        style={{
+                          borderRadius: "4px",
+                          border: "1px solid var(--color-accent)",
+                          background: "var(--color-accent)",
+                          color: "var(--color-on-dark)",
+                        }}
                       >
                         {isSyncing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                         Sync
@@ -254,37 +321,59 @@ export default function IntegrationsPage() {
 
               {/* Config form */}
               {isConfiguring && (
-                <div className="px-5 py-4 border-t border-grey-200 bg-grey-50">
+                <div
+                  className="px-5 py-4"
+                  style={{
+                    borderTop: "1px solid var(--color-border)",
+                    background: "var(--color-surface)",
+                  }}
+                >
                   <div className="flex items-center justify-between mb-3">
-                    <h4 className="text-[13px] font-bold text-grey-800">Configure {tool.display_name}</h4>
-                    <button onClick={() => setConfiguring(null)} className="p-1 hover:bg-grey-200 rounded">
-                      <X className="w-4 h-4 text-grey-500" />
+                    <h4 className="text-[13px] font-semibold" style={{ color: "var(--color-ink)" }}>Configure {tool.display_name}</h4>
+                    <button
+                      onClick={() => setConfiguring(null)}
+                      className="p-1 transition-colors"
+                      style={{ borderRadius: "4px" }}
+                      onMouseEnter={e => (e.currentTarget.style.background = "var(--color-surface-muted)")}
+                      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                    >
+                      <X className="w-4 h-4" style={{ color: "var(--color-muted)" }} />
                     </button>
                   </div>
                   <div className="space-y-3">
                     <div>
-                      <label className="text-[12px] font-bold text-grey-600 mb-1 block">API URL</label>
+                      <label className="text-[12px] font-semibold mb-1 block" style={{ color: "var(--color-muted)" }}>API URL</label>
                       <input
                         type="url"
                         value={configForm.api_url}
                         onChange={(e) => setConfigForm({ ...configForm, api_url: e.target.value })}
                         placeholder="https://opencti.example.com"
-                        className="w-full h-10 px-3 rounded-lg border border-grey-300 text-[14px] outline-none focus:border-primary bg-white"
+                        className={inputCls}
+                        style={inputStyle}
                       />
                     </div>
                     <div>
-                      <label className="text-[12px] font-bold text-grey-600 mb-1 block">API Key</label>
+                      <label className="text-[12px] font-semibold mb-1 block" style={{ color: "var(--color-muted)" }}>API Key</label>
                       <input
                         type="password"
+                        autoComplete="new-password"
+                        spellCheck={false}
                         value={configForm.api_key}
                         onChange={(e) => setConfigForm({ ...configForm, api_key: e.target.value })}
                         placeholder="Enter API key..."
-                        className="w-full h-10 px-3 rounded-lg border border-grey-300 text-[14px] outline-none focus:border-primary bg-white"
+                        className={inputCls}
+                        style={inputStyle}
                       />
                     </div>
                     <button
                       onClick={() => handleSaveConfig(tool.tool_name)}
-                      className="h-9 px-4 rounded-lg text-[13px] font-bold bg-primary text-white hover:bg-primary-dark transition-colors"
+                      className="h-9 px-4 text-[13px] font-semibold transition-colors"
+                      style={{
+                        borderRadius: "4px",
+                        border: "1px solid var(--color-accent)",
+                        background: "var(--color-accent)",
+                        color: "var(--color-on-dark)",
+                      }}
                     >
                       Save & Enable
                     </button>

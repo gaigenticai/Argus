@@ -25,6 +25,7 @@ from src.feeds.ssl_feed import SSLFeed
 from src.feeds.tor_nodes_feed import TorNodesFeed
 from src.feeds.greynoise_feed import GreyNoiseFeed
 from src.feeds.otx_feed import OTXFeed
+from src.feeds.bgp_hijack_feed import BGPHijackFeed
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ DEFAULT_FEED_SCHEDULES: list[FeedSchedule] = [
     FeedSchedule(KEVFeed, interval_seconds=86400),           # 24 hours
     FeedSchedule(GreyNoiseFeed, interval_seconds=3600),      # 1 hour — GNQL scanner intel
     FeedSchedule(OTXFeed, interval_seconds=3600),            # 1 hour — OTX community pulses
+    FeedSchedule(BGPHijackFeed, interval_seconds=3600),      # 1 hour — Cloudflare Radar BGP hijacks
 ]
 
 
@@ -114,30 +116,94 @@ class FeedScheduler:
 
     async def _run_schedule(self, schedule: FeedSchedule) -> None:
         while self._running:
-            try:
-                feed = schedule.feed_class(**schedule.kwargs)
-                logger.info("[feed-scheduler] Running %s", feed.name)
-                async for session in get_session():
-                    pipeline = FeedIngestionPipeline(session, self._geolocator)
-                    new_count = await pipeline.ingest_from_feed(feed)
-                    logger.info(
-                        "[feed-scheduler] %s complete — %d new entries",
-                        feed.name,
-                        new_count,
-                    )
-                schedule.last_run = datetime.now(timezone.utc)
-            except Exception:
-                logger.exception(
-                    "[feed-scheduler] %s failed",
-                    schedule.feed_class.__name__,
-                )
-
+            await self._run_one(schedule)
+            schedule.last_run = datetime.now(timezone.utc)
             if schedule.interval > 0:
                 await asyncio.sleep(schedule.interval)
             else:
                 # interval=0 means persistent connection (e.g. BGP WebSocket).
                 # If it exits, back off 60 s before reconnecting.
                 await asyncio.sleep(60)
+
+    async def _run_one(self, schedule: FeedSchedule) -> None:
+        """Execute one tick of a feed, recording a FeedHealth row.
+
+        FeedHealth recording rules:
+            * Feed sets ``last_unconfigured_reason`` (e.g. missing API
+              key) → status=unconfigured, rows=0.
+            * Feed raises → status=network_error (or whatever the
+              subclass classified it as via ``last_failure_classification``).
+            * Otherwise the count of ingested entries lands as
+              status=ok, rows=N.
+        """
+        import time as _time
+
+        from src.core import feed_health as _feed_health
+        from src.models.admin import FeedHealthStatus
+
+        feed = schedule.feed_class(**schedule.kwargs)
+        logger.info("[feed-scheduler] Running %s", feed.name)
+        t0 = _time.monotonic()
+        new_count = 0
+        crashed: BaseException | None = None
+        try:
+            async for session in get_session():
+                pipeline = FeedIngestionPipeline(session, self._geolocator)
+                new_count = await pipeline.ingest_from_feed(feed)
+                logger.info(
+                    "[feed-scheduler] %s complete — %d new entries",
+                    feed.name, new_count,
+                )
+        except Exception as exc:  # noqa: BLE001
+            crashed = exc
+            logger.exception(
+                "[feed-scheduler] %s failed", schedule.feed_class.__name__,
+            )
+
+        duration_ms = int((_time.monotonic() - t0) * 1000)
+        async for session in get_session():
+            try:
+                if crashed is not None:
+                    await _feed_health.mark_failure(
+                        session,
+                        feed_name=feed.name,
+                        error=crashed,
+                        duration_ms=duration_ms,
+                        classify=(
+                            feed.last_failure_classification
+                            or FeedHealthStatus.NETWORK_ERROR.value
+                        ),
+                    )
+                elif feed.last_unconfigured_reason:
+                    await _feed_health.mark_unconfigured(
+                        session,
+                        feed_name=feed.name,
+                        detail=feed.last_unconfigured_reason,
+                    )
+                elif feed.last_failure_reason:
+                    await _feed_health.mark_failure(
+                        session,
+                        feed_name=feed.name,
+                        error=feed.last_failure_reason,
+                        duration_ms=duration_ms,
+                        classify=(
+                            feed.last_failure_classification
+                            or FeedHealthStatus.NETWORK_ERROR.value
+                        ),
+                    )
+                else:
+                    await _feed_health.mark_ok(
+                        session,
+                        feed_name=feed.name,
+                        rows_ingested=int(new_count or 0),
+                        duration_ms=duration_ms,
+                    )
+                await session.commit()
+            except Exception:  # noqa: BLE001
+                logger.exception(
+                    "[feed-scheduler] could not record FeedHealth for %s",
+                    feed.name,
+                )
 
     # ------------------------------------------------------------------
     # Manual / test helpers
@@ -154,18 +220,19 @@ class FeedScheduler:
             self._geolocator = GeoLocator()
         try:
             for schedule in self.schedules:
-                feed = schedule.feed_class(**schedule.kwargs)
-                if feed_name and feed.name != feed_name:
-                    continue
-                logger.info("[feed-scheduler] Manual run: %s", feed.name)
-                async for session in get_session():
-                    pipeline = FeedIngestionPipeline(session, self._geolocator)
-                    new_count = await pipeline.ingest_from_feed(feed)
-                    logger.info(
-                        "[feed-scheduler] %s — %d new entries",
-                        feed.name,
-                        new_count,
-                    )
+                # Instantiate just to read .name for filtering — _run_one
+                # builds a fresh instance for the actual run so feed
+                # state (last_unconfigured_reason, last_failure_reason)
+                # is always clean per tick.
+                if feed_name:
+                    probe = schedule.feed_class(**schedule.kwargs)
+                    if probe.name != feed_name:
+                        continue
+                logger.info(
+                    "[feed-scheduler] Manual run: %s",
+                    schedule.feed_class.__name__,
+                )
+                await self._run_one(schedule)
         finally:
             if self._geolocator:
                 self._geolocator.close()

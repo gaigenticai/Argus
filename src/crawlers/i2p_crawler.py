@@ -10,6 +10,9 @@ This tool must only be operated by authorized personnel in compliance with
 applicable laws and organizational security policies.
 """
 
+from __future__ import annotations
+
+
 import logging
 import re
 from datetime import datetime, timezone
@@ -27,9 +30,9 @@ from .base import BaseCrawler, CrawlResult
 
 logger = logging.getLogger(__name__)
 
-# I2P network constants
-I2P_PROXY_HOST = "localhost"
-I2P_PROXY_PORT = 4444
+# I2P network constants — read from settings so Docker Compose service names work.
+I2P_PROXY_HOST = settings.i2p.proxy_host
+I2P_PROXY_PORT = settings.i2p.proxy_port
 I2P_DOMAIN_SUFFIX = ".i2p"
 # I2P is significantly slower than Tor; use generous timeouts
 I2P_REQUEST_TIMEOUT = 120  # seconds

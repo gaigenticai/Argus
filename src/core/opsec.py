@@ -1,5 +1,8 @@
 """OPSEC hardening module — Tor circuit rotation, header randomization, fingerprint evasion."""
 
+from __future__ import annotations
+
+
 import asyncio
 import random
 import re

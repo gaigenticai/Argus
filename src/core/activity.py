@@ -4,6 +4,9 @@ Uses an asyncio queue + SSE pattern so the dashboard can show live progress
 of every tool invocation, triage decision, and crawler step as it happens.
 """
 
+from __future__ import annotations
+
+
 import asyncio
 import json
 import logging

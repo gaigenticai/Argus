@@ -1,5 +1,8 @@
 """Base integration class — all external tool connectors inherit from this."""
 
+from __future__ import annotations
+
+
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone

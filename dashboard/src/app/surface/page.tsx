@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Globe, Scan, Shield, Server, Network, Wifi, ExternalLink } from "lucide-react";
+import {
+  AlertTriangle,
+  Globe,
+  Scan,
+  Shield,
+  Network,
+  Wifi,
+} from "lucide-react";
 import { api, type Org, type OrgAsset } from "@/lib/api";
 import { useToast } from "@/components/shared/toast";
 
@@ -10,11 +17,19 @@ interface SubdomainResult {
   ip: string | null;
 }
 
+interface ScanResults {
+  discovered: number;
+  subdomains: SubdomainResult[];
+  scan_status?: "ok" | "partial" | "failed";
+  errors?: string[];
+  domains_scanned?: string[];
+}
+
 export default function SurfacePage() {
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [selectedOrg, setSelectedOrg] = useState<string>("");
   const [scanning, setScanning] = useState(false);
-  const [scanResults, setScanResults] = useState<{ discovered: number; subdomains: SubdomainResult[] } | null>(null);
+  const [scanResults, setScanResults] = useState<ScanResults | null>(null);
   const [assets, setAssets] = useState<OrgAsset[]>([]);
   const [loadingAssets, setLoadingAssets] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -46,7 +61,6 @@ export default function SurfacePage() {
     setLoadingAssets(false);
   }, []);
 
-  // Load assets when org changes
   useEffect(() => {
     if (selectedOrg) {
       loadAssets(selectedOrg);
@@ -62,10 +76,15 @@ export default function SurfacePage() {
     setScanning(true);
     setScanResults(null);
     try {
-      const res = await api.scanSubdomains(selectedOrg) as { discovered: number; subdomains: SubdomainResult[] };
+      const res = (await api.scanSubdomains(selectedOrg)) as ScanResults;
       setScanResults(res);
-      toast("success", `Discovered ${res.discovered} subdomain(s)`);
-      // Reload assets to get newly stored ones
+      if (res.scan_status === "failed") {
+        toast("error", "Subdomain scan failed — every passive source returned an error");
+      } else if (res.scan_status === "partial") {
+        toast("info", `Discovered ${res.discovered} subdomain(s) — partial result, some sources failed`);
+      } else {
+        toast("success", `Discovered ${res.discovered} subdomain(s)`);
+      }
       await loadAssets(selectedOrg);
     } catch {
       toast("error", "Subdomain scan failed");
@@ -83,11 +102,20 @@ export default function SurfacePage() {
     }
   }
 
+  const thCls = "text-left h-9 px-4 text-[10px] font-semibold uppercase tracking-[0.07em]";
+  const cardStyle = {
+    background: "var(--color-canvas)",
+    border: "1px solid var(--color-border)",
+    borderRadius: "5px",
+  } as React.CSSProperties;
+
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-[22px] font-bold text-grey-900">Attack surface</h2>
-        <p className="text-[14px] text-grey-500 mt-0.5">
+        <h2 className="text-[24px] font-medium tracking-[-0.02em]" style={{ color: "var(--color-ink)" }}>
+          Attack surface
+        </h2>
+        <p className="text-[13px] mt-0.5" style={{ color: "var(--color-muted)" }}>
           Discover and monitor public-facing assets
         </p>
       </div>
@@ -97,7 +125,13 @@ export default function SurfacePage() {
         <select
           value={selectedOrg}
           onChange={(e) => setSelectedOrg(e.target.value)}
-          className="h-10 px-3 rounded-lg border border-grey-300 text-[14px] outline-none focus:border-primary bg-white"
+          className="h-10 px-3 text-[13px] outline-none transition-colors cursor-pointer"
+          style={{
+            borderRadius: "4px",
+            border: "1px solid var(--color-border)",
+            background: "var(--color-canvas)",
+            color: "var(--color-body)",
+          }}
         >
           {orgs.map((o) => (
             <option key={o.id} value={o.id}>{o.name}</option>
@@ -106,7 +140,13 @@ export default function SurfacePage() {
         <button
           onClick={handleScanSubdomains}
           disabled={scanning || !selectedOrg}
-          className="flex items-center gap-2 h-10 px-4 rounded-lg text-[14px] font-bold bg-primary text-white hover:bg-primary-dark transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 h-9 px-4 text-[13px] font-semibold transition-colors disabled:opacity-50"
+          style={{
+            borderRadius: "4px",
+            border: "1px solid var(--color-accent)",
+            background: "var(--color-accent)",
+            color: "var(--color-on-dark)",
+          }}
         >
           <Scan className="w-4 h-4" />
           {scanning ? "Scanning..." : "Discover subdomains"}
@@ -114,7 +154,13 @@ export default function SurfacePage() {
         <button
           onClick={handleScanExposures}
           disabled={!selectedOrg}
-          className="flex items-center gap-2 h-10 px-4 rounded-lg text-[14px] font-bold bg-grey-800 text-white hover:bg-grey-700 transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 h-9 px-4 text-[13px] font-semibold transition-colors disabled:opacity-50"
+          style={{
+            borderRadius: "4px",
+            border: "1px solid var(--color-border-strong)",
+            background: "var(--color-surface-dark)",
+            color: "var(--color-on-dark)",
+          }}
         >
           <Shield className="w-4 h-4" />
           Check exposures
@@ -124,61 +170,77 @@ export default function SurfacePage() {
       {/* Overview stats for selected org */}
       {selectedOrgData && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white rounded-xl border border-grey-200 p-4">
+          <div className="p-4" style={cardStyle}>
             <div className="flex items-center gap-2 mb-2">
-              <Globe className="w-4 h-4 text-grey-500" />
-              <span className="text-[12px] font-bold text-grey-500 uppercase tracking-wider">Domains</span>
+              <Globe className="w-4 h-4" style={{ color: "var(--color-muted)" }} />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.8px]" style={{ color: "var(--color-muted)" }}>Domains</span>
             </div>
             <div className="space-y-1">
               {selectedOrgData.domains.map((d) => (
-                <div key={d} className="text-[14px] font-medium text-grey-800 font-mono">{d}</div>
+                <div key={d} className="text-[13px] font-medium font-mono" style={{ color: "var(--color-body)" }}>{d}</div>
               ))}
             </div>
           </div>
-          <div className="bg-white rounded-xl border border-grey-200 p-4">
+          <div className="p-4" style={cardStyle}>
             <div className="flex items-center gap-2 mb-2">
-              <Network className="w-4 h-4 text-grey-500" />
-              <span className="text-[12px] font-bold text-grey-500 uppercase tracking-wider">Discovered assets</span>
+              <Network className="w-4 h-4" style={{ color: "var(--color-muted)" }} />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.8px]" style={{ color: "var(--color-muted)" }}>Discovered assets</span>
             </div>
-            <p className="text-[28px] font-extrabold text-grey-900">{subdomainAssets.length}</p>
-            <p className="text-[12px] text-grey-500">subdomains in database</p>
+            <p className="text-[28px] font-bold" style={{ color: "var(--color-ink)" }}>{subdomainAssets.length}</p>
+            <p className="text-[12px]" style={{ color: "var(--color-muted)" }}>subdomains in database</p>
           </div>
-          <div className="bg-white rounded-xl border border-grey-200 p-4">
+          <div className="p-4" style={cardStyle}>
             <div className="flex items-center gap-2 mb-2">
-              <Wifi className="w-4 h-4 text-grey-500" />
-              <span className="text-[12px] font-bold text-grey-500 uppercase tracking-wider">Industry</span>
+              <Wifi className="w-4 h-4" style={{ color: "var(--color-muted)" }} />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.8px]" style={{ color: "var(--color-muted)" }}>Industry</span>
             </div>
-            <p className="text-[14px] font-semibold text-grey-800">{selectedOrgData.industry || "Not specified"}</p>
+            <p className="text-[13px] font-semibold" style={{ color: "var(--color-body)" }}>{selectedOrgData.industry || "Not specified"}</p>
           </div>
         </div>
       )}
 
       {/* Existing discovered assets from DB */}
       {subdomainAssets.length > 0 && !scanResults && (
-        <div className="bg-white rounded-xl border border-grey-200 overflow-hidden">
-          <div className="px-4 h-12 flex items-center border-b border-grey-200">
-            <h3 className="text-[14px] font-bold text-grey-800">
+        <div className="overflow-hidden" style={cardStyle}>
+          <div
+            className="px-4 h-12 flex items-center"
+            style={{ borderBottom: "1px solid var(--color-border)" }}
+          >
+            <h3 className="text-[14px] font-semibold" style={{ color: "var(--color-ink)" }}>
               Known assets ({subdomainAssets.length})
             </h3>
           </div>
           <table className="w-full">
             <thead>
-              <tr className="bg-grey-100 border-b border-grey-200">
-                <th className="text-left h-12 px-4 text-[12px] font-bold text-grey-600 uppercase tracking-wider">Asset</th>
-                <th className="text-left h-12 px-4 text-[12px] font-bold text-grey-600 uppercase tracking-wider">Type</th>
-                <th className="text-left h-12 px-4 text-[12px] font-bold text-grey-600 uppercase tracking-wider">IP</th>
+              <tr style={{ background: "var(--color-surface-muted)", borderBottom: "1px solid var(--color-border)" }}>
+                <th className={thCls} style={{ color: "var(--color-muted)" }}>Asset</th>
+                <th className={thCls} style={{ color: "var(--color-muted)" }}>Type</th>
+                <th className={thCls} style={{ color: "var(--color-muted)" }}>IP</th>
               </tr>
             </thead>
             <tbody>
               {subdomainAssets.map((asset) => (
-                <tr key={asset.id} className="h-[52px] border-b border-grey-200 last:border-b-0 hover:bg-grey-50">
-                  <td className="px-4 text-[14px] font-mono text-grey-800">{asset.value}</td>
+                <tr
+                  key={asset.id}
+                  className="h-[52px] transition-colors"
+                  style={{ borderBottom: "1px solid var(--color-surface-muted)" }}
+                  onMouseEnter={e => (e.currentTarget.style.background = "var(--color-surface)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                >
+                  <td className="px-4 text-[13px] font-mono" style={{ color: "var(--color-body)" }}>{asset.value}</td>
                   <td className="px-4">
-                    <span className="inline-flex items-center h-[22px] px-2 rounded text-[11px] font-semibold bg-grey-100 text-grey-600 uppercase">
+                    <span
+                      className="inline-flex items-center h-[20px] px-2 text-[10px] font-semibold uppercase"
+                      style={{
+                        borderRadius: "4px",
+                        background: "var(--color-surface-muted)",
+                        color: "var(--color-muted)",
+                      }}
+                    >
                       {asset.type}
                     </span>
                   </td>
-                  <td className="px-4 text-[13px] font-mono text-grey-500">
+                  <td className="px-4 text-[13px] font-mono" style={{ color: "var(--color-muted)" }}>
                     {(asset.details as Record<string, string>)?.ip || "—"}
                   </td>
                 </tr>
@@ -188,33 +250,108 @@ export default function SurfacePage() {
         </div>
       )}
 
+      {/* Scan-status banner */}
+      {scanResults && scanResults.scan_status && scanResults.scan_status !== "ok" ? (
+        <div
+          role="alert"
+          className="flex items-start gap-3 px-4 py-3"
+          style={{
+            borderRadius: "5px",
+            border: scanResults.scan_status === "failed"
+              ? "1px solid rgba(255,86,48,0.4)"
+              : "1px solid rgba(255,171,0,0.4)",
+            background: scanResults.scan_status === "failed"
+              ? "rgba(255,86,48,0.06)"
+              : "rgba(255,171,0,0.06)",
+          }}
+        >
+          <AlertTriangle
+            className="w-5 h-5 mt-0.5 shrink-0"
+            style={{
+              color: scanResults.scan_status === "failed" ? "#B71D18" : "#B76E00",
+            }}
+          />
+          <div className="flex-1 min-w-0">
+            <p
+              className="text-[13px] font-semibold"
+              style={{ color: scanResults.scan_status === "failed" ? "#B71D18" : "#B76E00" }}
+            >
+              {scanResults.scan_status === "failed"
+                ? "Scan failed — passive sources unreachable"
+                : "Partial result — some sources failed"}
+            </p>
+            <p className="text-[12px] mt-0.5" style={{ color: "var(--color-body)" }}>
+              {scanResults.scan_status === "failed"
+                ? "An empty result here does not mean the surface is clean. Verify connectivity and retry."
+                : "An empty result here may be incomplete. Retry the scan once the upstream stabilises."}
+            </p>
+            {scanResults.errors && scanResults.errors.length > 0 ? (
+              <ul className="mt-2 space-y-0.5">
+                {scanResults.errors.slice(0, 6).map((e, i) => (
+                  <li key={i} className="text-[11.5px] font-mono truncate" style={{ color: "var(--color-muted)" }}>
+                    · {e}
+                  </li>
+                ))}
+                {scanResults.errors.length > 6 ? (
+                  <li className="text-[11.5px]" style={{ color: "var(--color-muted)" }}>
+                    …and {scanResults.errors.length - 6} more
+                  </li>
+                ) : null}
+              </ul>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
       {/* Fresh scan results */}
       {scanResults && (
-        <div className="bg-white rounded-xl border border-grey-200 overflow-hidden">
-          <div className="px-4 h-12 flex items-center justify-between border-b border-grey-200">
-            <h3 className="text-[14px] font-bold text-grey-800">
+        <div className="overflow-hidden" style={cardStyle}>
+          <div
+            className="px-4 h-12 flex items-center justify-between"
+            style={{ borderBottom: "1px solid var(--color-border)" }}
+          >
+            <h3 className="text-[14px] font-semibold" style={{ color: "var(--color-ink)" }}>
               Scan results — {scanResults.discovered} subdomain(s) discovered
+              {scanResults.scan_status === "partial" ? (
+                <span className="ml-2 text-[10px] font-semibold uppercase tracking-wider" style={{ color: "#B76E00" }}>
+                  · partial
+                </span>
+              ) : scanResults.scan_status === "failed" ? (
+                <span className="ml-2 text-[10px] font-semibold uppercase tracking-wider" style={{ color: "#B71D18" }}>
+                  · failed
+                </span>
+              ) : null}
             </h3>
           </div>
           {scanResults.subdomains.length === 0 ? (
-            <div className="p-12 text-center w-full text-[14px] text-grey-500">
-              No subdomains discovered
+            <div className="p-12 text-center text-[13px]" style={{ color: "var(--color-muted)" }}>
+              {scanResults.scan_status === "failed"
+                ? "No data — scan failed (see banner above)"
+                : scanResults.scan_status === "partial"
+                ? "No subdomains discovered — partial result, see banner above"
+                : "No subdomains discovered"}
             </div>
           ) : (
             <table className="w-full">
               <thead>
-                <tr className="bg-grey-100 border-b border-grey-200">
-                  <th className="text-left h-12 px-4 text-[12px] font-bold text-grey-600 uppercase tracking-wider">Subdomain</th>
-                  <th className="text-left h-12 px-4 text-[12px] font-bold text-grey-600 uppercase tracking-wider">IP Address</th>
+                <tr style={{ background: "var(--color-surface-muted)", borderBottom: "1px solid var(--color-border)" }}>
+                  <th className={thCls} style={{ color: "var(--color-muted)" }}>Subdomain</th>
+                  <th className={thCls} style={{ color: "var(--color-muted)" }}>IP Address</th>
                 </tr>
               </thead>
               <tbody>
                 {scanResults.subdomains.map((sub, i) => (
-                  <tr key={i} className="h-[52px] border-b border-grey-200 last:border-b-0 hover:bg-grey-50">
+                  <tr
+                    key={i}
+                    className="h-[52px] transition-colors"
+                    style={{ borderBottom: "1px solid var(--color-surface-muted)" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "var(--color-surface)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                  >
                     <td className="px-4">
-                      <span className="text-[14px] font-mono font-medium text-grey-800">{sub.subdomain}</span>
+                      <span className="text-[13px] font-mono font-medium" style={{ color: "var(--color-body)" }}>{sub.subdomain}</span>
                     </td>
-                    <td className="px-4 text-[13px] text-grey-500 font-mono">
+                    <td className="px-4 text-[13px] font-mono" style={{ color: "var(--color-muted)" }}>
                       {sub.ip || "—"}
                     </td>
                   </tr>
@@ -225,12 +362,15 @@ export default function SurfacePage() {
         </div>
       )}
 
-      {/* Empty state — only if no assets and no scan results */}
+      {/* Empty state */}
       {!scanResults && !scanning && subdomainAssets.length === 0 && !loadingAssets && (
-        <div className="bg-white rounded-xl border border-grey-200 p-12 flex flex-col items-center justify-center text-center w-full">
-          <Globe className="w-12 h-12 text-grey-300 mb-4" />
-          <h3 className="text-[16px] font-bold text-grey-900 mb-1">Attack surface discovery</h3>
-          <p className="text-[14px] text-grey-500 max-w-sm">
+        <div
+          className="p-12 flex flex-col items-center justify-center text-center w-full"
+          style={cardStyle}
+        >
+          <Globe className="w-12 h-12 mb-4" style={{ color: "var(--color-border)" }} />
+          <h3 className="text-[14px] font-semibold mb-1" style={{ color: "var(--color-ink)" }}>Attack surface discovery</h3>
+          <p className="text-[13px] max-w-sm" style={{ color: "var(--color-muted)" }}>
             Select an organization and run a scan to discover subdomains, exposed services, and misconfigurations.
           </p>
         </div>

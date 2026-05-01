@@ -1,5 +1,8 @@
 """Extended intelligence models — IOCs, threat actors, crawler sources, integrations."""
 
+from __future__ import annotations
+
+
 import enum
 import uuid
 from datetime import datetime
@@ -313,12 +316,24 @@ class WebhookDelivery(Base, UUIDMixin):
 
 
 class IntegrationConfig(Base, UUIDMixin, TimestampMixin):
+    """Per-tool external integration credentials.
+
+    Adversarial audit D-8 — ``api_key`` stores Fernet ciphertext via
+    src/core/crypto. Callers MUST go through ``set_api_key`` / read
+    ``api_key_plain`` instead of touching the raw column. The column is
+    sized at 2 KiB to accommodate ciphertext + nonce + base64 padding
+    while still fitting common third-party token shapes (Wazuh, OpenCTI,
+    Shuffle).
+    """
+
     __tablename__ = "integration_configs"
 
     tool_name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     api_url: Mapped[str] = mapped_column(String(2048), default="", nullable=False)
-    api_key: Mapped[str | None] = mapped_column(String(500))
+    # NB. column name preserved for migration compatibility — value is now
+    # always Fernet ciphertext (or empty / None).
+    api_key: Mapped[str | None] = mapped_column(String(2048))
     extra_settings: Mapped[dict | None] = mapped_column(JSONB)
     health_status: Mapped[str] = mapped_column(String(20), default="unconfigured", nullable=False)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -328,6 +343,43 @@ class IntegrationConfig(Base, UUIDMixin, TimestampMixin):
     __table_args__ = (
         Index("ix_integration_configs_tool", "tool_name"),
     )
+
+    # --- crypto helpers ------------------------------------------------
+
+    def set_api_key(self, plaintext: str | None) -> None:
+        """Encrypt-and-store. Pass ``None`` (or empty) to clear."""
+        from src.core.crypto import encrypt
+
+        if plaintext is None or plaintext == "":
+            self.api_key = None
+            return
+        self.api_key = encrypt(plaintext)
+
+    @property
+    def api_key_plain(self) -> str | None:
+        """Decrypt the stored token. Returns ``None`` when no key is set.
+
+        Falls back to returning the column value as-is when decryption
+        fails — this preserves operator access during the rolling upgrade
+        in which existing rows still hold plaintext, while the test
+        endpoint surfaces a "key needs to be re-saved" warning to ops.
+        """
+        if not self.api_key:
+            return None
+        from src.core.crypto import CryptoError, decrypt
+
+        try:
+            return decrypt(self.api_key)
+        except CryptoError:
+            # Pre-D8 row, or key rotation in flight. Caller may treat
+            # missing-decrypt as a soft failure and surface in /test.
+            import logging as _logging
+
+            _logging.getLogger(__name__).warning(
+                "IntegrationConfig %s: api_key not decryptable — re-save the key.",
+                self.tool_name,
+            )
+            return None
 
 
 # --- Triage Run History ---

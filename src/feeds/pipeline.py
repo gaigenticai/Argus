@@ -1,5 +1,8 @@
 """Feed ingestion pipeline — dedup, geolocate, store, emit."""
 
+from __future__ import annotations
+
+
 import asyncio
 import logging
 import socket

@@ -12,9 +12,34 @@ from alembic import context
 # Import settings for database URL
 from src.config.settings import settings
 
-# Import Base and all models so Alembic can detect them
+# Import Base and ALL models so Alembic can autogenerate every table.
+# (Audit A3 — previously only `threat` was imported, so Phase 1-11 tables
+# never appeared in migrations.)
 from src.models.base import Base
-import src.models.threat  # noqa: F401 — registers models with Base.metadata
+import src.models.threat  # noqa: F401
+import src.models.auth  # noqa: F401
+import src.models.intel  # noqa: F401
+import src.models.feeds  # noqa: F401
+import src.models.onboarding  # noqa: F401
+import src.models.evidence  # noqa: F401
+import src.models.cases  # noqa: F401
+import src.models.notifications  # noqa: F401
+import src.models.mitre  # noqa: F401
+import src.models.easm  # noqa: F401
+import src.models.exposures  # noqa: F401
+import src.models.ratings  # noqa: F401
+import src.models.dmarc  # noqa: F401
+import src.models.brand  # noqa: F401
+import src.models.live_probe  # noqa: F401
+import src.models.logo  # noqa: F401
+import src.models.social  # noqa: F401
+import src.models.fraud  # noqa: F401
+import src.models.leakage  # noqa: F401
+import src.models.intel_polish  # noqa: F401
+import src.models.tprm  # noqa: F401
+import src.models.news  # noqa: F401
+import src.models.sla  # noqa: F401
+import src.models.takedown  # noqa: F401
 
 config = context.config
 

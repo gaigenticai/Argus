@@ -1,5 +1,8 @@
 """Triage feedback endpoints — human-in-the-loop accuracy tracking."""
 
+from __future__ import annotations
+
+
 import uuid
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
@@ -14,7 +17,7 @@ from src.models.intel import TriageFeedback
 from src.models.threat import Alert
 from src.storage.database import get_session
 
-router = APIRouter(prefix="/feedback", tags=["feedback"])
+router = APIRouter(prefix="/feedback", tags=["Auth & Identity"])
 
 
 # --- Schemas ---

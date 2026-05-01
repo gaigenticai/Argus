@@ -14,7 +14,7 @@ const COLORS: Record<string, string> = {
   high: "#FFAB00",
   medium: "#FFD666",
   low: "#00BBD9",
-  info: "#919EAB",
+  info: "#939084",
 };
 
 interface SeverityChartProps {
@@ -30,7 +30,7 @@ export function SeverityChart({ data }: SeverityChartProps) {
 
   if (chartData.length === 0) {
     return (
-      <div className="flex items-center justify-center h-[240px] text-sm text-grey-500">
+      <div className="flex items-center justify-center h-[240px] text-[13px]" style={{ color: "var(--color-muted)" }}>
         No alerts yet
       </div>
     );
@@ -50,24 +50,24 @@ export function SeverityChart({ data }: SeverityChartProps) {
           stroke="none"
         >
           {chartData.map((entry) => (
-            <Cell key={entry.key} fill={COLORS[entry.key] || "#919EAB"} />
+            <Cell key={entry.key} fill={COLORS[entry.key] || "#939084"} />
           ))}
         </Pie>
         <Tooltip
           contentStyle={{
-            background: "#1C252E",
-            border: "none",
-            borderRadius: 8,
-            color: "#FFFFFF",
+            background: "var(--color-surface-dark)",
+            border: "1px solid var(--color-border-strong)",
+            borderRadius: 5,
+            color: "var(--color-on-dark)",
             fontSize: 13,
             padding: "8px 12px",
           }}
-          itemStyle={{ color: "#FFFFFF" }}
+          itemStyle={{ color: "var(--color-on-dark)" }}
         />
         <Legend
           iconType="circle"
           iconSize={8}
-          wrapperStyle={{ fontSize: 12, color: "#637381" }}
+          wrapperStyle={{ fontSize: 12, color: "var(--color-muted)" }}
         />
       </PieChart>
     </ResponsiveContainer>

@@ -16,3 +16,8 @@ dashboard/test-results/
 dashboard/playwright-report/
 GeoLite2-City.mmdb
 *.mmdb
+
+# Dev logs
+.dashboard.log
+logs/
+.local/

@@ -33,14 +33,13 @@ interface ActivityEvent {
   severity: string;
 }
 
-// Map event_type prefix to visual config
 const AGENT_CONFIG: Record<string, { icon: typeof Activity; color: string; bg: string; label: string }> = {
-  crawler: { icon: Bot, color: "#00A76F", bg: "bg-[#00A76F]/10", label: "Crawler" },
-  triage: { icon: Brain, color: "#8E33FF", bg: "bg-[#8E33FF]/10", label: "Triage Agent" },
-  pipeline: { icon: Database, color: "#00BBD9", bg: "bg-[#00BBD9]/10", label: "Pipeline" },
-  scan: { icon: Globe, color: "#FFAB00", bg: "bg-[#FFAB00]/10", label: "Scanner" },
-  notification: { icon: Bell, color: "#FF5630", bg: "bg-[#FF5630]/10", label: "Notifier" },
-  system: { icon: Zap, color: "#637381", bg: "bg-[#637381]/10", label: "System" },
+  crawler: { icon: Bot, color: "#00A76F", bg: "rgba(0,167,111,0.12)", label: "Crawler" },
+  triage: { icon: Brain, color: "var(--color-accent)", bg: "rgba(255,79,0,0.1)", label: "Triage Agent" },
+  pipeline: { icon: Database, color: "#00BBD9", bg: "rgba(0,187,217,0.1)", label: "Pipeline" },
+  scan: { icon: Globe, color: "#FFAB00", bg: "rgba(255,171,0,0.12)", label: "Scanner" },
+  notification: { icon: Bell, color: "#FF5630", bg: "rgba(255,86,48,0.1)", label: "Notifier" },
+  system: { icon: Zap, color: "var(--color-muted)", bg: "rgba(147,144,132,0.12)", label: "System" },
 };
 
 const SEVERITY_CONFIG: Record<string, { icon: typeof CheckCircle; color: string }> = {
@@ -76,13 +75,10 @@ export default function ActivityPage() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const pausedEventsRef = useRef<ActivityEvent[]>([]);
 
-  // SSE connection
   useEffect(() => {
     const es = new EventSource(`${API_BASE}/activity/stream`);
     eventSourceRef.current = es;
-
     es.onopen = () => setConnected(true);
-
     es.onmessage = (msg) => {
       try {
         const event: ActivityEvent = JSON.parse(msg.data);
@@ -90,30 +86,18 @@ export default function ActivityPage() {
           pausedEventsRef.current.push(event);
         } else {
           setEvents((prev) => {
-            // Deduplicate by id
             if (prev.some((e) => e.id === event.id)) return prev;
             const next = [...prev, event];
-            // Keep last 1000 events in memory
             return next.length > 1000 ? next.slice(-1000) : next;
           });
         }
-      } catch {
-        // Ignore parse errors (keepalive comments, etc.)
-      }
+      } catch {}
     };
-
-    es.onerror = () => {
-      setConnected(false);
-    };
-
-    return () => {
-      es.close();
-      eventSourceRef.current = null;
-    };
+    es.onerror = () => setConnected(false);
+    return () => { es.close(); eventSourceRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Handle pause/resume
   useEffect(() => {
     if (!paused && pausedEventsRef.current.length > 0) {
       setEvents((prev) => {
@@ -124,22 +108,18 @@ export default function ActivityPage() {
     }
   }, [paused]);
 
-  // Auto-scroll
   useEffect(() => {
     if (autoScroll && feedRef.current) {
       feedRef.current.scrollTop = feedRef.current.scrollHeight;
     }
   }, [events, autoScroll]);
 
-  // Handle scroll to detect manual scrolling
   function handleScroll() {
     if (!feedRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = feedRef.current;
-    const isAtBottom = scrollHeight - scrollTop - clientHeight < 60;
-    setAutoScroll(isAtBottom);
+    setAutoScroll(scrollHeight - scrollTop - clientHeight < 60);
   }
 
-  // Filter events
   const filteredEvents = events.filter((e) => {
     if (agentFilter !== "all") {
       const prefix = e.event_type.split("_")[0];
@@ -147,16 +127,11 @@ export default function ActivityPage() {
     }
     if (filter) {
       const q = filter.toLowerCase();
-      return (
-        e.message.toLowerCase().includes(q) ||
-        e.event_type.toLowerCase().includes(q) ||
-        e.agent.toLowerCase().includes(q)
-      );
+      return e.message.toLowerCase().includes(q) || e.event_type.toLowerCase().includes(q) || e.agent.toLowerCase().includes(q);
     }
     return true;
   });
 
-  // Unique agent types for filter dropdown
   const agentTypes = Array.from(new Set(events.map((e) => e.event_type.split("_")[0])));
 
   return (
@@ -165,22 +140,26 @@ export default function ActivityPage() {
       <div className="shrink-0">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-[22px] font-bold text-grey-900">Live activity</h2>
-            <p className="text-[14px] text-grey-500 mt-0.5">
+            <h2 className="text-[24px] font-medium tracking-[-0.02em]" style={{ color: "var(--color-ink)" }}>
+              Live activity
+            </h2>
+            <p className="text-[13px] mt-0.5" style={{ color: "var(--color-muted)" }}>
               Real-time view of all agent, crawler, and scanner operations
             </p>
           </div>
           <div className="flex items-center gap-3">
-            {/* Connection indicator */}
-            <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-medium ${
-              connected
-                ? "bg-success-lighter text-success-dark"
-                : "bg-error-lighter text-error-dark"
-            }`}>
+            <div
+              className="flex items-center gap-1.5 px-3 py-1.5 text-[12px] font-medium"
+              style={{
+                borderRadius: "20px",
+                background: connected ? "rgba(0,167,111,0.1)" : "rgba(255,86,48,0.1)",
+                color: connected ? "#007B55" : "#B71D18",
+              }}
+            >
               <Radio className="w-3.5 h-3.5" />
               {connected ? "Connected" : "Disconnected"}
             </div>
-            <span className="text-[12px] text-grey-500">
+            <span className="text-[12px]" style={{ color: "var(--color-muted)" }}>
               {events.length} events
             </span>
           </div>
@@ -188,50 +167,66 @@ export default function ActivityPage() {
 
         {/* Toolbar */}
         <div className="flex gap-2 items-center mt-4 mb-3">
-          {/* Search */}
           <div className="relative flex-1 max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-grey-500" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: "var(--color-muted)" }} />
             <input
               type="text"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               placeholder="Filter events..."
-              className="w-full h-10 pl-9 pr-3 rounded-lg border border-grey-300 text-[14px] outline-none focus:border-primary bg-white placeholder:text-grey-300"
+              className="w-full h-10 pl-9 pr-3 text-[13px] outline-none transition-colors"
+              style={{
+                borderRadius: "4px",
+                border: "1px solid var(--color-border)",
+                background: "var(--color-canvas)",
+                color: "var(--color-ink)",
+              }}
             />
           </div>
 
-          {/* Agent filter */}
           <div className="relative">
             <select
               value={agentFilter}
               onChange={(e) => setAgentFilter(e.target.value)}
-              className="appearance-none h-10 pl-3 pr-8 rounded-lg border border-grey-300 text-[14px] outline-none focus:border-primary bg-white cursor-pointer"
+              className="appearance-none h-10 pl-3 pr-8 text-[13px] outline-none cursor-pointer"
+              style={{
+                borderRadius: "4px",
+                border: "1px solid var(--color-border)",
+                background: "var(--color-canvas)",
+                color: "var(--color-body)",
+              }}
             >
               <option value="all">All agents</option>
               {agentTypes.map((t) => (
                 <option key={t} value={t}>{AGENT_CONFIG[t]?.label || t}</option>
               ))}
             </select>
-            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-grey-500 pointer-events-none" />
+            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" style={{ color: "var(--color-muted)" }} />
           </div>
 
-          {/* Pause / Resume */}
           <button
             onClick={() => setPaused(!paused)}
-            className={`flex items-center gap-1.5 h-10 px-4 rounded-lg text-[14px] font-bold transition-colors ${
-              paused
-                ? "bg-warning text-white hover:bg-[#B76E00]"
-                : "bg-grey-800 text-white hover:bg-grey-700"
-            }`}
+            className="flex items-center gap-1.5 h-10 px-4 text-[13px] font-semibold transition-colors"
+            style={{
+              borderRadius: "4px",
+              border: paused ? "1px solid #FFAB00" : "1px solid var(--color-border-strong)",
+              background: paused ? "#FFAB00" : "var(--color-surface-dark)",
+              color: "var(--color-on-dark)",
+            }}
           >
             {paused ? <Play className="w-4 h-4" /> : <Pause className="w-4 h-4" />}
             {paused ? `Resume (${pausedEventsRef.current.length} queued)` : "Pause"}
           </button>
 
-          {/* Clear */}
           <button
             onClick={() => { setEvents([]); pausedEventsRef.current = []; }}
-            className="flex items-center gap-1.5 h-10 px-4 rounded-lg text-[14px] font-bold border border-grey-300 bg-white text-grey-700 hover:bg-grey-100 transition-colors"
+            className="flex items-center gap-1.5 h-10 px-4 text-[13px] font-semibold transition-colors"
+            style={{
+              borderRadius: "4px",
+              border: "1px solid var(--color-border)",
+              background: "var(--color-canvas)",
+              color: "var(--color-body)",
+            }}
           >
             <Trash2 className="w-4 h-4" />
             Clear
@@ -239,26 +234,31 @@ export default function ActivityPage() {
         </div>
       </div>
 
-      {/* Event feed — dark terminal theme preserved */}
+      {/* Event feed — dark terminal preserved */}
       <div
         ref={feedRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto bg-[#161C24] rounded-xl border border-grey-800"
+        className="flex-1 overflow-y-auto"
+        style={{
+          background: "#161C24",
+          border: "1px solid rgba(54,52,46,0.6)",
+          borderRadius: "5px",
+        }}
       >
         {filteredEvents.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-center py-20">
-            <Activity className="w-12 h-12 text-grey-700 mb-4" />
-            <h3 className="text-[16px] font-bold text-grey-500 mb-1">
+            <Activity className="w-12 h-12 mb-4" style={{ color: "rgba(147,144,132,0.3)" }} />
+            <h3 className="text-[15px] font-semibold mb-1" style={{ color: "rgba(147,144,132,0.6)" }}>
               {events.length === 0 ? "Waiting for activity..." : "No matching events"}
             </h3>
-            <p className="text-[13px] text-grey-600 max-w-sm">
+            <p className="text-[13px] max-w-sm" style={{ color: "rgba(147,144,132,0.4)" }}>
               {events.length === 0
                 ? "Run a crawler, trigger a scan, or start the pipeline to see live events here."
                 : "Try adjusting your filter or agent selection."}
             </p>
           </div>
         ) : (
-          <div className="divide-y divide-grey-800">
+          <div style={{ borderColor: "rgba(54,52,46,0.4)" }} className="divide-y divide-[rgba(54,52,46,0.4)]">
             {filteredEvents.map((event) => {
               const config = getAgentConfig(event.event_type);
               const sevConfig = SEVERITY_CONFIG[event.severity] || SEVERITY_CONFIG.info;
@@ -268,61 +268,64 @@ export default function ActivityPage() {
               return (
                 <div
                   key={event.id}
-                  className="group px-4 py-2.5 hover:bg-grey-800/60 cursor-pointer transition-colors"
+                  className="group px-4 py-2.5 cursor-pointer transition-colors"
+                  style={{}}
+                  onMouseEnter={e => (e.currentTarget.style.background = "rgba(54,52,46,0.3)")}
+                  onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
                   onClick={() => setExpandedId(isExpanded ? null : event.id)}
                 >
                   <div className="flex items-start gap-3">
-                    {/* Time */}
-                    <span className="text-[11px] font-mono text-grey-600 mt-0.5 shrink-0 w-[68px]">
+                    <span className="text-[11px] font-mono mt-0.5 shrink-0 w-[68px]" style={{ color: "rgba(147,144,132,0.5)" }}>
                       {formatTime(event.timestamp)}
                     </span>
 
-                    {/* Agent icon */}
                     <div
-                      className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${config.bg}`}
+                      className="w-6 h-6 flex items-center justify-center shrink-0"
+                      style={{ borderRadius: "4px", background: config.bg }}
                     >
                       <Icon className="w-3.5 h-3.5" style={{ color: config.color }} />
                     </div>
 
-                    {/* Content */}
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span
-                          className="text-[11px] font-bold uppercase tracking-wider"
-                          style={{ color: config.color }}
-                        >
+                        <span className="text-[11px] font-bold uppercase tracking-wider" style={{ color: config.color }}>
                           {event.agent}
                         </span>
-                        <span className="text-[11px] text-grey-700 font-mono">
+                        <span className="text-[11px] font-mono" style={{ color: "rgba(147,144,132,0.4)" }}>
                           {event.event_type}
                         </span>
                       </div>
-                      <p className="text-[13px] text-grey-300 mt-0.5 leading-snug">
+                      <p className="text-[13px] mt-0.5 leading-snug" style={{ color: "rgba(255,254,251,0.7)" }}>
                         {event.message}
                       </p>
 
-                      {/* Expanded details */}
                       {isExpanded && Object.keys(event.details).length > 0 && (
-                        <div className="mt-2 p-3 bg-[#0A0E12] rounded-lg border border-grey-800">
-                          <div className="text-[11px] font-bold text-grey-600 uppercase mb-1.5">Details</div>
+                        <div
+                          className="mt-2 p-3"
+                          style={{
+                            background: "#0A0E12",
+                            borderRadius: "4px",
+                            border: "1px solid rgba(54,52,46,0.5)",
+                          }}
+                        >
+                          <div className="text-[10px] font-semibold uppercase tracking-[0.8px] mb-1.5" style={{ color: "rgba(147,144,132,0.5)" }}>Details</div>
                           <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
                             {Object.entries(event.details).map(([key, val]) => (
                               <div key={key} className="contents">
-                                <span className="text-[12px] text-grey-600 font-mono">{key}:</span>
-                                <span className="text-[12px] text-grey-500 font-mono truncate">
+                                <span className="text-[12px] font-mono" style={{ color: "rgba(147,144,132,0.6)" }}>{key}:</span>
+                                <span className="text-[12px] font-mono truncate" style={{ color: "rgba(147,144,132,0.5)" }}>
                                   {typeof val === "object" ? JSON.stringify(val) : String(val)}
                                 </span>
                               </div>
                             ))}
                           </div>
-                          <div className="text-[11px] text-grey-700 mt-2 font-mono">
+                          <div className="text-[11px] font-mono mt-2" style={{ color: "rgba(147,144,132,0.3)" }}>
                             {formatTimeFull(event.timestamp)} · id:{event.id}
                           </div>
                         </div>
                       )}
                     </div>
 
-                    {/* Severity indicator */}
                     {event.severity !== "info" && (
                       <div className="shrink-0 mt-0.5">
                         {(() => {
@@ -346,7 +349,13 @@ export default function ActivityPage() {
             setAutoScroll(true);
             if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
           }}
-          className="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-4 py-2 bg-primary text-white rounded-full text-[12px] font-bold shadow-z16 hover:bg-primary-dark transition-colors"
+          className="absolute bottom-8 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-4 py-2 text-[12px] font-semibold transition-colors"
+          style={{
+            borderRadius: "20px",
+            background: "var(--color-accent)",
+            color: "var(--color-on-dark)",
+            boxShadow: "var(--shadow-z16)",
+          }}
         >
           <ChevronDown className="w-4 h-4" />
           New events below

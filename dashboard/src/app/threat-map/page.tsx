@@ -320,7 +320,7 @@ function StatPill({
       >
         {formatNumber(value)}
       </span>
-      <span className="text-[9px] text-grey-500 uppercase tracking-wider font-medium leading-none">
+      <span style={{ fontSize: "9px", color: "rgba(147,144,132,0.6)", textTransform: "uppercase", letterSpacing: "0.08em", fontWeight: 500, lineHeight: 1 }}>
         {label}
       </span>
     </div>
@@ -664,19 +664,19 @@ export default function ThreatMapPage() {
 
   if (loading) {
     return (
-      <div className="h-screen w-full flex items-center justify-center bg-grey-900">
-        <div className="flex flex-col items-center gap-4">
-          <div className="relative">
-            <Globe className="w-10 h-10 text-primary/30" />
-            <div className="absolute inset-0 flex items-center justify-center">
-              <Loader2 className="w-5 h-5 text-primary animate-spin" />
+      <div style={{ height: "100vh", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#161C24" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "16px" }}>
+          <div style={{ position: "relative" }}>
+            <Globe style={{ width: "40px", height: "40px", color: "rgba(255,79,0,0.3)" }} />
+            <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <Loader2 style={{ width: "20px", height: "20px", color: "var(--color-accent)" }} className="animate-spin" />
             </div>
           </div>
-          <div className="text-center">
-            <p className="text-grey-400 text-sm font-medium">
+          <div style={{ textAlign: "center" }}>
+            <p style={{ color: "rgba(147,144,132,0.6)", fontSize: "14px", fontWeight: 500 }}>
               Initializing Threat Map
             </p>
-            <p className="text-grey-600 text-xs mt-1">
+            <p style={{ color: "rgba(147,144,132,0.4)", fontSize: "12px", marginTop: "4px" }}>
               Loading layers and intelligence feeds...
             </p>
           </div>
@@ -687,13 +687,13 @@ export default function ThreatMapPage() {
 
   if (error) {
     return (
-      <div className="h-screen w-full flex items-center justify-center bg-grey-900">
-        <div className="flex flex-col items-center gap-4 max-w-md text-center">
-          <AlertTriangle className="w-10 h-10 text-error" />
-          <p className="text-grey-300 text-sm">{error}</p>
+      <div style={{ height: "100vh", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", background: "#161C24" }}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "16px", maxWidth: "400px", textAlign: "center" }}>
+          <AlertTriangle style={{ width: "40px", height: "40px", color: "#FF5630" }} />
+          <p style={{ color: "rgba(255,254,251,0.7)", fontSize: "14px" }}>{error}</p>
           <button
             onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-error/10 text-error rounded-lg text-xs font-semibold hover:bg-error/20 transition-colors"
+            style={{ padding: "8px 16px", background: "rgba(255,86,48,0.1)", color: "#FF5630", borderRadius: "4px", border: "1px solid rgba(255,86,48,0.3)", fontSize: "12px", fontWeight: 600, cursor: "pointer" }}
           >
             Retry
           </button>

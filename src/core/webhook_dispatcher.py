@@ -12,6 +12,7 @@ import aiohttp
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.url_safety import UnsafeUrlError, assert_safe_url
 from src.models.intel import (
     CrawlerSource,
     WebhookDelivery,
@@ -182,7 +183,23 @@ async def _send_http(
     secret: str | None,
     custom_headers: dict | None,
 ) -> tuple[bool, int | None, str | None]:
-    """POST a JSON payload to a URL. Returns (success, status_code, response_body)."""
+    """POST a JSON payload to a URL. Returns (success, status_code, response_body).
+
+    Adversarial audit D-15 — re-validate the URL via ``assert_safe_url``
+    immediately before opening the socket so a save-time-validated
+    endpoint can't be flipped to 169.254.169.254 by DNS rebinding
+    between save and dispatch.
+    """
+    try:
+        # ``assert_safe_url`` does its own getaddrinfo; we run it on a
+        # thread to keep the event loop responsive on slow DNS.
+        import asyncio as _asyncio
+
+        await _asyncio.to_thread(assert_safe_url, url, allow_http=True)
+    except UnsafeUrlError as exc:
+        logger_wh.warning("webhook dispatch BLOCKED — unsafe url %r: %s", url, exc)
+        return False, None, f"blocked_unsafe_url: {exc}"
+
     payload_bytes = json.dumps(payload).encode()
     headers = {"Content-Type": "application/json"}
 

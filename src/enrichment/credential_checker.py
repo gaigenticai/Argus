@@ -4,6 +4,9 @@ Uses pattern matching to detect leaked credentials in raw intelligence
 without relying on any external paid APIs.
 """
 
+from __future__ import annotations
+
+
 import logging
 import re
 from dataclasses import dataclass

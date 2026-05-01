@@ -1,0 +1,3 @@
+# Bridge worker — kept deliberately minimal so the image rebuilds in
+# under 10 seconds on the operator's laptop.
+redis>=5.2.0

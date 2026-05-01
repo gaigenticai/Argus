@@ -1,5 +1,8 @@
 """Ransomware intelligence feed — polls ransomware.live API for victim disclosures and group activity."""
 
+from __future__ import annotations
+
+
 import logging
 from datetime import datetime, timezone
 from typing import AsyncIterator

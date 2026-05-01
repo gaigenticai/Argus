@@ -1,5 +1,8 @@
 """Botnet C2 intelligence feed — aggregates Feodo Tracker and montysecurity C2-Tracker IP lists."""
 
+from __future__ import annotations
+
+
 import ipaddress
 import logging
 from typing import AsyncIterator

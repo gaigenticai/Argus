@@ -26,11 +26,11 @@ const ICONS: Record<ToastType, typeof CheckCircle> = {
   info: Info,
 };
 
-const STYLES: Record<ToastType, { border: string; text: string; icon: string }> = {
-  success: { border: "border-l-success", text: "text-success-dark", icon: "text-success" },
-  error: { border: "border-l-error", text: "text-error-dark", icon: "text-error" },
-  warning: { border: "border-l-warning", text: "text-warning-dark", icon: "text-warning" },
-  info: { border: "border-l-info", text: "text-info-dark", icon: "text-info" },
+const STYLES: Record<ToastType, { borderColor: string; iconColor: string; textColor: string }> = {
+  success: { borderColor: "#22C55E", iconColor: "#22C55E", textColor: "#14532D" },
+  error: { borderColor: "var(--color-error)", iconColor: "var(--color-error)", textColor: "#7F1D1D" },
+  warning: { borderColor: "#FFAB00", iconColor: "#FFAB00", textColor: "#B76E00" },
+  info: { borderColor: "#00BBD9", iconColor: "#00BBD9", textColor: "#007B8A" },
 };
 
 export function ToastProvider({ children }: { children: ReactNode }) {
@@ -52,19 +52,37 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={{ toast: addToast }}>
       {children}
       {/* Toast container */}
-      <div className="fixed bottom-6 z-[100] flex flex-col items-center gap-2 pointer-events-none" style={{ left: "280px", right: "0" }}>
+      <div
+        className="fixed bottom-6 z-[100] flex flex-col items-center gap-2 pointer-events-none"
+        style={{ left: "280px", right: "0" }}
+      >
         {toasts.map((t) => {
           const style = STYLES[t.type];
           const Icon = ICONS[t.type];
           return (
             <div
               key={t.id}
-              className={`pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-lg border-l-4 ${style.border} bg-white shadow-z16 animate-in slide-in-from-right-5 min-w-[320px] max-w-[420px]`}
+              className="pointer-events-auto flex items-center gap-3 px-4 py-3 animate-in slide-in-from-right-5 min-w-[320px] max-w-[420px]"
+              style={{
+                background: "var(--color-canvas)",
+                border: "1px solid var(--color-border)",
+                borderLeft: `4px solid ${style.borderColor}`,
+                borderRadius: "5px",
+                boxShadow: "var(--shadow-z16)",
+              }}
             >
-              <Icon className={`w-5 h-5 shrink-0 ${style.icon}`} />
-              <span className={`text-[13px] font-semibold ${style.text} flex-1`}>{t.message}</span>
-              <button onClick={() => remove(t.id)} className="p-0.5 hover:opacity-70 shrink-0">
-                <X className={`w-4 h-4 text-grey-500`} />
+              <Icon className="w-5 h-5 shrink-0" style={{ color: style.iconColor }} />
+              <span
+                className="text-[13px] font-semibold flex-1"
+                style={{ color: style.textColor }}
+              >
+                {t.message}
+              </span>
+              <button
+                onClick={() => remove(t.id)}
+                className="p-0.5 shrink-0 transition-opacity hover:opacity-70"
+              >
+                <X className="w-4 h-4" style={{ color: "var(--color-muted)" }} />
               </button>
             </div>
           );

@@ -1,5 +1,8 @@
 """Integration management endpoints — configure, test, and sync external security tools."""
 
+from __future__ import annotations
+
+
 import asyncio
 import logging
 
@@ -14,7 +17,7 @@ from src.storage.database import get_session
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/tools", tags=["tools"])
+router = APIRouter(prefix="/tools", tags=["Operations"])
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +235,9 @@ async def update_integration(
     if data.api_url is not None:
         config.api_url = data.api_url
     if data.api_key is not None:
-        config.api_key = data.api_key
+        # Adversarial audit D-8 — encrypt-at-rest. ``set_api_key`` lives
+        # on the model so the raw plaintext never reaches the column.
+        config.set_api_key(data.api_key)
     if data.extra_settings is not None:
         config.extra_settings = data.extra_settings
     if data.sync_interval_seconds is not None:
@@ -265,20 +270,32 @@ async def test_integration(
     )
     config = result.scalar_one_or_none()
 
-    # Local tools (nuclei, yara, sigma) don't need api_url
+    # Local tools (nuclei, yara, sigma) run as subprocesses — they
+    # have no api_url because there's nothing to dial. Connection
+    # testing for them is "is the binary on PATH and responsive?"
     _LOCAL_TOOLS = {"nuclei", "yara", "sigma"}
 
     if not config:
-        # Auto-create a config stub so _get_client has something to work with
+        # G4 (Gemini audit): no auto-create. Surface the missing
+        # config explicitly so an operator wires it up via
+        # `POST /integrations/{tool}` instead of silently inheriting a
+        # stub that pretends the integration is ready.
         if tool_name in _LOCAL_TOOLS:
-            config = IntegrationConfig(tool_name=tool_name, api_url="", enabled=True)
-        else:
             return ConnectionTestResult(
                 tool_name=tool_name,
                 connected=False,
-                message="Integration not configured — set API URL first",
+                message=(
+                    f"{tool_name} integration not registered. "
+                    f"POST /api/v1/integrations/ with tool_name={tool_name!r} "
+                    f"to register it before testing connectivity."
+                ),
             )
-    elif tool_name not in _LOCAL_TOOLS and not config.api_url:
+        return ConnectionTestResult(
+            tool_name=tool_name,
+            connected=False,
+            message="Integration not configured — set API URL first",
+        )
+    if tool_name not in _LOCAL_TOOLS and not config.api_url:
         return ConnectionTestResult(
             tool_name=tool_name,
             connected=False,
@@ -425,34 +442,34 @@ def _get_client(tool_name: str, config: IntegrationConfig):
     try:
         if tool_name == "opencti":
             from src.integrations.opencti.client import OpenCTIClient
-            return OpenCTIClient(api_url=config.api_url, api_key=config.api_key)
+            return OpenCTIClient(api_url=config.api_url, api_key=config.api_key_plain)
         elif tool_name == "wazuh":
             from src.integrations.wazuh.client import WazuhClient
-            return WazuhClient(api_url=config.api_url, api_key=config.api_key)
+            return WazuhClient(api_url=config.api_url, api_key=config.api_key_plain)
         elif tool_name == "spiderfoot":
             from src.integrations.spiderfoot.client import SpiderFootIntegration
-            return SpiderFootIntegration(api_url=config.api_url, api_key=config.api_key)
+            return SpiderFootIntegration(api_url=config.api_url, api_key=config.api_key_plain)
         elif tool_name == "shuffle":
             from src.integrations.shuffle.client import ShuffleIntegration
-            return ShuffleIntegration(api_url=config.api_url, api_key=config.api_key)
+            return ShuffleIntegration(api_url=config.api_url, api_key=config.api_key_plain)
         elif tool_name == "gophish":
             from src.integrations.gophish.client import GoPhishIntegration
-            return GoPhishIntegration(api_url=config.api_url, api_key=config.api_key)
+            return GoPhishIntegration(api_url=config.api_url, api_key=config.api_key_plain)
         elif tool_name == "nuclei":
             from src.integrations.nuclei.adapter import NucleiIntegration
-            return NucleiIntegration(api_url=config.api_url or "", api_key=config.api_key)
+            return NucleiIntegration(api_url=config.api_url or "", api_key=config.api_key_plain)
         elif tool_name == "yara":
             from src.integrations.yara_engine.adapter import YaraIntegration
-            return YaraIntegration(api_url=config.api_url or "data/yara_rules", api_key=config.api_key)
+            return YaraIntegration(api_url=config.api_url or "data/yara_rules", api_key=config.api_key_plain)
         elif tool_name == "sigma":
             from src.integrations.sigma.adapter import SigmaAdapter
-            return SigmaAdapter(api_url=config.api_url or "data/sigma_rules", api_key=config.api_key)
+            return SigmaAdapter(api_url=config.api_url or "data/sigma_rules", api_key=config.api_key_plain)
         elif tool_name == "suricata":
             from src.integrations.suricata.adapter import SuricataAdapter
-            return SuricataAdapter(api_url=config.api_url or "/var/log/suricata/eve.json", api_key=config.api_key)
+            return SuricataAdapter(api_url=config.api_url or "/var/log/suricata/eve.json", api_key=config.api_key_plain)
         elif tool_name == "prowler":
             from src.integrations.prowler.adapter import ProwlerIntegration
-            return ProwlerIntegration(api_url=config.api_url or "aws", api_key=config.api_key)
+            return ProwlerIntegration(api_url=config.api_url or "aws", api_key=config.api_key_plain)
     except ImportError as e:
         logger.warning("Integration %s not available: %s", tool_name, e)
     return None

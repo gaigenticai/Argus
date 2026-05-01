@@ -4,6 +4,9 @@ Pulls subscribed pulses and their indicators from OTX DirectConnect API v1.
 Provides multi-layer threat data: IPs, domains, URLs, hashes, CVEs.
 """
 
+from __future__ import annotations
+
+
 import logging
 from datetime import datetime, timezone
 from typing import AsyncIterator
@@ -12,6 +15,14 @@ from src.config.settings import settings
 from src.feeds.base import BaseFeed, FeedEntry
 
 logger = logging.getLogger(__name__)
+
+
+# Sentinel module-level flag — set by the worker pre-poll wrapper to
+# tell whether the missing-key skip needs to be persisted as a
+# FeedHealth row (the feed itself doesn't get a DB session, so the
+# wrapper does the persistence). Read by ``poll`` to decide whether
+# to log+skip silently.
+_SUPPRESS_SILENT_SKIP_LOG = False
 
 OTX_BASE = "https://otx.alienvault.com/api/v1"
 
@@ -88,7 +99,17 @@ class OTXFeed(BaseFeed):
     async def poll(self) -> AsyncIterator[FeedEntry]:
         api_key = settings.feeds.otx_api_key
         if not api_key:
-            logger.info("[%s] OTX: no API key configured, skipping", self.name)
+            # The base class persists a FeedHealth row whenever ``poll``
+            # yields zero entries AND ``self.last_unconfigured_reason``
+            # is set. This is how the dashboard distinguishes
+            # "configured + nothing new" (last_status=ok, rows=0) from
+            # "missing API key" (last_status=unconfigured).
+            self.last_unconfigured_reason = (
+                "ARGUS_FEED_OTX_API_KEY is not set; OTX feed will not run "
+                "until the operator adds a free API key from "
+                "https://otx.alienvault.com/api"
+            )
+            logger.info("[%s] OTX: %s", self.name, self.last_unconfigured_reason)
             return
 
         # Fetch subscribed pulses modified in the last 24 hours

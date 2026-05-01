@@ -37,19 +37,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const isPublicPath = PUBLIC_PATHS.includes(pathname);
 
+  // Adversarial audit D-1 — JWTs now live in HttpOnly cookies. The
+  // browser ships them automatically with `credentials: "include"`,
+  // so the auth-provider just asks /auth/me whether the cookie is
+  // valid; if it isn't, the user is logged out.
   const fetchUser = useCallback(async () => {
-    const token = localStorage.getItem("argus_token");
-    if (!token) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
     try {
       const me = await api.getMe();
       setUser(me);
     } catch {
-      localStorage.removeItem("argus_token");
-      localStorage.removeItem("argus_refresh_token");
       setUser(null);
     }
     setLoading(false);
@@ -71,9 +67,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (email: string, password: string) => {
+      // /auth/login sets HttpOnly cookies; nothing to stash in JS.
       const res = await api.login(email, password);
-      localStorage.setItem("argus_token", res.access_token);
-      localStorage.setItem("argus_refresh_token", res.refresh_token);
       setUser(res.user);
       router.replace("/");
     },
@@ -82,12 +77,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     try {
+      // /auth/logout clears the HttpOnly cookies server-side.
       await api.logout();
     } catch {
       // Ignore logout errors
     }
-    localStorage.removeItem("argus_token");
-    localStorage.removeItem("argus_refresh_token");
     setUser(null);
     router.replace("/login");
   }, [router]);

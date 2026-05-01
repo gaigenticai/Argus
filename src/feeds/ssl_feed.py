@@ -1,5 +1,8 @@
 """abuse.ch SSL Blacklist (SSLBL) feed — malicious SSL certificates, C2 IPs, and JA3 fingerprints."""
 
+from __future__ import annotations
+
+
 import csv
 import io
 import logging

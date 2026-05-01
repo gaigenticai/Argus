@@ -7,6 +7,9 @@ IMPORTANT: This is designed for DEFENSIVE security monitoring only.
 All crawling is passive (read-only) and respects robots.txt where available.
 """
 
+from __future__ import annotations
+
+
 import logging
 import re
 from datetime import datetime, timezone

@@ -4,6 +4,9 @@ Connects to OpenCTI's GraphQL endpoint to pull/push STIX 2.1 indicators,
 sightings, and other threat intelligence objects.
 """
 
+from __future__ import annotations
+
+
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any

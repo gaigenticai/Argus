@@ -1,11 +1,14 @@
 """User management endpoints — admin CRUD and API key management."""
 
+from __future__ import annotations
+
+
 import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel
-from sqlalchemy import select, func, desc
+from pydantic import BaseModel, Field
+from sqlalchemy import select, func, desc, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import (
@@ -15,10 +18,10 @@ from src.core.auth import (
     generate_api_key,
     hash_password,
 )
-from src.models.auth import APIKey, AuditAction, User, UserRole
+from src.models.auth import APIKey, AuditAction, AuditLog, User, UserRole
 from src.storage.database import get_session
 
-router = APIRouter(prefix="/users", tags=["users"])
+router = APIRouter(prefix="/users", tags=["Auth & Identity"])
 
 
 # --- Schemas ---
@@ -222,6 +225,105 @@ async def deactivate_user(
         user_agent=_user_agent(request),
     )
     await db.commit()
+
+
+# --- Audit E7 — GDPR right-to-be-forgotten ----------------------------
+
+
+class GdprForgetRequest(BaseModel):
+    user_id: uuid.UUID
+    reason: str = Field(
+        ..., min_length=10, max_length=500,
+        description=(
+            "GDPR Art.17 erasure request reference (e.g. ticket id + a "
+            "human description). Recorded in the audit trail; the original "
+            "email/username are NOT preserved."
+        ),
+    )
+
+
+class GdprForgetResponse(BaseModel):
+    user_id: uuid.UUID
+    purged_at: datetime
+    audit_logs_anonymised: int
+
+
+@router.post(
+    "/gdpr/forget",
+    response_model=GdprForgetResponse,
+    summary="Erase a user's PII (GDPR Art.17)",
+)
+async def gdpr_forget(
+    body: GdprForgetRequest,
+    request: Request,
+    admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """Hard-delete a user record and break PII linkage in derivative
+    tables. The audit log retains the action+timestamp via the
+    ``users.id → audit_logs.user_id`` ON DELETE SET NULL constraint —
+    we keep the *fact* of every operation, but the actor pointer
+    becomes anonymous.
+
+    The caller logs an audit row before the deletion completes, so
+    there is always a paper trail of *who* invoked GDPR erasure on
+    *whom* (recorded by user_id and an SHA-256 of the original email
+    so future audits can correlate without holding the email itself).
+    """
+    user = await db.get(User, body.user_id)
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "User not found")
+    if user.id == admin.id:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Cannot GDPR-erase your own account",
+        )
+
+    import hashlib as _hashlib
+    email_hash = _hashlib.sha256(user.email.encode("utf-8")).hexdigest()
+
+    # 1. Audit log first — we need the row to outlive the user.
+    await audit_log(
+        db,
+        AuditAction.USER_DELETE,
+        user=admin,
+        resource_type="user",
+        resource_id=str(user.id),
+        details={
+            "gdpr": True,
+            "reason": body.reason,
+            "email_sha256": email_hash,
+            "username_sha256": _hashlib.sha256(
+                user.username.encode("utf-8")
+            ).hexdigest(),
+        },
+        ip_address=_client_ip(request),
+        user_agent=_user_agent(request),
+    )
+    await db.flush()
+
+    # 2. Anonymise audit_logs that *this user authored* — change details
+    # blob to drop any PII we might have stored there. The user_id
+    # pointer is set NULL by the FK; details is a JSONB owned by us.
+    from sqlalchemy import update as _update
+    anon_result = await db.execute(
+        _update(AuditLog)
+        .where(AuditLog.user_id == user.id)
+        .values(details=text("'{\"anonymised\": true}'::jsonb"))
+    )
+    anonymised = anon_result.rowcount or 0
+
+    # 3. Hard-delete the user. Cascades wipe api_keys + feedback;
+    # FKs with SET NULL (audit_logs, cases.owner_user_id, etc.) flip
+    # those columns to NULL.
+    await db.delete(user)
+    await db.commit()
+
+    return GdprForgetResponse(
+        user_id=body.user_id,
+        purged_at=datetime.now(timezone.utc),
+        audit_logs_anonymised=int(anonymised),
+    )
 
 
 # --- API Key Endpoints ---

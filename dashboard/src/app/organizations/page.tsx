@@ -5,7 +5,6 @@ import {
   Building2,
   Plus,
   Globe,
-  Users,
   Search,
   X,
 } from "lucide-react";
@@ -18,15 +17,12 @@ export default function OrganizationsPage() {
   const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
-  // Form state
   const [name, setName] = useState("");
   const [domains, setDomains] = useState("");
   const [keywords, setKeywords] = useState("");
   const [industry, setIndustry] = useState("");
 
-  useEffect(() => {
-    loadOrgs();
-  }, []);
+  useEffect(() => { loadOrgs(); }, []);
 
   async function loadOrgs() {
     try {
@@ -47,10 +43,7 @@ export default function OrganizationsPage() {
         keywords: keywords.split(",").map((k) => k.trim()).filter(Boolean),
         industry: industry || undefined,
       });
-      setName("");
-      setDomains("");
-      setKeywords("");
-      setIndustry("");
+      setName(""); setDomains(""); setKeywords(""); setIndustry("");
       setShowCreate(false);
       loadOrgs();
       toast("success", `Organization "${name}" created successfully`);
@@ -59,18 +52,32 @@ export default function OrganizationsPage() {
     }
   }
 
+  const inputCls = "w-full h-10 px-3 text-[13px] outline-none transition-colors";
+  const inputStyle = {
+    borderRadius: "4px",
+    border: "1px solid var(--color-border)",
+    background: "var(--color-canvas)",
+    color: "var(--color-ink)",
+  } as React.CSSProperties;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-[22px] font-bold text-grey-900">Organizations</h2>
-          <p className="text-[14px] text-grey-500 mt-0.5">
+          <h2 className="text-[24px] font-medium tracking-[-0.02em]" style={{ color: "var(--color-ink)" }}>Organizations</h2>
+          <p className="text-[13px] mt-0.5" style={{ color: "var(--color-muted)" }}>
             Monitored organizations and their assets
           </p>
         </div>
         <button
           onClick={() => setShowCreate(true)}
-          className="flex items-center gap-2 h-10 px-4 rounded-lg text-[14px] font-bold bg-grey-800 text-white hover:bg-grey-700 transition-colors"
+          className="flex items-center gap-2 h-9 px-4 text-[13px] font-semibold transition-colors"
+          style={{
+            borderRadius: "4px",
+            border: "1px solid var(--color-accent)",
+            background: "var(--color-accent)",
+            color: "var(--color-on-dark)",
+          }}
         >
           <Plus className="w-4 h-4" />
           Add organization
@@ -79,58 +86,78 @@ export default function OrganizationsPage() {
 
       {/* Create modal */}
       {showCreate && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-z24 p-6 w-full max-w-md">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(32,21,21,0.5)" }}
+        >
+          <div
+            className="p-6 w-full max-w-md"
+            style={{
+              background: "var(--color-canvas)",
+              borderRadius: "8px",
+              boxShadow: "var(--shadow-z24)",
+            }}
+          >
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-[18px] font-bold text-grey-900">New organization</h3>
-              <button onClick={() => setShowCreate(false)} className="p-1 hover:bg-grey-100 rounded-lg">
-                <X className="w-5 h-5 text-grey-600" />
+              <h3 className="text-[18px] font-medium" style={{ color: "var(--color-ink)" }}>New organization</h3>
+              <button
+                onClick={() => setShowCreate(false)}
+                className="p-1 transition-colors"
+                style={{ borderRadius: "4px" }}
+                onMouseEnter={e => (e.currentTarget.style.background = "var(--color-surface-muted)")}
+                onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+              >
+                <X className="w-5 h-5" style={{ color: "var(--color-muted)" }} />
               </button>
             </div>
 
             <div className="space-y-4">
               <div>
-                <label className="text-[13px] font-semibold text-grey-600 block mb-1.5">
+                <label className="text-[13px] font-semibold block mb-1.5" style={{ color: "var(--color-body)" }}>
                   Organization name *
                 </label>
                 <input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Acme Corporation"
-                  className="w-full h-10 px-3 rounded-lg border border-grey-300 text-[14px] outline-none focus:border-primary bg-white"
+                  className={inputCls}
+                  style={inputStyle}
                 />
               </div>
               <div>
-                <label className="text-[13px] font-semibold text-grey-600 block mb-1.5">
+                <label className="text-[13px] font-semibold block mb-1.5" style={{ color: "var(--color-body)" }}>
                   Domains (comma-separated)
                 </label>
                 <input
                   value={domains}
                   onChange={(e) => setDomains(e.target.value)}
                   placeholder="acme.com, acme.io"
-                  className="w-full h-10 px-3 rounded-lg border border-grey-300 text-[14px] outline-none focus:border-primary bg-white"
+                  className={inputCls}
+                  style={inputStyle}
                 />
               </div>
               <div>
-                <label className="text-[13px] font-semibold text-grey-600 block mb-1.5">
+                <label className="text-[13px] font-semibold block mb-1.5" style={{ color: "var(--color-body)" }}>
                   Keywords (comma-separated)
                 </label>
                 <input
                   value={keywords}
                   onChange={(e) => setKeywords(e.target.value)}
                   placeholder="Acme Corp, AcmeTech"
-                  className="w-full h-10 px-3 rounded-lg border border-grey-300 text-[14px] outline-none focus:border-primary bg-white"
+                  className={inputCls}
+                  style={inputStyle}
                 />
               </div>
               <div>
-                <label className="text-[13px] font-semibold text-grey-600 block mb-1.5">
+                <label className="text-[13px] font-semibold block mb-1.5" style={{ color: "var(--color-body)" }}>
                   Industry
                 </label>
                 <input
                   value={industry}
                   onChange={(e) => setIndustry(e.target.value)}
                   placeholder="Financial Services"
-                  className="w-full h-10 px-3 rounded-lg border border-grey-300 text-[14px] outline-none focus:border-primary bg-white"
+                  className={inputCls}
+                  style={inputStyle}
                 />
               </div>
             </div>
@@ -138,13 +165,25 @@ export default function OrganizationsPage() {
             <div className="flex gap-3 mt-6">
               <button
                 onClick={() => setShowCreate(false)}
-                className="flex-1 h-10 rounded-lg text-[14px] font-bold border border-grey-300 text-grey-700 hover:bg-grey-100 transition-colors"
+                className="flex-1 h-10 text-[13px] font-semibold transition-colors"
+                style={{
+                  borderRadius: "4px",
+                  border: "1px solid var(--color-border)",
+                  background: "var(--color-canvas)",
+                  color: "var(--color-body)",
+                }}
               >
                 Cancel
               </button>
               <button
                 onClick={handleCreate}
-                className="flex-1 h-10 rounded-lg text-[14px] font-bold text-white bg-primary hover:bg-primary-dark transition-colors"
+                className="flex-1 h-10 text-[13px] font-semibold transition-colors"
+                style={{
+                  borderRadius: "4px",
+                  border: "1px solid var(--color-accent)",
+                  background: "var(--color-accent)",
+                  color: "var(--color-on-dark)",
+                }}
               >
                 Create
               </button>
@@ -156,13 +195,23 @@ export default function OrganizationsPage() {
       {/* Org cards */}
       {loading ? (
         <div className="flex items-center justify-center h-[300px]">
-          <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          <div
+            className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin"
+            style={{ borderColor: "var(--color-accent)", borderTopColor: "transparent" }}
+          />
         </div>
       ) : orgs.length === 0 ? (
-        <div className="bg-white rounded-xl border border-grey-200 p-12 flex flex-col items-center text-center">
-          <Building2 className="w-12 h-12 text-grey-300 mb-4" />
-          <h3 className="text-[16px] font-bold text-grey-900 mb-1">No organizations yet</h3>
-          <p className="text-[14px] text-grey-500 max-w-sm">
+        <div
+          className="p-12 flex flex-col items-center text-center"
+          style={{
+            background: "var(--color-canvas)",
+            border: "1px solid var(--color-border)",
+            borderRadius: "5px",
+          }}
+        >
+          <Building2 className="w-12 h-12 mb-4" style={{ color: "var(--color-border)" }} />
+          <h3 className="text-[14px] font-semibold mb-1" style={{ color: "var(--color-ink)" }}>No organizations yet</h3>
+          <p className="text-[13px] max-w-sm" style={{ color: "var(--color-muted)" }}>
             Add your first organization to start monitoring for threats, credential leaks, and dark web mentions.
           </p>
         </div>
@@ -171,16 +220,29 @@ export default function OrganizationsPage() {
           {orgs.map((org) => (
             <div
               key={org.id}
-              className="bg-white rounded-xl border border-grey-200 p-6 hover:shadow-z8 transition-shadow"
+              className="p-6 transition-colors"
+              style={{
+                background: "var(--color-canvas)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "5px",
+              }}
+              onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--color-border-strong)")}
+              onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--color-border)")}
             >
               <div className="flex items-start gap-3 mb-4">
-                <div className="w-11 h-11 rounded-xl bg-primary-lighter flex items-center justify-center">
-                  <Building2 className="w-6 h-6 text-primary" />
+                <div
+                  className="w-11 h-11 flex items-center justify-center"
+                  style={{
+                    borderRadius: "5px",
+                    background: "rgba(255,79,0,0.08)",
+                  }}
+                >
+                  <Building2 className="w-6 h-6" style={{ color: "var(--color-accent)" }} />
                 </div>
                 <div>
-                  <h3 className="text-[16px] font-bold text-grey-900">{org.name}</h3>
+                  <h3 className="text-[14px] font-semibold" style={{ color: "var(--color-ink)" }}>{org.name}</h3>
                   {org.industry && (
-                    <p className="text-[12px] text-grey-500">{org.industry}</p>
+                    <p className="text-[12px]" style={{ color: "var(--color-muted)" }}>{org.industry}</p>
                   )}
                 </div>
               </div>
@@ -188,14 +250,19 @@ export default function OrganizationsPage() {
               {org.domains.length > 0 && (
                 <div className="mb-3">
                   <div className="flex items-center gap-1.5 mb-1.5">
-                    <Globe className="w-3.5 h-3.5 text-grey-500" />
-                    <span className="text-[11px] font-bold text-grey-500 uppercase">Domains</span>
+                    <Globe className="w-3.5 h-3.5" style={{ color: "var(--color-muted)" }} />
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.8px]" style={{ color: "var(--color-muted)" }}>Domains</span>
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {org.domains.map((d) => (
                       <span
                         key={d}
-                        className="px-2 py-0.5 bg-grey-200 rounded text-[12px] text-grey-600 font-medium"
+                        className="px-2 py-0.5 text-[12px] font-medium"
+                        style={{
+                          borderRadius: "4px",
+                          background: "var(--color-surface-muted)",
+                          color: "var(--color-body)",
+                        }}
                       >
                         {d}
                       </span>
@@ -207,14 +274,19 @@ export default function OrganizationsPage() {
               {org.keywords.length > 0 && (
                 <div>
                   <div className="flex items-center gap-1.5 mb-1.5">
-                    <Search className="w-3.5 h-3.5 text-grey-500" />
-                    <span className="text-[11px] font-bold text-grey-500 uppercase">Keywords</span>
+                    <Search className="w-3.5 h-3.5" style={{ color: "var(--color-muted)" }} />
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.8px]" style={{ color: "var(--color-muted)" }}>Keywords</span>
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {org.keywords.map((k) => (
                       <span
                         key={k}
-                        className="px-2 py-0.5 bg-secondary-lighter rounded text-[12px] text-secondary font-medium"
+                        className="px-2 py-0.5 text-[12px] font-medium"
+                        style={{
+                          borderRadius: "4px",
+                          background: "rgba(0,187,217,0.08)",
+                          color: "#007B8A",
+                        }}
                       >
                         {k}
                       </span>

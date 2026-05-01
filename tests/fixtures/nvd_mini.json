@@ -1,0 +1,63 @@
+{
+  "resultsPerPage": 2,
+  "totalResults": 2,
+  "vulnerabilities": [
+    {
+      "cve": {
+        "id": "CVE-2026-1001",
+        "published": "2026-04-20T00:00:00.000",
+        "lastModified": "2026-04-25T00:00:00.000",
+        "descriptions": [
+          {"lang": "en", "value": "Critical RCE in WidgetSoft Argus integration"},
+          {"lang": "fr", "value": "RCE critique"}
+        ],
+        "metrics": {
+          "cvssMetricV31": [
+            {
+              "cvssData": {
+                "baseScore": 9.8,
+                "vectorString": "AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+              },
+              "baseSeverity": "CRITICAL"
+            }
+          ]
+        },
+        "weaknesses": [
+          {"description": [{"value": "CWE-94"}, {"value": "CWE-78"}]}
+        ],
+        "references": [
+          {"url": "https://nvd.nist.gov/vuln/detail/CVE-2026-1001"},
+          {"url": "https://example.com/advisory"}
+        ],
+        "configurations": [
+          {
+            "nodes": [
+              {
+                "cpeMatch": [
+                  {"criteria": "cpe:2.3:a:widgetsoft:argus:*:*:*:*:*:*:*:*"}
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "cve": {
+        "id": "CVE-2026-1002",
+        "published": "2026-04-22T00:00:00.000",
+        "descriptions": [
+          {"lang": "en", "value": "Information disclosure in DemoApp"}
+        ],
+        "metrics": {
+          "cvssMetricV30": [
+            {
+              "cvssData": {"baseScore": 5.3, "vectorString": "X"},
+              "baseSeverity": "MEDIUM"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

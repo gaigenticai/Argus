@@ -1,5 +1,8 @@
 """BaseIntegration adapter for the local YARA rule engine."""
 
+from __future__ import annotations
+
+
 import logging
 from datetime import datetime, timezone
 

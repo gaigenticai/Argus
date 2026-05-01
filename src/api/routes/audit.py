@@ -1,5 +1,8 @@
 """Audit log viewer endpoints — admin only."""
 
+from __future__ import annotations
+
+
 import uuid
 from datetime import datetime
 
@@ -12,7 +15,7 @@ from src.core.auth import AdminUser
 from src.models.auth import AuditLog
 from src.storage.database import get_session
 
-router = APIRouter(prefix="/audit", tags=["audit"])
+router = APIRouter(prefix="/audit", tags=["Auth & Identity"])
 
 
 # --- Schemas ---

@@ -1,0 +1,48 @@
+Argus — Proprietary Software License
+
+Copyright (c) 2026 Gaigentic AI Pvt. Ltd. (and its successors).
+All rights reserved.
+
+This software, including all source code, documentation, configurations,
+schemas, models, and accompanying assets (collectively, the "Software"),
+is the confidential and proprietary information of Gaigentic AI Pvt. Ltd.
+("Gaigentic"). The Software is licensed, not sold, and is provided
+exclusively to authorised licensees under the terms of a separate written
+agreement executed between Gaigentic and the licensee.
+
+NO RIGHTS ARE GRANTED BY THIS LICENSE WITHOUT A SEPARATE WRITTEN
+AGREEMENT. Specifically, in the absence of such an agreement:
+
+  1. You may NOT copy, modify, merge, publish, distribute, sublicense,
+     sell, lease, lend, or otherwise transfer the Software.
+
+  2. You may NOT reverse-engineer, decompile, disassemble, or otherwise
+     attempt to derive source code, algorithms, or trade secrets from
+     the Software.
+
+  3. You may NOT use the Software, in whole or in part, to develop a
+     competing product or service.
+
+  4. You may NOT remove or alter any proprietary notices, labels, or
+     marks on the Software.
+
+The Software incorporates open-source third-party components, each
+governed by its own license. A list of those components and their
+licenses is maintained in this repository. Use of those components is
+subject to their respective licenses; nothing in this License modifies
+or supersedes any open-source license.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+IN NO EVENT SHALL GAIGENTIC OR ITS DIRECTORS, OFFICERS, EMPLOYEES, OR
+AGENTS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER
+IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Unauthorised use, reproduction, or distribution of the Software, in
+whole or in part, may result in severe civil and criminal penalties,
+and will be prosecuted to the maximum extent possible under the law.
+
+For licensing inquiries, contact: legal@gaigentic.ai

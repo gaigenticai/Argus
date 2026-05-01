@@ -4,11 +4,15 @@ Takes batches of ThreatFeedEntries, auto-creates IOCs, and uses the LLM
 to generate correlated alerts with severity assessment and recommended actions.
 """
 
+from __future__ import annotations
+
+
 import logging
 import uuid as _uuid
 from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import select, func
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -131,8 +135,13 @@ class FeedTriageService:
             try:
                 alert_count = await self._generate_alerts(since)
                 await self.db.commit()
-            except Exception as e:
-                logger.error(f"[feed-triage] Alert generation failed: {e}")
+            except Exception as e:  # noqa: BLE001
+                # Alert generation calls into the LLM (async network)
+                # plus DB writes plus IOC enrichment — too many distinct
+                # failure surfaces to enumerate. Catch broadly so the
+                # rest of the run continues; the error_message below
+                # carries the actual cause.
+                logger.exception("[feed-triage] Alert generation failed: %s", e)
                 error_message = f"Alert generation failed: {str(e)[:400]}"
                 await self.db.rollback()
 
@@ -140,17 +149,26 @@ class FeedTriageService:
             try:
                 await self._update_infocon()
                 await self.db.commit()
-            except Exception as e:
-                logger.error(f"[feed-triage] INFOCON update failed: {e}")
+            except Exception as e:  # noqa: BLE001
+                # Same rationale as above — INFOCON update touches the
+                # API layer and DB. Failure must not poison the run.
+                logger.exception("[feed-triage] INFOCON update failed: %s", e)
                 await self.db.rollback()
 
-        except Exception as e:
-            logger.error(f"[feed-triage] Triage failed: {e}")
+        except Exception as e:  # noqa: BLE001
+            # Top-level run boundary. Catches everything below and
+            # records it on the TriageRun record so the dashboard
+            # surfaces the failure instead of the run silently
+            # completing with zero IOCs.
+            logger.exception("[feed-triage] Triage failed: %s", e)
             error_message = str(e)[:500]
             try:
                 await self.db.rollback()
-            except Exception:
-                pass
+            except Exception as rollback_exc:  # noqa: BLE001
+                logger.error(
+                    "[feed-triage] rollback after error itself failed: %s",
+                    rollback_exc,
+                )
 
         # Finalize the TriageRun record
         duration = time.monotonic() - t0
@@ -163,8 +181,15 @@ class FeedTriageService:
 
         try:
             await self.db.commit()
-        except Exception:
-            logger.error("[feed-triage] Failed to persist TriageRun record")
+        except SQLAlchemyError as commit_exc:
+            # If the final TriageRun commit itself fails, the run row
+            # never lands — there is no TriageRun for the dashboard
+            # to show. Log with full context so an operator can grep
+            # for stuck runs.
+            logger.exception(
+                "[feed-triage] Failed to persist TriageRun record: %s",
+                commit_exc,
+            )
 
         summary = {
             "iocs_created": ioc_count,

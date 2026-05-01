@@ -4,6 +4,9 @@ Uses passive techniques (DNS, certificate transparency logs) to discover
 an organization's public-facing assets without active scanning.
 """
 
+from __future__ import annotations
+
+
 import asyncio
 import json
 import logging
@@ -26,6 +29,15 @@ class SurfaceScanner:
 
     def __init__(self):
         self._session: aiohttp.ClientSession | None = None
+        # Per-run error trail. Caller resets via :meth:`reset_errors`
+        # before each scan and reads the list afterwards so the API
+        # can return ``scan_status="partial"`` instead of pretending
+        # an empty result was a clean scan. Each entry is a short
+        # human-readable string suitable for surfacing in the UI.
+        self.last_errors: list[str] = []
+
+    def reset_errors(self) -> None:
+        self.last_errors = []
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -75,14 +87,37 @@ class SurfaceScanner:
         return results
 
     async def _crtsh_lookup(self, domain: str) -> set[str]:
-        """Query crt.sh certificate transparency logs."""
+        """Query crt.sh certificate transparency logs.
+
+        Failures are appended to ``self.last_errors`` so the caller can
+        distinguish "crt.sh ran clean and saw nothing" from "crt.sh was
+        unreachable / rate-limited" and surface that to the analyst.
+
+        Adversarial audit D-17 — wrap in the shared per-host circuit
+        breaker so a crt.sh outage doesn't keep stalling subdomain
+        discovery; while the breaker is open we record the error and
+        return empty.
+        """
+        from src.core.http_circuit import CircuitBreakerOpenError, get_breaker
+
         subdomains = set()
+        breaker = get_breaker("enrich:crtsh")
+        try:
+            async with breaker:
+                pass
+        except CircuitBreakerOpenError:
+            self.last_errors.append("crt.sh circuit OPEN — skipping lookup")
+            return subdomains
+
         session = await self._get_session()
 
         try:
             url = f"https://crt.sh/?q=%.{domain}&output=json"
             async with session.get(url) as resp:
                 if resp.status != 200:
+                    self.last_errors.append(
+                        f"crt.sh returned HTTP {resp.status} for {domain}"
+                    )
                     return subdomains
 
                 data = await resp.json(content_type=None)
@@ -96,6 +131,9 @@ class SurfaceScanner:
                                 subdomains.add(name)
         except Exception as e:
             logger.error(f"[surface] crt.sh lookup failed for {domain}: {e}")
+            self.last_errors.append(
+                f"crt.sh unreachable for {domain}: {type(e).__name__}: {e}"[:300]
+            )
 
         return subdomains
 
@@ -106,12 +144,26 @@ class SurfaceScanner:
             result = await loop.getaddrinfo(hostname, None, socket.AF_INET)
             if result:
                 return result[0][4][0]
-        except (socket.gaierror, OSError):
-            pass
+        except (socket.gaierror, OSError) as exc:
+            logger.debug(
+                "DNS resolve failed for %s: %s: %s",
+                hostname, type(exc).__name__, exc,
+            )
         return None
 
     async def check_common_exposures(self, domain: str) -> list[CrawlResult]:
-        """Check for common misconfigurations on a domain."""
+        """Check for common misconfigurations on a domain.
+
+        Returns a CrawlResult for every probe — whether it found an
+        exposure, came back clean, or was unreachable. The Gemini
+        audit (G3) called out the silent ``pass`` on connection
+        errors as a deal-killer: an analyst staring at "0 exposures"
+        had no way to tell the scanner ran clean from "the target
+        was down". Now an unreachable target produces a
+        ``surface.unreachable`` finding with the exact failure mode
+        attached, so the dashboard can render "scan attempted, target
+        offline" instead of pretending nothing happened.
+        """
         await activity_emit(
             ActivityType.SCAN_START,
             "surface_scanner",
@@ -120,6 +172,7 @@ class SurfaceScanner:
         )
 
         results = []
+        unreachable_count = 0
         session = await self._get_session()
 
         checks = [
@@ -137,8 +190,8 @@ class SurfaceScanner:
         ]
 
         for path, issue_desc in checks:
+            url = f"https://{domain}{path}"
             try:
-                url = f"https://{domain}{path}"
                 async with session.get(url, allow_redirects=False, ssl=False) as resp:
                     if resp.status == 200 and issue_desc:
                         body = await resp.text()
@@ -149,30 +202,98 @@ class SurfaceScanner:
                                 source_url=url,
                                 source_name="surface_scanner",
                                 title=issue_desc,
-                                content=f"Exposure found: {issue_desc}\nURL: {url}\nResponse size: {len(body)} bytes",
+                                content=(
+                                    f"Exposure found: {issue_desc}\n"
+                                    f"URL: {url}\n"
+                                    f"Response size: {len(body)} bytes"
+                                ),
                                 raw_data={
                                     "check": path,
                                     "issue": issue_desc,
                                     "status_code": resp.status,
                                     "response_size": len(body),
+                                    "outcome": "exposed",
                                 },
                             ))
-                            logger.warning(f"[surface] {issue_desc} at {url}")
+                            logger.warning("[surface] %s at %s", issue_desc, url)
                             await activity_emit(
                                 ActivityType.SCAN_EXPOSURE,
                                 "surface_scanner",
                                 f"Exposure found: {issue_desc} at {url}",
-                                {"url": url, "issue": issue_desc, "status": resp.status, "size": len(body)},
+                                {
+                                    "url": url, "issue": issue_desc,
+                                    "status": resp.status, "size": len(body),
+                                },
                                 severity="warning",
                             )
-            except Exception:
-                pass  # Connection errors are expected for most checks
+            except (
+                aiohttp.ClientConnectorError,
+                aiohttp.ClientConnectionError,
+                aiohttp.ServerDisconnectedError,
+                aiohttp.ServerTimeoutError,
+                asyncio.TimeoutError,
+                OSError,
+            ) as exc:
+                # G3 fix: surface unreachable targets as findings rather
+                # than silently passing. We tag them ``outcome="unreachable"``
+                # so the analyst can distinguish "we checked /.env and the
+                # site is down" from "we checked /.env and it's not
+                # exposed". The first probe that fails records the
+                # finding; subsequent fails for the same domain just
+                # increment the count to avoid spamming the SOC.
+                unreachable_count += 1
+                if unreachable_count == 1:
+                    results.append(CrawlResult(
+                        source_type=SourceType.SURFACE_WEB,
+                        source_url=url,
+                        source_name="surface_scanner",
+                        title=f"Surface scan target unreachable: {domain}",
+                        content=(
+                            f"Surface scanner could not reach {domain}.\n"
+                            f"First failed probe: {url}\n"
+                            f"Failure mode: {type(exc).__name__}: {exc}\n\n"
+                            f"This may be a transient network issue, a "
+                            f"firewall blocking the scanner, or a real "
+                            f"outage. Re-run the scan to confirm."
+                        ),
+                        raw_data={
+                            "check": path,
+                            "issue": "target_unreachable",
+                            "exception_type": type(exc).__name__,
+                            "exception_message": str(exc)[:500],
+                            "outcome": "unreachable",
+                        },
+                    ))
+                    await activity_emit(
+                        ActivityType.SCAN_EXPOSURE,
+                        "surface_scanner",
+                        f"Target unreachable during scan: {domain}",
+                        {
+                            "url": url,
+                            "exception": type(exc).__name__,
+                            "message": str(exc)[:200],
+                            "outcome": "unreachable",
+                        },
+                        severity="warning",
+                    )
+                logger.info(
+                    "[surface] unreachable %s: %s: %s",
+                    url, type(exc).__name__, exc,
+                )
 
         await activity_emit(
             ActivityType.SCAN_COMPLETE,
             "surface_scanner",
-            f"Exposure check complete for {domain} — {len(results)} issues found",
-            {"domain": domain, "exposures": len(results)},
+            (
+                f"Exposure check complete for {domain} — "
+                f"{len(results)} finding(s), {unreachable_count} unreachable probe(s)"
+            ),
+            {
+                "domain": domain,
+                "exposures": len(results),
+                "unreachable_probes": unreachable_count,
+                "checks_attempted": len(checks),
+            },
         )
 
         return results

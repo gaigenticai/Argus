@@ -11,7 +11,11 @@ This tool must only be operated by authorized personnel in compliance with
 applicable laws and organizational security policies.
 """
 
+from __future__ import annotations
+
+
 import logging
+import os as _os
 import re
 import socket
 from datetime import datetime, timezone
@@ -31,8 +35,8 @@ logger = logging.getLogger(__name__)
 
 # Lokinet network constants
 LOKI_DOMAIN_SUFFIX = ".loki"
-# Well-known Lokinet SNApp for connectivity checks (Lokinet project's own site)
-LOKINET_HEALTH_CHECK_HOST = "probably.loki"
+# Configurable via ARGUS_LOKINET_HEALTH_HOST for custom Lokinet deployments.
+LOKINET_HEALTH_CHECK_HOST = _os.environ.get("ARGUS_LOKINET_HEALTH_HOST", "probably.loki")
 LOKINET_REQUEST_TIMEOUT = 90  # seconds — faster than I2P but still overlay network
 LOKINET_CONNECT_TIMEOUT = 30  # seconds
 

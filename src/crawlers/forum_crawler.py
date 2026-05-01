@@ -10,6 +10,9 @@ All crawling is passive (read-only) and respects robots.txt where available.
 No accounts are created, no posts are made, no interactions occur.
 """
 
+from __future__ import annotations
+
+
 import logging
 import re
 from datetime import datetime, timezone
@@ -441,17 +444,20 @@ class ForumCrawler(BaseCrawler):
         # Many forums use <time datetime="..."> or data-time attributes
         for attr in ("datetime", "data-time", "data-timestamp", "title"):
             raw = el.get(attr)
-            if raw:
-                try:
-                    # Unix timestamp
-                    ts = float(str(raw))
-                    return datetime.fromtimestamp(ts, tz=timezone.utc)
-                except (ValueError, TypeError, OSError):
-                    pass
-                try:
-                    return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-                except (ValueError, TypeError):
-                    pass
+            if not raw:
+                continue
+            try:
+                ts = float(str(raw))
+                return datetime.fromtimestamp(ts, tz=timezone.utc)
+            except (ValueError, TypeError, OSError):
+                pass
+            try:
+                return datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+            except (ValueError, TypeError) as exc:
+                logger.debug(
+                    "forum.parse: timestamp attr=%s value=%r could not be parsed: %s",
+                    attr, raw, exc,
+                )
         return None
 
     def _match_keywords(self, content: str, title: str) -> list[str]:

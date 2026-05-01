@@ -1,5 +1,8 @@
 """Threat feed management endpoints — list configured feeds, trigger manual polls."""
 
+from __future__ import annotations
+
+
 import asyncio
 import logging
 import uuid
@@ -18,7 +21,7 @@ from src.feeds.seed_layers import DEFAULT_LAYERS
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/feeds", tags=["feeds"])
+router = APIRouter(prefix="/feeds", tags=["Threat Intelligence"])
 
 
 # ---------------------------------------------------------------------------
@@ -132,10 +135,17 @@ async def list_feeds(
     feeds: list[FeedInfo] = []
     seen_feed_names: set[str] = set()
 
-    # Walk through DB layers (source of truth)
+    # Walk through DB layers (source of truth). A feed_name can appear
+    # in more than one layer's ``feed_names`` array (greynoise / otx_pulse
+    # show up in several intel layers). The 2nd/3rd loops below already
+    # dedupe via ``seen_feed_names``; this loop must do the same or the
+    # client gets duplicate keys and React/dashboard-side renderers
+    # bail with "two children with the same key".
     for layer_name, layer_obj in db_layers.items():
         layer_conf = _LAYER_BY_NAME.get(layer_name, {})
         for feed_name in (layer_obj.feed_names or []):
+            if feed_name in seen_feed_names:
+                continue
             seen_feed_names.add(feed_name)
             feeds.append(FeedInfo(
                 feed_name=feed_name,

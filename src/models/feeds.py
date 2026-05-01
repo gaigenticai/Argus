@@ -1,5 +1,8 @@
 """Threat feed models — live threat intelligence layers for the globe view."""
 
+from __future__ import annotations
+
+
 from datetime import datetime
 
 from sqlalchemy import (

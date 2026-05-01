@@ -1,0 +1,87 @@
+name: tests
+
+# Audit D6 — runs the same test command developers run locally:
+#
+#     scripts/test-up.sh && source scripts/test-env.sh && pytest tests/
+#
+# Postgres + MinIO are spun up as GitHub Actions services so we exercise
+# the production drivers (asyncpg, boto3 → MinIO) on every PR.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: argus_test
+          POSTGRES_USER: argus
+          POSTGRES_PASSWORD: argus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U argus"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+      minio:
+        image: bitnami/minio:latest
+        env:
+          MINIO_ROOT_USER: argus_test_only
+          MINIO_ROOT_PASSWORD: argus_test_only_dummy_password
+        ports:
+          - 9000:9000
+
+    env:
+      ARGUS_TEST_DB_URL: postgresql+asyncpg://argus:argus@localhost:5432/argus_test
+      ARGUS_DB_HOST: localhost
+      ARGUS_DB_PORT: 5432
+      ARGUS_DB_NAME: argus_test
+      ARGUS_DB_USER: argus
+      ARGUS_DB_PASSWORD: argus
+      ARGUS_EVIDENCE_ENDPOINT_URL: http://localhost:9000
+      ARGUS_EVIDENCE_ACCESS_KEY: argus_test_only
+      ARGUS_EVIDENCE_SECRET_KEY: argus_test_only_dummy_password
+      ARGUS_JWT_SECRET: ci-only-secret-do-not-use-in-prod-xxxxxxxxxxxxxxxxx
+      ARGUS_URL_SAFETY_ALLOW_PRIVATE: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install OS deps for python-magic
+        run: sudo apt-get update && sudo apt-get install -y libmagic1
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run pytest
+        run: pytest tests/ -q
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install ruff
+        run: pip install ruff
+      - name: Lint
+        # Non-blocking until ruff config is tuned per repo style.
+        run: ruff check src/ tests/ || true

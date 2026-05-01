@@ -1,5 +1,8 @@
 """Ingestion pipeline — connects crawlers → storage → triage agents → IOC extraction → actor tracking."""
 
+from __future__ import annotations
+
+
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -229,6 +232,20 @@ class IngestionPipeline:
                         await dispatch_alert(alert, self.db)
                     except Exception as e:
                         logger.error(f"[pipeline] Webhook dispatch failed for alert {alert.id}: {e}")
+
+            # Auto-queue agentic investigations on HIGH/CRITICAL alerts.
+            # The actual loop runs via the worker tick; we only persist
+            # the QUEUED row here so the trigger survives a process
+            # restart and is visible on the dashboard immediately.
+            try:
+                from src.agents.investigation_agent import maybe_queue_investigation
+
+                for alert in alerts:
+                    await maybe_queue_investigation(self.db, alert)
+            except Exception as e:
+                # Investigation queueing is best-effort — never block
+                # alert ingestion on it.
+                logger.error(f"[pipeline] Investigation queue failed: {e}")
 
         raw.is_processed = True
 

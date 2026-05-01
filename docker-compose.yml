@@ -4,11 +4,15 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_DB: argus
-      POSTGRES_USER: argus
-      POSTGRES_PASSWORD: argus
+      POSTGRES_DB: ${ARGUS_DB_NAME:-argus}
+      POSTGRES_USER: ${ARGUS_DB_USER:-argus}
+      POSTGRES_PASSWORD: ${ARGUS_DB_PASSWORD:?ARGUS_DB_PASSWORD must be set in .env}
     ports:
-      - "5432:5432"
+      # Adversarial audit D-27 — bind to loopback so a developer running
+      # `docker compose up` on a coffee-shop LAN does not expose the DB.
+      # Host port is overridable so two argus-like stacks can coexist;
+      # ``start.sh`` picks a free port and exports the var.
+      - "127.0.0.1:${ARGUS_HOST_POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +24,9 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      # Adversarial audit D-27 — Redis ships with no auth by default;
+      # never expose it to the LAN.
+      - "127.0.0.1:${ARGUS_HOST_REDIS_PORT:-6379}:6379"
     volumes:
       - redisdata:/data
     healthcheck:
@@ -32,18 +38,21 @@ services:
   tor:
     image: dperson/torproxy:latest
     ports:
-      - "9050:9050"
-      - "9051:9051"
+      # Adversarial audit D-27 — Tor SOCKS + control plane stay on
+      # loopback. Outbound crawler traffic still works.
+      - "127.0.0.1:${ARGUS_HOST_TOR_SOCKS_PORT:-9050}:9050"
+      - "127.0.0.1:${ARGUS_HOST_TOR_CTRL_PORT:-9051}:9051"
     environment:
-      PASSWORD: argus
+      PASSWORD: ${ARGUS_TOR_CONTROL_PASSWORD:?ARGUS_TOR_CONTROL_PASSWORD must be set in .env}
     restart: unless-stopped
 
   meilisearch:
     image: getmeili/meilisearch:v1.11
     ports:
-      - "7700:7700"
+      - "127.0.0.1:${ARGUS_HOST_MEILI_PORT:-7700}:7700"
     environment:
-      MEILI_ENV: development
+      MEILI_ENV: ${MEILI_ENV:-production}
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:?MEILI_MASTER_KEY must be set in .env}
       MEILI_NO_ANALYTICS: "true"
     volumes:
       - meilidata:/meili_data
@@ -51,25 +60,205 @@ services:
   ollama:
     image: ollama/ollama:latest
     ports:
-      - "11434:11434"
+      # Adversarial audit D-27 — Ollama has no auth; loopback only.
+      - "127.0.0.1:${ARGUS_HOST_OLLAMA_PORT:-11434}:11434"
     volumes:
       - ollama_models:/root/.ollama
-    # Pull default model on first run:
-    # docker exec argus-ollama-1 ollama pull llama3.1:8b
+    # Only starts when the operator picked the local-LLM path. The
+    # ``start.sh`` wizard sets ``COMPOSE_PROFILES=local-llm`` so users
+    # who chose Anthropic cloud or the Claude Code bridge don't pay
+    # the 15 GB image + model download cost. Pull the model after
+    # first start with: docker exec argus-ollama-1 ollama pull <tag>
+    profiles: ["local-llm"]
+
+  # Inference bridge — drains Redis ``ai_tasks`` queue and shells out to
+  # the host's ``claude`` CLI. Profile-gated so it only runs when the
+  # operator picked the Claude Code bridge LLM option AND the host is
+  # Linux (Mach-O CLI on macOS can't exec inside a Linux container —
+  # for that case ``scripts/bridge_host.sh`` runs the same worker
+  # natively on the host instead). See bridge/bridge.py.
+  argus-bridge:
+    build:
+      context: ./bridge
+      dockerfile: Dockerfile
+    profiles: ["bridge"]
+    env_file: .env
+    environment:
+      ARGUS_REDIS_HOST: redis
+      ARGUS_REDIS_PORT: "6379"
+      # CLAUDE_CLI_PATH must point at a Linux-arch claude binary mounted
+      # from the host. The wizard sets it via .env when the bridge path
+      # is selected on Linux; on macOS the in-container bridge is not
+      # used and this service stays asleep behind its profile.
+      CLAUDE_CLI_PATH: ${CLAUDE_CLI_PATH:-/usr/local/bin/claude}
+    volumes:
+      # Read-only mount for the host's claude binary (Linux only).
+      - ${CLAUDE_CLI_HOST_PATH:-/usr/local/bin/claude}:/usr/local/bin/claude:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # On-prem Gemma 4 31B served via vLLM. Mirrors the gaigenticOS prod
+  # path. Requires NVIDIA docker runtime + bundled weights at
+  # ``./models/gemma-4-31b-it/``. Falls back to whatever model
+  # directory the operator mounts; ``--served-model-name`` becomes the
+  # value Argus passes as ``ARGUS_LLM_MODEL`` over OpenAI-compatible
+  # HTTP at ``http://argus-vllm:8000/v1``.
+  argus-vllm:
+    image: ${VLLM_IMAGE:-vllm/vllm-openai:latest}
+    profiles: ["gemma"]
+    command:
+      - "--model"
+      - "${VLLM_MODEL_PATH:-/models/gemma-4-31b-it}"
+      - "--served-model-name"
+      - "${ARGUS_LLM_MODEL:-gemma-4-31b-it}"
+      - "--port"
+      - "8000"
+      - "--max-model-len"
+      - "${VLLM_MAX_MODEL_LEN:-32768}"
+      - "--tensor-parallel-size"
+      - "${VLLM_TP_SIZE:-1}"
+      - "--dtype"
+      - "${VLLM_DTYPE:-float16}"
+    ports:
+      - "127.0.0.1:${ARGUS_HOST_VLLM_PORT:-8001}:8000"
+    volumes:
+      - hfcache:/root/.cache/huggingface
+      - ${VLLM_MODEL_HOST_PATH:-./models/gemma-4-31b-it}:/models/gemma-4-31b-it:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 600s
+    restart: unless-stopped
+
+  # Evidence Vault — MinIO is S3-compatible, Apache 2.0 (community RELEASE).
+  # Customers may swap to AWS S3 or any S3-API service via ARGUS_EVIDENCE_*.
+  minio:
+    image: minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}
+    ports:
+      # Adversarial audit D-27 — keep MinIO S3 + console on loopback.
+      - "127.0.0.1:${ARGUS_HOST_MINIO_S3_PORT:-9000}:9000"      # S3 API
+      - "127.0.0.1:${ARGUS_HOST_MINIO_CONSOLE_PORT:-9001}:9001" # Web console
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # One-shot bucket bootstrap. Idempotent.
+  # mc is now released independently of the minio server — use the
+  # latest mc tag rather than mirroring the server's release date.
+  minio-init:
+    image: minio/mc:RELEASE.2025-08-13T08-35-41Z
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}
+      ARGUS_EVIDENCE_BUCKET: ${ARGUS_EVIDENCE_BUCKET:-argus-evidence}
+    entrypoint: >
+      /bin/sh -c '
+      mc alias set argus http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+      mc mb --ignore-existing "argus/$$ARGUS_EVIDENCE_BUCKET" &&
+      mc anonymous set none "argus/$$ARGUS_EVIDENCE_BUCKET" &&
+      echo "Evidence bucket ready"
+      '
+    restart: "no"
 
   # --- Application ---
+
+  # One-shot seed runner. Reads ARGUS_SEED_MODE (none|minimal|realistic|stress;
+  # defaults to ``minimal``). On a fresh DB it creates the system organisation
+  # plus an admin user; in ``realistic`` mode it loads a complete demo dataset
+  # so every dashboard screen has representative data. Idempotent — re-running
+  # is a no-op when the relevant rows already exist. Set
+  # ``ARGUS_SEED_MODE=none`` for a strictly empty production deployment.
+  #
+  # This service lives in the "seed" profile. start.sh activates the profile
+  # on first boot and records ARGUS_SEEDED=1 in .env so subsequent ./start.sh
+  # runs skip this container entirely. Skipping it also satisfies the
+  # argus-api depends_on — compose ignores dependencies on inactive-profile
+  # services. Run ``./start.sh wipe`` to reset volumes + the flag.
+  argus-seed:
+    profiles: ["seed"]
+    build: .
+    # Run alembic before seeding so the schema is in place. Without
+    # this, ``scripts.seed`` SELECTs against tables that don't exist
+    # yet on a fresh volume and exits 1, blocking ``argus-api`` (which
+    # depends on argus-seed completion).
+    command: sh -c "alembic upgrade head && python -m scripts.seed"
+    env_file: .env
+    # Linux compose needs an explicit host-gateway mapping so containers
+    # can reach a Claude Code bridge / LiteLLM proxy / etc. running on
+    # the operator's machine. Mac/Windows Docker Desktop provide this
+    # name automatically; the ``host-gateway`` token is a no-op there.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      ARGUS_DB_HOST: postgres
+      ARGUS_REDIS_HOST: redis
+      ARGUS_TOR_SOCKS_HOST: tor
+      # Defaults to the in-compose ollama service. The ``start.sh`` wizard
+      # rewrites this in .env when the operator picks Anthropic cloud or
+      # the Claude Code bridge, so .env wins over the default below.
+      ARGUS_LLM_BASE_URL: ${ARGUS_LLM_BASE_URL:-http://ollama:11434}
+      ARGUS_EVIDENCE_ENDPOINT_URL: http://minio:9000
+      ARGUS_EVIDENCE_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env}
+      ARGUS_EVIDENCE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}
+      ARGUS_EVIDENCE_BUCKET: ${ARGUS_EVIDENCE_BUCKET:-argus-evidence}
+      ARGUS_JWT_SECRET: ${ARGUS_JWT_SECRET:?ARGUS_JWT_SECRET must be set in .env}
+      ARGUS_TOR_CONTROL_PASSWORD: ${ARGUS_TOR_CONTROL_PASSWORD:?ARGUS_TOR_CONTROL_PASSWORD must be set in .env}
+      ARGUS_SEED_MODE: ${ARGUS_SEED_MODE:-minimal}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    restart: "no"
 
   argus-api:
     build: .
     command: python -m src.main api
     ports:
-      - "8000:8000"
+      - "127.0.0.1:${ARGUS_HOST_API_PORT:-8000}:8000"
     env_file: .env
+    # Linux compose needs an explicit host-gateway mapping so containers
+    # can reach a Claude Code bridge / LiteLLM proxy / etc. running on
+    # the operator's machine. Mac/Windows Docker Desktop provide this
+    # name automatically; the ``host-gateway`` token is a no-op there.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       ARGUS_DB_HOST: postgres
       ARGUS_REDIS_HOST: redis
       ARGUS_TOR_SOCKS_HOST: tor
-      ARGUS_LLM_BASE_URL: http://ollama:11434
+      ARGUS_TOR_CONTROL_PASSWORD: ${ARGUS_TOR_CONTROL_PASSWORD:?ARGUS_TOR_CONTROL_PASSWORD must be set in .env}
+      # Defaults to the in-compose ollama service. The ``start.sh`` wizard
+      # rewrites this in .env when the operator picks Anthropic cloud or
+      # the Claude Code bridge, so .env wins over the default below.
+      ARGUS_LLM_BASE_URL: ${ARGUS_LLM_BASE_URL:-http://ollama:11434}
+      ARGUS_EVIDENCE_ENDPOINT_URL: http://minio:9000
+      ARGUS_EVIDENCE_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env}
+      ARGUS_EVIDENCE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}
+      ARGUS_EVIDENCE_BUCKET: ${ARGUS_EVIDENCE_BUCKET:-argus-evidence}
+      ARGUS_JWT_SECRET: ${ARGUS_JWT_SECRET:?ARGUS_JWT_SECRET must be set in .env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,24 +266,83 @@ services:
         condition: service_healthy
       tor:
         condition: service_started
+      minio:
+        condition: service_healthy
+      # Wait for the one-shot seed to finish before serving traffic so a
+      # cold-start operator never hits empty dashboards before the seed
+      # row is in place. Seed is a no-op (fast exit) on subsequent boots.
+      argus-seed:
+        condition: service_completed_successfully
+
+  # EASM discovery + SLA evaluation worker (Audit B2 + F1).
+  # Without this service, queued DiscoveryJobs sit forever and SLA
+  # breaches are never detected.
+  argus-worker:
+    build: .
+    command: python -m src.workers
+    env_file: .env
+    # Linux compose needs an explicit host-gateway mapping so containers
+    # can reach a Claude Code bridge / LiteLLM proxy / etc. running on
+    # the operator's machine. Mac/Windows Docker Desktop provide this
+    # name automatically; the ``host-gateway`` token is a no-op there.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      ARGUS_DB_HOST: postgres
+      ARGUS_REDIS_HOST: redis
+      ARGUS_TOR_SOCKS_HOST: tor
+      ARGUS_TOR_CONTROL_PASSWORD: ${ARGUS_TOR_CONTROL_PASSWORD:?ARGUS_TOR_CONTROL_PASSWORD must be set in .env}
+      # Defaults to the in-compose ollama service. The ``start.sh`` wizard
+      # rewrites this in .env when the operator picks Anthropic cloud or
+      # the Claude Code bridge, so .env wins over the default below.
+      ARGUS_LLM_BASE_URL: ${ARGUS_LLM_BASE_URL:-http://ollama:11434}
+      ARGUS_EVIDENCE_ENDPOINT_URL: http://minio:9000
+      ARGUS_EVIDENCE_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER must be set in .env}
+      ARGUS_EVIDENCE_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD must be set in .env}
+      ARGUS_EVIDENCE_BUCKET: ${ARGUS_EVIDENCE_BUCKET:-argus-evidence}
+      ARGUS_JWT_SECRET: ${ARGUS_JWT_SECRET:?ARGUS_JWT_SECRET must be set in .env}
+      ARGUS_WORKER_HEARTBEAT: /tmp/argus-worker.heartbeat
+      ARGUS_WORKER_HEARTBEAT_MAX_AGE: "600"
+      ARGUS_WORKER_SCHEDULER_SNAPSHOT: /var/lib/argus/scheduler-snapshot.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.workers.healthcheck"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30s
+      retries: 3
+    restart: unless-stopped
 
   argus-scheduler:
     build: .
     command: python -m src.main scheduler
     env_file: .env
+    # Linux compose needs an explicit host-gateway mapping so containers
+    # can reach a Claude Code bridge / LiteLLM proxy / etc. running on
+    # the operator's machine. Mac/Windows Docker Desktop provide this
+    # name automatically; the ``host-gateway`` token is a no-op there.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       ARGUS_DB_HOST: postgres
       ARGUS_REDIS_HOST: redis
       ARGUS_TOR_SOCKS_HOST: tor
-      ARGUS_LLM_BASE_URL: http://ollama:11434
+      # Defaults to the in-compose ollama service. The ``start.sh`` wizard
+      # rewrites this in .env when the operator picks Anthropic cloud or
+      # the Claude Code bridge, so .env wins over the default below.
+      ARGUS_LLM_BASE_URL: ${ARGUS_LLM_BASE_URL:-http://ollama:11434}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
       tor:
-        condition: service_started
-      ollama:
         condition: service_started
 
 volumes:
@@ -102,3 +350,5 @@ volumes:
   redisdata:
   meilidata:
   ollama_models:
+  miniodata:
+  hfcache:    # vLLM / Hugging Face model cache (only used by ``gemma`` profile)

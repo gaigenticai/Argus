@@ -26,24 +26,31 @@ import { SeverityBadge } from "@/components/shared/severity-badge";
 import { StatusBadge } from "@/components/shared/status-badge";
 
 function riskColor(score: number): { bar: string; text: string; label: string } {
-  if (score >= 0.8) return { bar: "bg-error", text: "text-error-dark", label: "Critical" };
-  if (score >= 0.6) return { bar: "bg-warning", text: "text-warning-dark", label: "High" };
-  if (score >= 0.4) return { bar: "bg-info", text: "text-info-dark", label: "Medium" };
-  return { bar: "bg-grey-400", text: "text-grey-600", label: "Low" };
+  if (score >= 0.8) return { bar: "#FF5630", text: "#B71D18", label: "Critical" };
+  if (score >= 0.6) return { bar: "#FFAB00", text: "#B76E00", label: "High" };
+  if (score >= 0.4) return { bar: "#00BBD9", text: "#007B8A", label: "Medium" };
+  return { bar: "var(--color-muted)", text: "var(--color-muted)", label: "Low" };
 }
 
-const TYPE_COLORS: Record<string, { bg: string; text: string }> = {
-  ipv4: { bg: "bg-info-lighter", text: "text-info-dark" },
-  ipv6: { bg: "bg-info-lighter", text: "text-info-dark" },
-  domain: { bg: "bg-primary-lighter", text: "text-primary-dark" },
-  url: { bg: "bg-primary-lighter", text: "text-primary-dark" },
-  email: { bg: "bg-warning-lighter", text: "text-warning-dark" },
-  md5: { bg: "bg-secondary-lighter", text: "text-secondary-dark" },
-  sha1: { bg: "bg-secondary-lighter", text: "text-secondary-dark" },
-  sha256: { bg: "bg-secondary-lighter", text: "text-secondary-dark" },
-  btc_address: { bg: "bg-warning-lighter", text: "text-warning-dark" },
-  xmr_address: { bg: "bg-warning-lighter", text: "text-warning-dark" },
-  cve: { bg: "bg-error-lighter", text: "text-error-dark" },
+const TYPE_COLORS: Record<string, { bg: string; color: string }> = {
+  ipv4: { bg: "rgba(0,187,217,0.08)", color: "#007B8A" },
+  ipv6: { bg: "rgba(0,187,217,0.08)", color: "#007B8A" },
+  domain: { bg: "rgba(255,79,0,0.08)", color: "var(--color-accent)" },
+  url: { bg: "rgba(255,79,0,0.08)", color: "var(--color-accent)" },
+  email: { bg: "rgba(255,171,0,0.08)", color: "#B76E00" },
+  md5: { bg: "var(--color-surface-muted)", color: "var(--color-body)" },
+  sha1: { bg: "var(--color-surface-muted)", color: "var(--color-body)" },
+  sha256: { bg: "var(--color-surface-muted)", color: "var(--color-body)" },
+  btc_address: { bg: "rgba(255,171,0,0.08)", color: "#B76E00" },
+  xmr_address: { bg: "rgba(255,171,0,0.08)", color: "#B76E00" },
+  cve: { bg: "rgba(255,86,48,0.08)", color: "#B71D18" },
+};
+
+const btnSecondary: React.CSSProperties = {
+  borderRadius: "4px",
+  border: "1px solid var(--color-border)",
+  background: "var(--color-canvas)",
+  color: "var(--color-body)",
 };
 
 export default function ActorDetailPage() {
@@ -80,24 +87,22 @@ export default function ActorDetailPage() {
     setLoading(false);
   }, [actorId, toast]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-[400px]">
-        <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: "var(--color-accent)", borderTopColor: "transparent" }} />
       </div>
     );
   }
 
   if (!actor) {
     return (
-      <div className="flex flex-col items-center justify-center h-[400px] text-grey-500">
-        <Shield className="w-8 h-8 mb-2 text-grey-400" />
-        <p className="text-[14px]">Actor not found</p>
-        <Link href="/actors" className="text-primary text-[14px] font-semibold mt-2 hover:text-primary-dark">
+      <div className="flex flex-col items-center justify-center h-[400px]" style={{ color: "var(--color-muted)" }}>
+        <Shield className="w-8 h-8 mb-2" style={{ color: "var(--color-border)" }} />
+        <p className="text-[13px]">Actor not found</p>
+        <Link href="/actors" className="text-[13px] font-semibold mt-2 transition-colors" style={{ color: "var(--color-accent)" }}>
           Back to Threat Actors
         </Link>
       </div>
@@ -111,98 +116,106 @@ export default function ActorDetailPage() {
       {/* Back link */}
       <Link
         href="/actors"
-        className="inline-flex items-center gap-2 text-[14px] font-semibold text-grey-500 hover:text-grey-700 transition-colors"
+        className="inline-flex items-center gap-2 text-[13px] font-semibold transition-colors"
+        style={{ color: "var(--color-muted)" }}
+        onMouseEnter={(e) => (e.currentTarget.style.color = "var(--color-body)")}
+        onMouseLeave={(e) => (e.currentTarget.style.color = "var(--color-muted)")}
       >
         <ArrowLeft className="w-4 h-4" />
         Back to Threat Actors
       </Link>
 
       {/* Profile Header */}
-      <div className="bg-white rounded-xl border border-grey-200 p-6">
+      <div
+        className="p-6"
+        style={{ background: "var(--color-canvas)", border: "1px solid var(--color-border)", borderRadius: "5px" }}
+      >
         <div className="flex items-start justify-between mb-6">
           <div>
-            <h2 className="text-[22px] font-bold text-grey-900">{actor.primary_alias}</h2>
+            <h2 className="text-[24px] font-medium tracking-[-0.02em]" style={{ color: "var(--color-ink)" }}>{actor.primary_alias}</h2>
             {actor.aliases.length > 0 && (
-              <p className="text-[14px] text-grey-500 mt-1">
+              <p className="text-[13px] mt-1" style={{ color: "var(--color-muted)" }}>
                 Also known as: {actor.aliases.join(", ")}
               </p>
             )}
             {actor.description && (
-              <p className="text-[14px] text-grey-600 mt-3 max-w-2xl">{actor.description}</p>
+              <p className="text-[13px] mt-3 max-w-2xl" style={{ color: "var(--color-body)" }}>{actor.description}</p>
             )}
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={load}
-              className="flex items-center gap-2 h-10 px-4 rounded-lg text-[14px] font-bold border border-grey-300 bg-white text-grey-700 hover:bg-grey-100 transition-colors"
-            >
-              <RefreshCw className="w-4 h-4" />
-              Refresh
-            </button>
-          </div>
+          <button onClick={load} className="flex items-center gap-2 h-9 px-4 text-[13px] font-semibold transition-colors" style={btnSecondary}>
+            <RefreshCw className="w-4 h-4" /> Refresh
+          </button>
         </div>
 
         {/* Stats row */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           {/* Risk Score */}
-          <div className="bg-grey-50 rounded-lg p-4">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-grey-500 mb-2">Risk Score</div>
+          <div className="p-4" style={{ background: "var(--color-surface)", borderRadius: "5px" }}>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.07em] mb-2" style={{ color: "var(--color-muted)" }}>Risk Score</div>
             <div className="flex items-center gap-3">
-              <span className={`text-[28px] font-bold ${risk.text}`}>
+              <span className="text-[28px] font-bold" style={{ color: risk.text }}>
                 {Math.round(actor.risk_score * 100)}
               </span>
               <div className="flex-1">
-                <div className="w-full h-2 bg-grey-200 rounded-full overflow-hidden">
-                  <div className={`h-full rounded-full ${risk.bar}`} style={{ width: `${actor.risk_score * 100}%` }} />
+                <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: "var(--color-surface-muted)" }}>
+                  <div className="h-full rounded-full" style={{ width: `${actor.risk_score * 100}%`, background: risk.bar }} />
                 </div>
-                <span className={`text-[11px] font-bold ${risk.text} mt-0.5`}>{risk.label}</span>
+                <span className="text-[11px] font-semibold mt-0.5" style={{ color: risk.text }}>{risk.label}</span>
               </div>
             </div>
           </div>
 
           {/* Sightings */}
-          <div className="bg-grey-50 rounded-lg p-4">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-grey-500 mb-2">Total Sightings</div>
-            <div className="text-[28px] font-bold text-grey-900">{actor.total_sightings}</div>
+          <div className="p-4" style={{ background: "var(--color-surface)", borderRadius: "5px" }}>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.07em] mb-2" style={{ color: "var(--color-muted)" }}>Total Sightings</div>
+            <div className="text-[28px] font-bold" style={{ color: "var(--color-ink)" }}>{actor.total_sightings}</div>
           </div>
 
           {/* Platforms */}
-          <div className="bg-grey-50 rounded-lg p-4">
+          <div className="p-4" style={{ background: "var(--color-surface)", borderRadius: "5px" }}>
             <div className="flex items-center gap-1.5 mb-2">
-              <Globe className="w-3.5 h-3.5 text-grey-500" />
-              <span className="text-[11px] font-bold uppercase tracking-wider text-grey-500">Platforms</span>
+              <Globe className="w-3.5 h-3.5" style={{ color: "var(--color-muted)" }} />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.07em]" style={{ color: "var(--color-muted)" }}>Platforms</span>
             </div>
             <div className="flex gap-1 flex-wrap">
               {actor.forums_active.length > 0 ? actor.forums_active.map((p) => (
-                <span key={p} className="inline-flex h-[22px] px-2 rounded text-[11px] font-bold uppercase tracking-wide items-center bg-secondary-lighter text-secondary-dark">
+                <span
+                  key={p}
+                  className="inline-flex h-[20px] px-2 text-[10px] font-semibold uppercase tracking-wide items-center"
+                  style={{ borderRadius: "4px", background: "rgba(0,187,217,0.08)", color: "#007B8A" }}
+                >
                   {p}
                 </span>
-              )) : <span className="text-[13px] text-grey-400">None recorded</span>}
+              )) : <span className="text-[12px]" style={{ color: "var(--color-muted)" }}>None recorded</span>}
             </div>
           </div>
 
           {/* Languages */}
-          <div className="bg-grey-50 rounded-lg p-4">
+          <div className="p-4" style={{ background: "var(--color-surface)", borderRadius: "5px" }}>
             <div className="flex items-center gap-1.5 mb-2">
-              <Languages className="w-3.5 h-3.5 text-grey-500" />
-              <span className="text-[11px] font-bold uppercase tracking-wider text-grey-500">Languages</span>
+              <Languages className="w-3.5 h-3.5" style={{ color: "var(--color-muted)" }} />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.07em]" style={{ color: "var(--color-muted)" }}>Languages</span>
             </div>
             <div className="flex gap-1 flex-wrap">
               {actor.languages.length > 0 ? actor.languages.map((l) => (
-                <span key={l} className="inline-flex h-[22px] px-2 rounded text-[11px] font-bold uppercase tracking-wide items-center bg-info-lighter text-info-dark">
+                <span
+                  key={l}
+                  className="inline-flex h-[20px] px-2 text-[10px] font-semibold uppercase tracking-wide items-center"
+                  style={{ borderRadius: "4px", background: "var(--color-surface-muted)", color: "var(--color-body)" }}
+                >
                   {l}
                 </span>
-              )) : <span className="text-[13px] text-grey-400">Unknown</span>}
+              )) : <span className="text-[12px]" style={{ color: "var(--color-muted)" }}>Unknown</span>}
             </div>
           </div>
 
           {/* Timeline */}
-          <div className="bg-grey-50 rounded-lg p-4">
+          <div className="p-4" style={{ background: "var(--color-surface)", borderRadius: "5px" }}>
             <div className="flex items-center gap-1.5 mb-2">
-              <Calendar className="w-3.5 h-3.5 text-grey-500" />
-              <span className="text-[11px] font-bold uppercase tracking-wider text-grey-500">Active Period</span>
+              <Calendar className="w-3.5 h-3.5" style={{ color: "var(--color-muted)" }} />
+              <span className="text-[10px] font-semibold uppercase tracking-[0.07em]" style={{ color: "var(--color-muted)" }}>Active Period</span>
             </div>
-            <div className="text-[12px] text-grey-600">
+            <div className="text-[12px]" style={{ color: "var(--color-body)" }}>
               <div>First: {formatDate(actor.first_seen)}</div>
               <div>Last: {timeAgo(actor.last_seen)}</div>
             </div>
@@ -211,11 +224,15 @@ export default function ActorDetailPage() {
 
         {/* TTPs */}
         {actor.known_ttps.length > 0 && (
-          <div className="mt-4 pt-4 border-t border-grey-200">
-            <div className="text-[11px] font-bold uppercase tracking-wider text-grey-500 mb-2">Known TTPs (MITRE ATT&CK)</div>
+          <div className="mt-4 pt-4" style={{ borderTop: "1px solid var(--color-border)" }}>
+            <div className="text-[10px] font-semibold uppercase tracking-[0.07em] mb-2" style={{ color: "var(--color-muted)" }}>Known TTPs (MITRE ATT&amp;CK)</div>
             <div className="flex gap-1 flex-wrap">
               {actor.known_ttps.map((ttp) => (
-                <span key={ttp} className="inline-flex h-[22px] px-2 rounded text-[11px] font-bold uppercase tracking-wide items-center bg-error-lighter text-error-dark">
+                <span
+                  key={ttp}
+                  className="inline-flex h-[20px] px-2 text-[10px] font-semibold uppercase tracking-wide items-center"
+                  style={{ borderRadius: "4px", background: "rgba(255,86,48,0.08)", color: "#B71D18" }}
+                >
                   {ttp}
                 </span>
               ))}
@@ -225,60 +242,62 @@ export default function ActorDetailPage() {
       </div>
 
       {/* Section Tabs */}
-      <div className="flex gap-1 border-b border-grey-200">
-        <button
-          onClick={() => setActiveSection("timeline")}
-          className={`flex items-center gap-2 px-4 py-3 text-[13px] font-semibold border-b-2 transition-colors ${
-            activeSection === "timeline" ? "border-primary text-primary" : "border-transparent text-grey-500 hover:text-grey-700"
-          }`}
-        >
-          <Calendar className="w-4 h-4" />
-          Timeline ({timeline.length})
-        </button>
-        <button
-          onClick={() => setActiveSection("iocs")}
-          className={`flex items-center gap-2 px-4 py-3 text-[13px] font-semibold border-b-2 transition-colors ${
-            activeSection === "iocs" ? "border-primary text-primary" : "border-transparent text-grey-500 hover:text-grey-700"
-          }`}
-        >
-          <Crosshair className="w-4 h-4" />
-          IOCs ({iocs.length})
-        </button>
-        <button
-          onClick={() => setActiveSection("alerts")}
-          className={`flex items-center gap-2 px-4 py-3 text-[13px] font-semibold border-b-2 transition-colors ${
-            activeSection === "alerts" ? "border-primary text-primary" : "border-transparent text-grey-500 hover:text-grey-700"
-          }`}
-        >
-          <AlertTriangle className="w-4 h-4" />
-          Alerts ({alerts.length})
-        </button>
+      <div className="flex gap-0" style={{ borderBottom: "1px solid var(--color-border)" }}>
+        {[
+          { id: "timeline" as const, icon: Calendar, label: `Timeline (${timeline.length})` },
+          { id: "iocs" as const, icon: Crosshair, label: `IOCs (${iocs.length})` },
+          { id: "alerts" as const, icon: AlertTriangle, label: `Alerts (${alerts.length})` },
+        ].map(({ id, icon: Icon, label }) => {
+          const isActive = activeSection === id;
+          return (
+            <button
+              key={id}
+              onClick={() => setActiveSection(id)}
+              className="flex items-center gap-2 px-4 py-3 text-[13px] font-semibold transition-colors"
+              style={{
+                color: isActive ? "var(--color-accent)" : "var(--color-muted)",
+                borderBottom: "none",
+                boxShadow: isActive ? "rgb(255, 79, 0) 0px -3px 0px 0px inset" : "none",
+                background: "transparent",
+              }}
+            >
+              <Icon className="w-4 h-4" />
+              {label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Timeline */}
       {activeSection === "timeline" && (
-        <div className="bg-white rounded-xl border border-grey-200 overflow-hidden">
+        <div style={{ background: "var(--color-canvas)", border: "1px solid var(--color-border)", borderRadius: "5px", overflow: "hidden" }}>
           {timeline.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-[200px] text-grey-500">
-              <p className="text-[14px]">No sightings recorded</p>
+            <div className="flex flex-col items-center justify-center h-[200px]" style={{ color: "var(--color-muted)" }}>
+              <p className="text-[13px]">No sightings recorded</p>
             </div>
           ) : (
-            <div className="divide-y divide-grey-100">
+            <div style={{ borderColor: "var(--color-border)" }} className="divide-y">
               {timeline.map((sighting, idx) => (
                 <div key={idx} className="px-6 py-4 flex items-start gap-4">
-                  <div className="w-2 h-2 rounded-full bg-primary mt-2 shrink-0" />
+                  <div className="w-2 h-2 rounded-full mt-2 shrink-0" style={{ background: "var(--color-accent)" }} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-3 mb-1">
-                      <span className="text-[13px] font-semibold text-grey-800">{sighting.alias_used}</span>
-                      <span className="inline-flex h-[22px] px-2 rounded text-[11px] font-bold uppercase tracking-wide items-center bg-secondary-lighter text-secondary-dark">
+                      <span className="text-[13px] font-semibold" style={{ color: "var(--color-ink)" }}>{sighting.alias_used}</span>
+                      <span
+                        className="inline-flex h-[20px] px-2 text-[10px] font-semibold uppercase tracking-wide items-center"
+                        style={{ borderRadius: "4px", background: "rgba(0,187,217,0.08)", color: "#007B8A" }}
+                      >
                         {sighting.platform}
                       </span>
                     </div>
-                    <div className="text-[12px] text-grey-500">
+                    <div className="text-[12px]" style={{ color: "var(--color-muted)" }}>
                       {formatDate(sighting.timestamp)}
                     </div>
                     {sighting.context && (
-                      <pre className="text-[12px] font-mono text-grey-600 bg-grey-50 rounded-lg p-2 mt-2 overflow-x-auto max-w-full">
+                      <pre
+                        className="text-[12px] font-mono p-2 mt-2 overflow-x-auto max-w-full"
+                        style={{ background: "var(--color-surface)", borderRadius: "4px", color: "var(--color-body)" }}
+                      >
                         {JSON.stringify(sighting.context, null, 2)}
                       </pre>
                     )}
@@ -286,7 +305,8 @@ export default function ActorDetailPage() {
                       {sighting.alert_id && (
                         <Link
                           href={`/alerts/${sighting.alert_id}`}
-                          className="text-[12px] font-semibold text-primary hover:text-primary-dark transition-colors"
+                          className="text-[12px] font-semibold transition-colors"
+                          style={{ color: "var(--color-accent)" }}
                         >
                           View Alert
                         </Link>
@@ -302,36 +322,43 @@ export default function ActorDetailPage() {
 
       {/* Linked IOCs */}
       {activeSection === "iocs" && (
-        <div className="bg-white rounded-xl border border-grey-200 overflow-hidden">
+        <div style={{ background: "var(--color-canvas)", border: "1px solid var(--color-border)", borderRadius: "5px", overflow: "hidden" }}>
           {iocs.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-[200px] text-grey-500">
-              <p className="text-[14px]">No linked IOCs</p>
+            <div className="flex flex-col items-center justify-center h-[200px]" style={{ color: "var(--color-muted)" }}>
+              <p className="text-[13px]">No linked IOCs</p>
             </div>
           ) : (
             <table className="w-full">
               <thead>
-                <tr className="bg-grey-100">
-                  <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Type</th>
-                  <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Value</th>
-                  <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Confidence</th>
-                  <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Sightings</th>
-                  <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Last Seen</th>
+                <tr style={{ borderBottom: "1px solid var(--color-border)" }}>
+                  {["Type", "Value", "Confidence", "Sightings", "Last Seen"].map((h) => (
+                    <th key={h} className="text-left h-9 px-4 text-[10px] font-semibold uppercase tracking-[0.07em]" style={{ color: "var(--color-muted)" }}>{h}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {iocs.map((ioc) => {
-                  const colors = TYPE_COLORS[ioc.ioc_type] || { bg: "bg-grey-200", text: "text-grey-700" };
+                  const colors = TYPE_COLORS[ioc.ioc_type] || { bg: "var(--color-surface-muted)", color: "var(--color-body)" };
                   return (
-                    <tr key={ioc.id} className="h-[52px] border-b border-grey-100 last:border-b-0">
+                    <tr
+                      key={ioc.id}
+                      className="h-[52px]"
+                      style={{ borderBottom: "1px solid var(--color-border)" }}
+                      onMouseEnter={e => (e.currentTarget.style.background = "var(--color-surface)")}
+                      onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                    >
                       <td className="px-4">
-                        <span className={`inline-flex h-[22px] px-2 rounded text-[11px] font-bold uppercase tracking-wide items-center ${colors.bg} ${colors.text}`}>
+                        <span
+                          className="inline-flex h-[20px] px-2 text-[10px] font-semibold uppercase tracking-wide items-center"
+                          style={{ borderRadius: "4px", background: colors.bg, color: colors.color }}
+                        >
                           {ioc.ioc_type}
                         </span>
                       </td>
-                      <td className="px-4 text-[13px] font-mono text-grey-800 max-w-[300px] truncate">{ioc.value}</td>
-                      <td className="px-4 text-[13px] text-grey-600">{Math.round(ioc.confidence * 100)}%</td>
-                      <td className="px-4 text-[13px] text-grey-600">{ioc.sighting_count}</td>
-                      <td className="px-4 text-[13px] text-grey-500 whitespace-nowrap">{formatDate(ioc.last_seen)}</td>
+                      <td className="px-4 text-[13px] font-mono max-w-[300px] truncate" style={{ color: "var(--color-ink)" }}>{ioc.value}</td>
+                      <td className="px-4 text-[13px]" style={{ color: "var(--color-body)" }}>{Math.round(ioc.confidence * 100)}%</td>
+                      <td className="px-4 text-[13px]" style={{ color: "var(--color-body)" }}>{ioc.sighting_count}</td>
+                      <td className="px-4 text-[13px] whitespace-nowrap" style={{ color: "var(--color-muted)" }}>{formatDate(ioc.last_seen)}</td>
                     </tr>
                   );
                 })}
@@ -343,41 +370,48 @@ export default function ActorDetailPage() {
 
       {/* Linked Alerts */}
       {activeSection === "alerts" && (
-        <div className="bg-white rounded-xl border border-grey-200 overflow-hidden">
+        <div style={{ background: "var(--color-canvas)", border: "1px solid var(--color-border)", borderRadius: "5px", overflow: "hidden" }}>
           {alerts.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-[200px] text-grey-500">
-              <p className="text-[14px]">No linked alerts</p>
+            <div className="flex flex-col items-center justify-center h-[200px]" style={{ color: "var(--color-muted)" }}>
+              <p className="text-[13px]">No linked alerts</p>
             </div>
           ) : (
             <table className="w-full">
               <thead>
-                <tr className="bg-grey-100">
-                  <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Severity</th>
-                  <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Title</th>
-                  <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Category</th>
-                  <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Status</th>
-                  <th className="text-left h-12 px-4 text-[12px] font-bold uppercase text-grey-600 tracking-wider">Date</th>
+                <tr style={{ borderBottom: "1px solid var(--color-border)" }}>
+                  {["Severity", "Title", "Category", "Status", "Date"].map((h) => (
+                    <th key={h} className="text-left h-9 px-4 text-[10px] font-semibold uppercase tracking-[0.07em]" style={{ color: "var(--color-muted)" }}>{h}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {alerts.map((alert) => (
-                  <tr key={alert.id} className="h-[52px] border-b border-grey-100 last:border-b-0 hover:bg-grey-50 transition-colors">
+                  <tr
+                    key={alert.id}
+                    className="h-[52px] transition-colors"
+                    style={{ borderBottom: "1px solid var(--color-border)" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "var(--color-surface)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                  >
                     <td className="px-4">
                       <SeverityBadge severity={alert.severity} />
                     </td>
                     <td className="px-4">
                       <Link
                         href={`/alerts/${alert.id}`}
-                        className="text-[14px] font-semibold text-grey-800 hover:text-primary transition-colors line-clamp-1"
+                        className="text-[13px] font-semibold line-clamp-1 transition-colors"
+                        style={{ color: "var(--color-ink)" }}
+                        onMouseEnter={e => (e.currentTarget.style.color = "var(--color-accent)")}
+                        onMouseLeave={e => (e.currentTarget.style.color = "var(--color-ink)")}
                       >
                         {alert.title}
                       </Link>
                     </td>
-                    <td className="px-4 text-[13px] text-grey-600">{alert.category.replace(/_/g, " ")}</td>
+                    <td className="px-4 text-[13px]" style={{ color: "var(--color-body)" }}>{alert.category.replace(/_/g, " ")}</td>
                     <td className="px-4">
                       <StatusBadge status={alert.status} />
                     </td>
-                    <td className="px-4 text-[13px] text-grey-500 whitespace-nowrap">
+                    <td className="px-4 text-[13px] whitespace-nowrap" style={{ color: "var(--color-muted)" }}>
                       {formatDate(alert.created_at)}
                     </td>
                   </tr>

@@ -31,7 +31,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return (
       <>
         <Sidebar />
-        <main className="ml-[280px] h-screen overflow-hidden">{children}</main>
+        <main className="ml-[240px] h-screen overflow-hidden">{children}</main>
       </>
     );
   }
@@ -39,7 +39,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <>
       <Sidebar />
-      <main className="ml-[280px] min-h-screen">
+      <main className="ml-[240px] min-h-screen">
         <Header />
         <div className="px-8 py-6 max-w-[1440px]">{children}</div>
       </main>

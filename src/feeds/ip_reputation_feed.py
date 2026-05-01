@@ -1,5 +1,8 @@
 """IP reputation feed — aggregates malicious IP intelligence from multiple blocklists."""
 
+from __future__ import annotations
+
+
 import logging
 from typing import AsyncIterator
 
@@ -182,7 +185,14 @@ class IPReputationFeed(BaseFeed):
     async def _poll_abuseipdb(self) -> AsyncIterator[FeedEntry]:
         api_key = settings.feeds.abuseipdb_api_key
         if not api_key:
-            logger.info("[%s] AbuseIPDB: no API key configured, skipping", self.name)
+            self.last_unconfigured_reason = (
+                "ARGUS_FEED_ABUSEIPDB_API_KEY is not set; AbuseIPDB blacklist "
+                "leg of ip_reputation will not run until the operator adds "
+                "an API key from https://www.abuseipdb.com/account/api"
+            )
+            logger.info(
+                "[%s] AbuseIPDB: %s", self.name, self.last_unconfigured_reason
+            )
             return
 
         data = await self._fetch_json(

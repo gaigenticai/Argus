@@ -4,6 +4,9 @@ Uses reportlab to produce branded, color-coded Argus reports with
 cover pages, charts, severity tables, and full alert appendices.
 """
 
+from __future__ import annotations
+
+
 import io
 import os
 import uuid

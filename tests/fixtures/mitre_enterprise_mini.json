@@ -1,0 +1,159 @@
+{
+  "type": "bundle",
+  "id": "bundle--argus-test-mini",
+  "spec_version": "2.1",
+  "objects": [
+    {
+      "type": "x-mitre-collection",
+      "id": "x-mitre-collection--90c00720-636b-4485-b342-8751d232bf09",
+      "spec_version": "2.1",
+      "name": "Enterprise ATT&CK",
+      "x_mitre_version": "v15.1-test"
+    },
+    {
+      "type": "x-mitre-tactic",
+      "id": "x-mitre-tactic--ffd5bcee-6e16-4dd2-8eca-7b3beedf33ca",
+      "spec_version": "2.1",
+      "created": "2018-10-17T00:14:20.652Z",
+      "modified": "2024-04-01T00:00:00.000Z",
+      "name": "Initial Access",
+      "description": "Adversary is trying to get into your network.",
+      "x_mitre_shortname": "initial-access",
+      "external_references": [
+        {
+          "source_name": "mitre-attack",
+          "external_id": "TA0001",
+          "url": "https://attack.mitre.org/tactics/TA0001"
+        }
+      ]
+    },
+    {
+      "type": "x-mitre-tactic",
+      "id": "x-mitre-tactic--a8a4-execution",
+      "spec_version": "2.1",
+      "name": "Execution",
+      "description": "Adversary is trying to run malicious code.",
+      "x_mitre_shortname": "execution",
+      "external_references": [
+        {
+          "source_name": "mitre-attack",
+          "external_id": "TA0002",
+          "url": "https://attack.mitre.org/tactics/TA0002"
+        }
+      ]
+    },
+    {
+      "type": "attack-pattern",
+      "id": "attack-pattern--3f886f2a-874f-4333-b794-aa6075009b1c",
+      "spec_version": "2.1",
+      "name": "Phishing",
+      "description": "Adversaries may send phishing messages to gain access to victim systems.",
+      "kill_chain_phases": [
+        {"kill_chain_name": "mitre-attack", "phase_name": "initial-access"}
+      ],
+      "external_references": [
+        {
+          "source_name": "mitre-attack",
+          "external_id": "T1566",
+          "url": "https://attack.mitre.org/techniques/T1566"
+        }
+      ],
+      "x_mitre_platforms": ["Linux", "macOS", "Windows", "Office 365", "SaaS", "Google Workspace"],
+      "x_mitre_data_sources": [
+        "Application Log: Application Log Content",
+        "File: File Creation",
+        "Network Traffic: Network Traffic Content"
+      ],
+      "x_mitre_detection": "Inspect URLs for malicious patterns and known phishing kits.",
+      "x_mitre_is_subtechnique": false
+    },
+    {
+      "type": "attack-pattern",
+      "id": "attack-pattern--phish-spearphishing-link",
+      "spec_version": "2.1",
+      "name": "Spearphishing Link",
+      "description": "Adversaries may send spearphishing emails with a malicious link to elicit sensitive information that can be used during targeting.",
+      "kill_chain_phases": [
+        {"kill_chain_name": "mitre-attack", "phase_name": "initial-access"}
+      ],
+      "external_references": [
+        {
+          "source_name": "mitre-attack",
+          "external_id": "T1566.002",
+          "url": "https://attack.mitre.org/techniques/T1566/002"
+        }
+      ],
+      "x_mitre_platforms": ["Linux", "macOS", "Windows"],
+      "x_mitre_is_subtechnique": true
+    },
+    {
+      "type": "attack-pattern",
+      "id": "attack-pattern--exploit-public-app",
+      "spec_version": "2.1",
+      "name": "Exploit Public-Facing Application",
+      "description": "Adversaries may attempt to exploit a weakness in an Internet-facing host or system to initially access a network.",
+      "kill_chain_phases": [
+        {"kill_chain_name": "mitre-attack", "phase_name": "initial-access"}
+      ],
+      "external_references": [
+        {
+          "source_name": "mitre-attack",
+          "external_id": "T1190",
+          "url": "https://attack.mitre.org/techniques/T1190"
+        }
+      ],
+      "x_mitre_platforms": ["Linux", "Windows", "Network", "IaaS", "Containers"],
+      "x_mitre_is_subtechnique": false
+    },
+    {
+      "type": "attack-pattern",
+      "id": "attack-pattern--cmdshell",
+      "spec_version": "2.1",
+      "name": "Command and Scripting Interpreter",
+      "description": "Adversaries may abuse command and script interpreters to execute commands.",
+      "kill_chain_phases": [
+        {"kill_chain_name": "mitre-attack", "phase_name": "execution"}
+      ],
+      "external_references": [
+        {"source_name": "mitre-attack", "external_id": "T1059", "url": "https://attack.mitre.org/techniques/T1059"}
+      ],
+      "x_mitre_platforms": ["Linux", "macOS", "Windows"],
+      "x_mitre_is_subtechnique": false
+    },
+    {
+      "type": "attack-pattern",
+      "id": "attack-pattern--deprecated-thing",
+      "spec_version": "2.1",
+      "name": "Old Deprecated Thing",
+      "description": "Removed in a previous release.",
+      "kill_chain_phases": [
+        {"kill_chain_name": "mitre-attack", "phase_name": "execution"}
+      ],
+      "external_references": [
+        {"source_name": "mitre-attack", "external_id": "T9999", "url": "https://attack.mitre.org/techniques/T9999"}
+      ],
+      "x_mitre_deprecated": true,
+      "x_mitre_is_subtechnique": false
+    },
+    {
+      "type": "course-of-action",
+      "id": "course-of-action--user-training",
+      "spec_version": "2.1",
+      "name": "User Training",
+      "description": "Train users to identify phishing.",
+      "external_references": [
+        {"source_name": "mitre-attack", "external_id": "M1017", "url": "https://attack.mitre.org/mitigations/M1017"}
+      ]
+    },
+    {
+      "type": "course-of-action",
+      "id": "course-of-action--vuln-scan",
+      "spec_version": "2.1",
+      "name": "Vulnerability Scanning",
+      "description": "Regular vulnerability scanning of internet-facing systems.",
+      "external_references": [
+        {"source_name": "mitre-attack", "external_id": "M1016", "url": "https://attack.mitre.org/mitigations/M1016"}
+      ]
+    }
+  ]
+}
