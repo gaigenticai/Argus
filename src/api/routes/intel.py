@@ -654,6 +654,52 @@ async def sigma_translate(
     }
 
 
+@router.get("/breach/providers")
+async def breach_providers(analyst: AnalystUser):
+    """List every breach-credential provider + config state (P3 #3.9)."""
+    from src.integrations.breach import list_available
+    return {"providers": list_available()}
+
+
+class BreachSearchEmailRequest(BaseModel):
+    email: str
+    providers: list[str] | None = None
+
+
+@router.post("/breach/search/email")
+async def breach_search_email(
+    body: BreachSearchEmailRequest,
+    analyst: AnalystUser,
+):
+    """Fan-out email lookup across configured breach providers."""
+    from src.integrations.breach import search_email_unified
+
+    results = await search_email_unified(
+        body.email, providers=body.providers,
+    )
+    return {
+        "email": body.email,
+        "results": [r.to_dict() for r in results],
+    }
+
+
+class BreachSearchPasswordRequest(BaseModel):
+    sha1_hash: str  # 40-char hex SHA-1 of the candidate password
+
+
+@router.post("/breach/search/password")
+async def breach_search_password(
+    body: BreachSearchPasswordRequest,
+    analyst: AnalystUser,
+):
+    """HIBP k-anonymity password lookup. Only the first 5 chars of the
+    SHA-1 leave Argus."""
+    from src.integrations.breach.hibp import HibpProvider
+
+    result = await HibpProvider().search_password_hash(body.sha1_hash)
+    return result.to_dict()
+
+
 @router.get("/soar/connectors")
 async def soar_connectors(analyst: AnalystUser):
     """List every SOAR connector + its configuration state (P3 #3.7)."""
