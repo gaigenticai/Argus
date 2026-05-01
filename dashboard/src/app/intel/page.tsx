@@ -369,6 +369,14 @@ export default function IntelPage() {
             </ul>
           )}
         </Section>
+
+        {/* NVD attribution — required by NIST API ToS. */}
+        <p
+          className="text-[11px] mt-2"
+          style={{ color: "var(--color-muted)" }}
+        >
+          This product uses the NVD API but is not endorsed or certified by the NVD.
+        </p>
       </div>
     </div>
   );
