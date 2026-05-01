@@ -251,7 +251,9 @@ class IntelResource {
     return await this.p._getJson('/api/v1/intel/yara/availability');
   }
   async taxiiCollections(): Promise<unknown> {
-    return await this.p._getJson('/taxii2/collections/');
+    // TAXII 2.1 mounts collections under the api-root: /taxii2/api/collections/
+    // (per the spec — see src/api/routes/taxii.py and the TAXII RFC §4).
+    return await this.p._getJson('/taxii2/api/collections/');
   }
   async cves(opts: { cveId?: string; limit?: number } = {}): Promise<unknown> {
     if (opts.cveId) {

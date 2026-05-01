@@ -137,7 +137,9 @@ class _Intel:
         return self._p._get_json("/api/v1/intel/yara/availability")
 
     def taxii_collections(self) -> dict:
-        return self._p._get_json("/taxii2/collections/")
+        # TAXII 2.1 mounts collections under the api-root: /taxii2/api/collections/
+        # (per the spec — see src/api/routes/taxii.py and the TAXII RFC §4).
+        return self._p._get_json("/taxii2/api/collections/")
 
     def cves(
         self, *,
@@ -332,7 +334,9 @@ class _IntelAsync:
         return await self._p._get_json("/api/v1/intel/yara/availability")
 
     async def taxii_collections(self) -> dict:
-        return await self._p._get_json("/taxii2/collections/")
+        # TAXII 2.1 mounts collections under the api-root: /taxii2/api/collections/
+        # (per the spec — see src/api/routes/taxii.py and the TAXII RFC §4).
+        return await self._p._get_json("/taxii2/api/collections/")
 
     async def cves(
         self, *,
