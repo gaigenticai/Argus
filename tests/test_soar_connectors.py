@@ -274,16 +274,28 @@ async def test_soar_health_route_unknown_connector(client, analyst_user):
     assert r.status_code == 404
 
 
-async def test_soar_push_route_unconfigured(client, analyst_user, monkeypatch):
+async def test_soar_push_route_unconfigured(client, admin_user, monkeypatch):
+    # /soar/{name}/push is admin-gated (C6) — incident creation in
+    # customer's SOAR.
     for k in ("ARGUS_TINES_WEBHOOK_URL",):
         monkeypatch.delenv(k, raising=False)
     r = await client.post(
         "/api/v1/intel/soar/tines/push",
         json={"events": [{"title": "x"}]},
-        headers=analyst_user["headers"],
+        headers=admin_user["headers"],
     )
     assert r.status_code == 200
     assert r.json()["success"] is False
+
+
+async def test_soar_push_rejects_analyst(client, analyst_user):
+    """C6 — analyst tokens cannot push to customer SOAR."""
+    r = await client.post(
+        "/api/v1/intel/soar/tines/push",
+        json={"events": [{"title": "x"}]},
+        headers=analyst_user["headers"],
+    )
+    assert r.status_code == 403
 
 
 async def test_soar_route_requires_auth(client):

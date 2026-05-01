@@ -309,16 +309,17 @@ async def test_edr_connectors_route(client, analyst_user):
     assert names == {"crowdstrike", "sentinelone", "mde"}
 
 
-async def test_edr_unknown_connector(client, analyst_user):
+async def test_edr_unknown_connector(client, admin_user):
+    # /iocs/push is admin-gated (C6) — vendor-side blocklist push.
     r = await client.post(
         "/api/v1/intel/edr/nope/iocs/push",
         json={"iocs": [{"type": "ipv4", "value": "1.2.3.4"}]},
-        headers=analyst_user["headers"],
+        headers=admin_user["headers"],
     )
     assert r.status_code == 404
 
 
-async def test_edr_push_route_unconfigured(client, analyst_user, monkeypatch):
+async def test_edr_push_route_unconfigured(client, admin_user, monkeypatch):
     for k in ("ARGUS_FALCON_BASE_URL", "ARGUS_FALCON_CLIENT_ID",
               "ARGUS_FALCON_CLIENT_SECRET"):
         monkeypatch.delenv(k, raising=False)
@@ -326,10 +327,20 @@ async def test_edr_push_route_unconfigured(client, analyst_user, monkeypatch):
     r = await client.post(
         "/api/v1/intel/edr/crowdstrike/iocs/push",
         json={"iocs": [{"type": "ipv4", "value": "1.2.3.4"}]},
-        headers=analyst_user["headers"],
+        headers=admin_user["headers"],
     )
     assert r.status_code == 200
     assert r.json()["success"] is False
+
+
+async def test_edr_push_route_rejects_analyst(client, analyst_user):
+    """C6 — analyst tokens cannot push to vendor blocklists."""
+    r = await client.post(
+        "/api/v1/intel/edr/crowdstrike/iocs/push",
+        json={"iocs": [{"type": "ipv4", "value": "1.2.3.4"}]},
+        headers=analyst_user["headers"],
+    )
+    assert r.status_code == 403
 
 
 async def test_edr_route_requires_auth(client):

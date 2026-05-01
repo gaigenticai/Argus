@@ -695,8 +695,10 @@ class EmailBlocklistRequest(BaseModel):
 async def email_gateway_blocklist(
     name: str,
     body: EmailBlocklistRequest,
-    analyst: AnalystUser,
+    admin: AdminUser,
 ):
+    """Admin-gated — pushes a deny-list entry into the customer's mail
+    gateway, which is a production-impacting change."""
     from src.integrations.email_gateway import (
         EmailBlocklistItem,
         get_connector,
@@ -742,8 +744,12 @@ class EdrIocPushRequest(BaseModel):
 async def edr_push_iocs(
     name: str,
     body: EdrIocPushRequest,
-    analyst: AnalystUser,
+    admin: AdminUser,
 ):
+    """Admin-gated — pushes IOCs into the customer's EDR vendor
+    (CrowdStrike / SentinelOne / MDE) blocklist where they may
+    auto-block / quarantine endpoints. C6: this is a vendor-side
+    production change, not analyst-grade."""
     from src.integrations.edr import EdrIoc, get_connector
 
     conn = get_connector(name)
@@ -771,8 +777,11 @@ class EdrIsolateRequest(BaseModel):
 async def edr_isolate(
     name: str,
     body: EdrIsolateRequest,
-    analyst: AnalystUser,
+    admin: AdminUser,
 ):
+    """Admin-gated — host isolation kicks an endpoint off the network
+    (CrowdStrike contain / S1 disconnect / MDE isolate). High-blast
+    radius; C6 says analysts cannot trigger this."""
     from src.integrations.edr import get_connector
 
     conn = get_connector(name)
@@ -809,8 +818,12 @@ class SandboxSubmitRequest(BaseModel):
 async def sandbox_submit(
     name: str,
     body: SandboxSubmitRequest,
-    analyst: AnalystUser,
+    admin: AdminUser,
 ):
+    """Admin-gated — uploads the customer's binary to an external
+    sandbox vendor (CAPE / Joe / Hybrid-Analysis / VirusTotal).
+    Sensitive files leaving the tenant boundary is a C6-class
+    decision — analysts request, admins approve + submit."""
     import base64
     from src.integrations.sandbox import get_connector
 
@@ -865,9 +878,12 @@ class VolatilityRunRequest(BaseModel):
 @router.post("/forensics/volatility/run")
 async def forensics_volatility_run(
     body: VolatilityRunRequest,
-    analyst: AnalystUser,
+    admin: AdminUser,
 ):
-    """Run a Volatility 3 plugin against a memory image."""
+    """Admin-gated — shells out to the host's vol3 binary against an
+    arbitrary absolute file path supplied by the caller. Allowing an
+    analyst to drive subprocess + arbitrary file-read of host paths is
+    a C6 escalation; admin gating is the floor."""
     from src.integrations.forensics import volatility_run_plugin
 
     result = await volatility_run_plugin(
@@ -898,8 +914,11 @@ class VelociraptorScheduleRequest(BaseModel):
 @router.post("/forensics/velociraptor/schedule")
 async def forensics_velociraptor_schedule(
     body: VelociraptorScheduleRequest,
-    analyst: AnalystUser,
+    admin: AdminUser,
 ):
+    """Admin-gated — schedules a Velociraptor artifact (VQL) on a live
+    customer endpoint. Same blast-radius class as Caldera operations,
+    so we mirror that gating."""
     from src.integrations.forensics import velociraptor_schedule_collection
 
     result = await velociraptor_schedule_collection(
@@ -982,8 +1001,11 @@ class SoarPushEventsRequest(BaseModel):
 async def soar_push(
     name: str,
     body: SoarPushEventsRequest,
-    analyst: AnalystUser,
+    admin: AdminUser,
 ):
+    """Admin-gated — creates incidents in the customer's SOAR (XSOAR /
+    Tines / Splunk SOAR), which fans out to other downstream systems.
+    Analysts can read; only admins push."""
     from src.integrations.soar import get_connector
 
     conn = get_connector(name)

@@ -357,13 +357,24 @@ async def test_sandbox_unknown_connector_404(client, analyst_user):
     assert r.status_code == 404
 
 
-async def test_sandbox_submit_invalid_b64(client, analyst_user):
+async def test_sandbox_submit_invalid_b64(client, admin_user):
+    # /sandbox/{name}/submit is admin-gated (C6) — exfil to external sandbox.
     r = await client.post(
         "/api/v1/intel/sandbox/cape/submit",
         json={"filename": "x.exe", "sample_b64": "%%%not-base64%%%"},
-        headers=analyst_user["headers"],
+        headers=admin_user["headers"],
     )
     assert r.status_code == 400
+
+
+async def test_sandbox_submit_rejects_analyst(client, analyst_user):
+    """C6 — analysts cannot upload customer files to external sandboxes."""
+    r = await client.post(
+        "/api/v1/intel/sandbox/cape/submit",
+        json={"filename": "x.exe", "sample_b64": "AAAA"},
+        headers=analyst_user["headers"],
+    )
+    assert r.status_code == 403
 
 
 async def test_sandbox_route_requires_auth(client):

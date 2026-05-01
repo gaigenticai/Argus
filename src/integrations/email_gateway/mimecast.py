@@ -190,9 +190,17 @@ class MimecastConnector(EmailGatewayConnector):
             for d in data:
                 if isinstance(d, dict) and d.get("id"):
                     ids.append(str(d["id"]))
+        # Empty input or every item filtered out by type-allowlist →
+        # surface as failure with a note instead of misleading success.
+        if not items or (not ids and first_error is None):
+            return EmailGatewayResult(
+                gateway=self.name, success=False, pushed_count=0,
+                note=("no Mimecast-compatible blocklist items in batch "
+                      "(supported types: sender, domain, url)"),
+            )
         return EmailGatewayResult(
             gateway=self.name,
-            success=len(ids) > 0 or first_error is None,
+            success=len(ids) > 0,
             pushed_count=len(ids),
             remote_ids=ids,
             error=first_error,

@@ -151,8 +151,18 @@ class MicrosoftDefenderConnector(EdrConnector):
             except (CircuitBreakerOpenError, aiohttp.ClientError) as exc:
                 if first_error is None:
                     first_error = f"{type(exc).__name__}: {exc}"[:200]
+        # If we pushed nothing AND saw no transport error, every single
+        # IOC type was unsupported — surface that as failure with a note,
+        # rather than reporting success=True/pushed_count=0 (which would
+        # mislead the case copilot into thinking the push landed).
+        if not ids and first_error is None:
+            return EdrPushResult(
+                edr=self.name, success=False,
+                pushed_count=0,
+                note="no MDE-compatible IOC types in batch",
+            )
         return EdrPushResult(
-            edr=self.name, success=len(ids) > 0 or first_error is None,
+            edr=self.name, success=len(ids) > 0,
             pushed_count=len(ids), remote_ids=ids, error=first_error,
         )
 
