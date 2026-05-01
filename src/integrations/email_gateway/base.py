@@ -77,6 +77,15 @@ class EmailGatewayConnector(ABC):
     name: str = "abstract"
     label: str = "Abstract"
 
+    # Vendor capability flags. Proofpoint TAP and Abnormal Security do
+    # not expose a programmatic blocklist write API — their
+    # ``push_blocklist`` returns a structured no-op. The dashboard
+    # reads this so it can grey out the "Block" button instead of
+    # surfacing a confusing ``success=False`` after the operator
+    # clicks. Default True; subclasses set False where the vendor is
+    # read-only or model-driven.
+    supports_blocklist_push: bool = True
+
     @abstractmethod
     def is_configured(self) -> bool:
         ...

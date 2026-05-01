@@ -28028,7 +28028,7 @@
     },
     "/api/v1/intel/breach/search/password": {
       "post": {
-        "description": "HIBP k-anonymity password lookup. Only the first 5 chars of the\nSHA-1 leave Argus.",
+        "description": "HIBP k-anonymity password lookup. Only the first 5 chars of the\nSHA-1 leave Argus.\n\nPer-analyst rate-limited: an authenticated analyst can probe at most\n20 SHA-1 hashes per minute. Without that gate a malicious / compromised\nanalyst could iterate through a corporate password list using their\nAPI token (k-anonymity protects HIBP, not us \u2014 they still learn whether\nany given password hash is breached).",
         "operationId": "breach_search_password_api_v1_intel_breach_search_password_post",
         "requestBody": {
           "content": {

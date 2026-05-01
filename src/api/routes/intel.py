@@ -1060,9 +1060,17 @@ async def breach_search_password(
     analyst: AnalystUser,
 ):
     """HIBP k-anonymity password lookup. Only the first 5 chars of the
-    SHA-1 leave Argus."""
+    SHA-1 leave Argus.
+
+    Per-analyst rate-limited: an authenticated analyst can probe at most
+    20 SHA-1 hashes per minute. Without that gate a malicious / compromised
+    analyst could iterate through a corporate password list using their
+    API token (k-anonymity protects HIBP, not us — they still learn whether
+    any given password hash is breached)."""
+    from src.core.rate_limit import breach_password_limiter
     from src.integrations.breach.hibp import HibpProvider
 
+    await breach_password_limiter.check_for_key(str(analyst.id))
     result = await HibpProvider().search_password_hash(body.sha1_hash)
     return result.to_dict()
 

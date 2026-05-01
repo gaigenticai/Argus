@@ -17,6 +17,15 @@ Public surface:
   list_techniques()              every ATT&CK technique we have at
                                  least one test for
   tests_for(technique_id)        list of AtomicTest for that technique
+
+Curated tests deliberately reference ``example.invalid`` for outbound
+HTTP / DNS — that's a non-routable TLD per RFC 6761, so the request
+goes nowhere, but it WILL trigger NXDOMAIN telemetry, EDR
+suspicious-domain alerts, and SIEM noise. **That is the point**: the
+operator is verifying that their detections fired. If a curated test
+runs and the SIEM stays silent, the *detection* is broken — not the
+test. Document this in the operator runbook before they file a
+support ticket.
 """
 
 from __future__ import annotations

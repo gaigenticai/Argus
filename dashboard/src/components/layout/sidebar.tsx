@@ -90,6 +90,8 @@ const NAV_OPS = [
   { label: "Compliance", href: "/compliance", icon: ClipboardList },
   { label: "Integrations", href: "/integrations", icon: Puzzle },
   { label: "Connectors", href: "/connectors", icon: Plug },
+  { label: "Feed subscriptions", href: "/feed-subscriptions", icon: Bell },
+  { label: "TAXII feed", href: "/taxii", icon: Rss },
 ];
 
 const NAV_ADMIN = [

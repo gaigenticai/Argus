@@ -44,6 +44,10 @@ _DEFAULT_BASE = "https://tap-api-v2.proofpoint.com"
 class ProofpointTapConnector(EmailGatewayConnector):
     name = "proofpoint"
     label = "Proofpoint TAP"
+    # Proofpoint TAP is read-only — the public TAP API has no
+    # programmatic blocklist write surface. push_blocklist() returns
+    # a structured note so the dashboard can grey the action out.
+    supports_blocklist_push = False
 
     def __init__(self):
         self._base = (os.environ.get("ARGUS_PROOFPOINT_BASE_URL") or _DEFAULT_BASE) \

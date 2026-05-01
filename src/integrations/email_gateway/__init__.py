@@ -53,6 +53,9 @@ def list_available() -> list[dict]:
             "name": name,
             "label": cls.label,
             "configured": inst.is_configured(),
+            "supports_blocklist_push": getattr(
+                cls, "supports_blocklist_push", True,
+            ),
         })
     return out
 

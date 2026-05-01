@@ -68,8 +68,18 @@ class XsoarConnector(SoarConnector):
         breaker = get_breaker("soar:xsoar")
         timeout = aiohttp.ClientTimeout(total=30)
         remote_ids: list[str] = []
-        first_error: str | None = None
-        for ev in events:
+        all_errors: list[str] = []     # per-event for full visibility
+        breaker_open = False
+        for idx, ev in enumerate(events):
+            if breaker_open:
+                # Once the circuit-breaker opens, subsequent events
+                # would re-trip the breaker on every iteration; surface
+                # them as skipped so the operator sees the real fan-out
+                # state instead of one masked first_error.
+                all_errors.append(
+                    f"event[{idx}]: skipped — circuit breaker open"
+                )
+                continue
             payload = {
                 "name": ev.get("title") or "Argus alert",
                 "type": "Argus Threat Intelligence",
@@ -95,8 +105,10 @@ class XsoarConnector(SoarConnector):
                         ) as resp:
                             text = await resp.text()
                             if resp.status >= 400:
-                                if first_error is None:
-                                    first_error = f"HTTP {resp.status}: {text[:200]}"
+                                all_errors.append(
+                                    f"event[{idx}]: HTTP {resp.status}: "
+                                    f"{text[:200]}"
+                                )
                                 continue
                             # XSOAR returns the new incident's id field.
                             try:
@@ -106,14 +118,30 @@ class XsoarConnector(SoarConnector):
                                     remote_ids.append(str(rid))
                             except ValueError:
                                 pass
-            except (CircuitBreakerOpenError, aiohttp.ClientError) as exc:
-                if first_error is None:
-                    first_error = f"{type(exc).__name__}: {exc}"[:200]
+            except CircuitBreakerOpenError as exc:
+                breaker_open = True
+                all_errors.append(
+                    f"event[{idx}]: CircuitBreakerOpenError: {exc}"[:240]
+                )
+            except aiohttp.ClientError as exc:
+                all_errors.append(
+                    f"event[{idx}]: {type(exc).__name__}: {exc}"[:240]
+                )
+        first_error = all_errors[0] if all_errors else None
+        # When multiple events failed, summarise the rest in ``note`` so
+        # the dashboard can surface the full picture without us packing
+        # everything into a single 200-char ``error`` string.
+        note = (
+            f"{len(all_errors)} event(s) failed, "
+            f"{len(remote_ids)} succeeded"
+            if len(all_errors) > 1 else None
+        )
         return SoarPushResult(
             success=len(remote_ids) > 0 or first_error is None,
             pushed_count=len(remote_ids),
             remote_ids=remote_ids or None,
             error=first_error,
+            note=note,
         )
 
     async def health_check(self) -> SoarPushResult:

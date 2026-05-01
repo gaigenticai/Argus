@@ -378,7 +378,15 @@ async def test_taxii_objects_emits_date_added_headers(
 
     org_id = await _system_org(session)
     now = datetime.now(timezone.utc)
-    for i, val in enumerate(("9.9.9.1", "9.9.9.2", "9.9.9.3")):
+    # Per-run unique IPs so the iocs uq_type_value index doesn't fight
+    # us across test re-runs in the same DB.
+    import uuid as _uuid
+    suffix = _uuid.uuid4().hex[:6]
+    last_octet_base = (int(suffix[:2], 16) % 200) + 10
+    ips = tuple(
+        f"203.0.113.{last_octet_base + i}" for i in range(3)
+    )
+    for i, val in enumerate(ips):
         session.add(IOC(
             ioc_type=IOCType.IPV4, value=val,
             confidence=0.9,
@@ -431,3 +439,43 @@ async def test_taxii_accepts_no_explicit_accept_header(client, analyst_user):
 async def _system_org(session):
     from src.core.tenant import get_system_org_id
     return await get_system_org_id(session)
+
+
+# ── Indicator schema hardening (P3 audit) ──────────────────────────
+
+
+def test_indicator_does_not_leak_argus_db_primary_key():
+    """``x_argus_ioc_id`` was the literal Argus IOC row id — replaced
+    with a UUIDv5-derived ``x_argus_ref`` so subscribers can dedup on a
+    stable token without us exposing our DB primary key."""
+    from src.integrations.taxii_publish import ioc_to_stix_indicator
+
+    class _Stub:
+        id = "11111111-2222-3333-4444-555555555555"
+        ioc_type = "ipv4"
+        value = "203.0.113.7"
+        confidence = 0.8
+        first_seen = None
+        last_seen = None
+        tags = []
+
+    sdo = ioc_to_stix_indicator(_Stub())
+    assert sdo is not None
+    assert "x_argus_ioc_id" not in sdo
+    assert "x_argus_ref" in sdo
+    # Different from the raw id — it's a UUIDv5 derivation.
+    assert sdo["x_argus_ref"] != _Stub.id
+    # Stable: re-running the function gives the same value.
+    sdo2 = ioc_to_stix_indicator(_Stub())
+    assert sdo2["x_argus_ref"] == sdo["x_argus_ref"]
+
+
+def test_namespace_uuid_is_derived_from_argus_url():
+    """The TAXII namespace UUID is computed from a real URL via
+    UUIDv5(NAMESPACE_URL, ...) — no placeholder UUID committed."""
+    import uuid as _uuid
+    from src.integrations.taxii_publish import _NAMESPACE
+    expected = _uuid.uuid5(_uuid.NAMESPACE_URL, "argus.gaigenticai.com")
+    assert _NAMESPACE == expected
+    # Also rule out the original placeholder explicitly.
+    assert str(_NAMESPACE) != "12345678-aaaa-bbbb-cccc-aaaaaaaaaaaa"

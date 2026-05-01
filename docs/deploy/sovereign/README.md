@@ -78,3 +78,28 @@ audit:
 - [ ] Disaster-recovery plan documented + RPO/RTO acknowledged by buyer
 - [ ] Security monitoring: container runtime + host-level EDR running on the operator's side
 - [ ] Sovereign-cloud-specific contracting paperwork attached
+
+## Phase 3 connector credentials
+
+Every P3 vendor / tooling connector is opt-in. Each is wired through
+`helm/argus/templates/secret.yaml`; pin the value via your secret
+manager (Vault / AWS Secrets Manager / GCP Secret Manager / Sealed
+Secrets / External Secrets Operator). Empty values keep the connector
+dormant; `is_configured()` returns `false` and every entry-point is a
+clean no-op.
+
+| Group | Env vars | Notes |
+| --- | --- | --- |
+| **EDR** | `ARGUS_FALCON_CLIENT_ID/SECRET/BASE_URL`, `ARGUS_S1_API_TOKEN/BASE_URL`, `ARGUS_MDE_TENANT_ID/CLIENT_ID/CLIENT_SECRET` | CrowdStrike Falcon, SentinelOne, Microsoft Defender for Endpoint. |
+| **Email gateway** | `ARGUS_PROOFPOINT_PRINCIPAL/SECRET`, `ARGUS_MIMECAST_BASE_URL/APP_ID/APP_KEY/ACCESS_KEY/SECRET_KEY`, `ARGUS_ABNORMAL_TOKEN` | Mimecast `SECRET_KEY` is the **base64-encoded** secret per Mimecast 2.0 docs. |
+| **Sandbox** | `ARGUS_CAPE_URL/API_KEY`, `ARGUS_JOE_API_KEY`, `ARGUS_HYBRID_API_KEY`, `ARGUS_VT_API_KEY` + `ARGUS_VT_ENTERPRISE=true` | VirusTotal requires both the key **and** the explicit `ARGUS_VT_ENTERPRISE=true` opt-in (free-tier ToS forbids commercial-product use). |
+| **SOAR** | `ARGUS_XSOAR_URL/API_KEY/KEY_ID`, `ARGUS_TINES_WEBHOOK_URL`, `ARGUS_SPLUNK_SOAR_URL/TOKEN` | Cortex XSOAR, Tines, Splunk SOAR (Phantom). |
+| **Breach providers** | `ARGUS_HIBP_API_KEY`, `ARGUS_INTELX_API_KEY`, `ARGUS_DEHASHED_API_KEY` | All commercially-licensable, BYOK. |
+| **Forensics** | `ARGUS_VOLATILITY_CLI`, `ARGUS_FORENSICS_IMAGE_DIR`, `ARGUS_VELOCIRAPTOR_URL/TOKEN/VERIFY_SSL` | `ARGUS_FORENSICS_IMAGE_DIR` chroots Volatility memory-image input paths; recommend `/var/lib/argus/forensics`, mode 0700. |
+| **Adversary emulation** | `ARGUS_ATOMIC_RED_TEAM_PATH`, `ARGUS_CALDERA_URL/API_KEY` | Atomic Red Team is opt-in (mount the `atomics/` directory); curated 14-test starter ships when the path is unset. |
+| **Telegram (legal-gated)** | `ARGUS_TELEGRAM_ENABLED=true`, `ARGUS_TELEGRAM_API_ID/API_HASH/SESSION_PATH` | Operator must complete legal review before flipping `ARGUS_TELEGRAM_ENABLED=true`. The session-DB **parent directory** must be mode `0700` and owned by the api-process uid — Telethon writes the user's auth-key material there, and the health-check route flags this loudly when the parent dir is world-readable. |
+
+After installing or re-installing the chart, hit
+`/api/v1/intel/<group>/connectors` (or the dashboard `/connectors`
+page) to verify that every expected connector reports
+`configured: true`.

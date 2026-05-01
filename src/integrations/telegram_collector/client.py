@@ -57,6 +57,37 @@ def _session_path() -> str:
     return (os.environ.get("ARGUS_TELEGRAM_SESSION_PATH") or "").strip()
 
 
+def _check_session_path_safe(path: str) -> str | None:
+    """Return a user-facing warning string if the session-DB parent
+    directory is world-readable, or ``None`` if it's safe.
+
+    Telethon stores the user's full session blob (including the
+    auth-key derived from the SMS challenge) on disk. World-readable
+    parent dirs let any other process / container on the host hijack
+    the session — see audit P3.10. We don't refuse to run, but we
+    surface the warning loud and clear via the unconfigured-note path
+    and the health-check note.
+    """
+    if not path:
+        return None
+    parent = os.path.dirname(os.path.abspath(path)) or "/"
+    try:
+        st = os.stat(parent)
+    except OSError:
+        # Parent doesn't exist yet — Telethon will create the file but
+        # not the parent dir, so this is fatal in practice. Surface it.
+        return f"session-path parent does not exist: {parent}"
+    mode = st.st_mode & 0o777
+    if mode & 0o077:
+        return (
+            f"session-path parent {parent!r} is mode {oct(mode)} — "
+            "Telethon writes auth-key material here, so the parent "
+            "directory MUST be 0700 (chmod 700 + chown to the api "
+            "process uid)"
+        )
+    return None
+
+
 def is_configured() -> bool:
     """Three env vars + the legal-acknowledgment gate."""
     if not _enabled():
@@ -178,11 +209,12 @@ async def fetch_recent_messages(
 
 async def health_check() -> TelegramCollectorResult:
     """Light health check — ``is_configured`` + Telethon importable +
-    session connect. Doesn't pull any channels."""
+    session connect + session-DB permissions. Doesn't pull channels."""
     if not is_configured():
         return TelegramCollectorResult(
             success=False, note=_unconfigured_note(),
         )
+    perm_warning = _check_session_path_safe(_session_path())
     try:
         from telethon import TelegramClient   # type: ignore
     except ImportError as exc:
@@ -200,8 +232,11 @@ async def health_check() -> TelegramCollectorResult:
                 success=False,
                 error="telegram session not authorised",
             )
+        note = "telegram session connected + authorised"
+        if perm_warning:
+            note = f"{note} (WARNING: {perm_warning})"
         return TelegramCollectorResult(
-            success=True, note="telegram session connected + authorised",
+            success=True, note=note,
         )
     except Exception as exc:  # noqa: BLE001
         return TelegramCollectorResult(

@@ -44,7 +44,11 @@ logger = logging.getLogger(__name__)
 # TAXII / STIX constants
 _STIX_VERSION = "2.1"
 _TAXII_VERSION = "taxii-2.1"
-_NAMESPACE = _uuid.UUID("12345678-aaaa-bbbb-cccc-aaaaaaaaaaaa")
+# Stable namespace UUID for our STIX/TAXII id derivation. Computed once
+# from the URL ``argus.gaigenticai.com`` via UUIDv5(NAMESPACE_URL, …) so
+# the value is reproducible — re-running this code produces an
+# identical 11d6e5fb-… UUID without us having to hard-code a literal.
+_NAMESPACE = _uuid.uuid5(_uuid.NAMESPACE_URL, "argus.gaigenticai.com")
 
 
 def _stable_uuid(*parts: str) -> str:
@@ -108,7 +112,11 @@ def ioc_to_stix_indicator(ioc) -> dict[str, Any] | None:
         "indicator_types": _indicator_types_for(ioc),
         "confidence": int(round(float(ioc.confidence or 0.5) * 100)),
         "labels": list(ioc.tags or []),
-        "x_argus_ioc_id": str(ioc.id),
+        # Hashed reference to the underlying Argus IOC so subscribers
+        # can dedup on a stable token without us leaking the DB primary
+        # key. Even a compromised subscriber can't pivot the hash back
+        # to our row id.
+        "x_argus_ref": _stable_uuid("argus_ref", str(ioc.id)),
         "x_argus_source": "argus",
     }
     return indicator

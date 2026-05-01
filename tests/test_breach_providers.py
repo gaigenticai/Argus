@@ -312,3 +312,32 @@ async def test_breach_search_password_invalid(client, analyst_user):
 async def test_breach_route_requires_auth(client):
     r = await client.get("/api/v1/intel/breach/providers")
     assert r.status_code in (401, 403)
+
+
+async def test_breach_password_search_rate_limited_per_analyst(
+    client, analyst_user,
+):
+    """Per-analyst rate-limit defends against a compromised analyst
+    iterating through a corporate password list with the API token.
+    Limit is 20/min — burst past it must produce HTTP 429."""
+    from src.core.rate_limit import breach_password_limiter
+
+    # Reset the in-memory window so a previous test run doesn't bleed
+    # into this assertion.
+    breach_password_limiter._windows.clear()
+
+    fake_sha = "a" * 40
+    saw_429 = False
+    for i in range(25):
+        r = await client.post(
+            "/api/v1/intel/breach/search/password",
+            json={"sha1_hash": fake_sha},
+            headers=analyst_user["headers"],
+        )
+        if r.status_code == 429:
+            saw_429 = True
+            break
+    assert saw_429, (
+        "expected at least one 429 within 25 requests at "
+        "20/min ceiling"
+    )

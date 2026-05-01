@@ -534,6 +534,22 @@ export const api = {
       caldera: { configured: boolean };
     }>(`/intel/adversary-emulation/availability`),
 
+  // ── User-self-service feed subscriptions (P3 #3.4) ──
+  listFeedSubscriptions: () =>
+    request<FeedSubscriptionRow[]>(`/feed-subscriptions`),
+  createFeedSubscription: (body: FeedSubscriptionCreate) =>
+    request<FeedSubscriptionRow>(`/feed-subscriptions`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteFeedSubscription: (id: string) =>
+    request<void>(`/feed-subscriptions/${id}`, { method: "DELETE" }),
+  testFeedSubscription: (id: string, alert: Record<string, unknown>) =>
+    request<{ matches: boolean }>(
+      `/feed-subscriptions/${id}/test`,
+      { method: "POST", body: JSON.stringify({ alert }) },
+    ),
+
   // Asset Registry (Phase 0.1)
   listAssets: (params: AssetListParams) => {
     const qs = new URLSearchParams();
@@ -3946,4 +3962,32 @@ export interface TelegramChannel {
   actor_link: string | null;
   status: string;
   region_focus: string[];
+}
+
+export interface FeedSubscriptionChannelEntry {
+  type: "webhook" | "email" | "slack";
+  url?: string;
+  address?: string;
+  secret?: string;
+}
+
+export interface FeedSubscriptionRow {
+  id: string;
+  name: string;
+  description: string | null;
+  filter: Record<string, unknown>;
+  channels: FeedSubscriptionChannelEntry[];
+  active: boolean;
+  last_dispatched_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FeedSubscriptionCreate {
+  name: string;
+  description?: string | null;
+  filter: Record<string, unknown>;
+  channels: FeedSubscriptionChannelEntry[];
+  active?: boolean;
 }

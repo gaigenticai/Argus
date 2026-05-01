@@ -178,6 +178,28 @@ async def test_xsoar_health_check(monkeypatch):
     assert r.success is True
 
 
+async def test_xsoar_push_aggregates_errors_across_events(monkeypatch):
+    """When multiple events fail, XSOAR push must surface the count via
+    ``note`` instead of swallowing them behind a single first_error."""
+    monkeypatch.setenv("ARGUS_XSOAR_URL", "https://xsoar.example")
+    monkeypatch.setenv("ARGUS_XSOAR_API_KEY", "fake-key")
+    monkeypatch.setenv("ARGUS_XSOAR_API_KEY_ID", "1")
+    conn = XsoarConnector()
+    # Every push gets HTTP 500 → 3 events × 1 error each.
+    with _patch_session(_FakeResp(status=500, text_body="boom")):
+        r = await conn.push_events([
+            {"id": "a", "title": "ev a", "severity": "high"},
+            {"id": "b", "title": "ev b", "severity": "high"},
+            {"id": "c", "title": "ev c", "severity": "high"},
+        ])
+    assert r.pushed_count == 0
+    assert r.success is False
+    # First error retained for the dashboard toast.
+    assert r.error and "HTTP 500" in r.error
+    # Multi-event note tells the operator how many fan-out events failed.
+    assert r.note and "3 event(s) failed" in r.note
+
+
 # ── Tines ───────────────────────────────────────────────────────────
 
 

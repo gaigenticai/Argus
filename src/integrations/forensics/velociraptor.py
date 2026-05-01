@@ -35,6 +35,38 @@ from src.core.http_circuit import CircuitBreakerOpenError, get_breaker
 logger = logging.getLogger(__name__)
 
 
+# Allowlist of Velociraptor artifacts that ``schedule_collection`` will
+# request. Defence-in-depth — Velociraptor server admins can create
+# arbitrary custom artifacts (including write-side ones), so we won't
+# blindly forward whatever name an Argus admin types. Operators add
+# entries here when their VR deployment ships additional read-only
+# collection artifacts they want to use from Argus.
+_ARTIFACT_ALLOWLIST: frozenset[str] = frozenset({
+    # Generic / cross-platform
+    "Generic.Client.Info", "Generic.System.Pstree",
+    "Generic.System.Users",
+    # Windows
+    "Windows.System.Pslist", "Windows.System.Pstree",
+    "Windows.System.Services", "Windows.System.TaskScheduler",
+    "Windows.Network.NetstatEnriched", "Windows.Network.ListeningPorts",
+    "Windows.Forensics.Prefetch", "Windows.Forensics.Lnk",
+    "Windows.Forensics.Timeline", "Windows.Forensics.Usn",
+    "Windows.EventLogs.RDPAuth", "Windows.EventLogs.Powershell",
+    "Windows.EventLogs.Sysmon", "Windows.EventLogs.Evtx",
+    "Windows.Registry.NTUser", "Windows.Registry.UserAssist",
+    "Windows.Sys.AllUsers", "Windows.Sys.Programs",
+    "Windows.Sys.Users",
+    # Linux
+    "Linux.Sys.Pslist", "Linux.Network.Netstat",
+    "Linux.Forensics.BashHistory", "Linux.Sys.Users",
+    "Linux.System.BashHistory", "Linux.Search.FileFinder",
+    "Linux.Sys.LastUserLogin",
+    # macOS
+    "MacOS.System.Pslist", "MacOS.Network.Netstat",
+    "MacOS.Sys.Users",
+})
+
+
 def is_configured() -> bool:
     return bool(
         (os.environ.get("ARGUS_VELOCIRAPTOR_URL") or "").strip()
@@ -165,6 +197,19 @@ async def schedule_collection(
         return VelociraptorResult(
             available=True, success=False,
             error="client_id and artifact are required",
+        )
+
+    # Velociraptor artifact names use ``Namespace.SubNamespace.Name``.
+    # Keep the request to a curated allowlist of read-only collection
+    # artifacts — defence-in-depth against an admin who can create
+    # write-side custom artifacts on the Velociraptor server.
+    if artifact not in _ARTIFACT_ALLOWLIST:
+        return VelociraptorResult(
+            available=True, success=False,
+            error=(
+                f"artifact {artifact!r} not in Velociraptor allowlist; "
+                "edit _ARTIFACT_ALLOWLIST in velociraptor.py to add it"
+            ),
         )
 
     cfg = _config()

@@ -270,3 +270,95 @@ async def test_forensics_velociraptor_route_unconfigured(client, analyst_user, m
 async def test_forensics_route_requires_auth(client):
     r = await client.get("/api/v1/intel/forensics/availability")
     assert r.status_code in (401, 403)
+
+
+# ── Volatility hardening (P3 audit) ─────────────────────────────────
+
+
+async def test_volatility_rejects_unknown_plugin(monkeypatch, tmp_path):
+    fake_cli = tmp_path / "vol_stub"
+    fake_cli.write_text("#!/bin/sh\necho '[]'\n")
+    fake_cli.chmod(0o755)
+    monkeypatch.setenv("ARGUS_VOLATILITY_CLI", str(fake_cli))
+
+    image = tmp_path / "memory.raw"
+    image.write_bytes(b"\x00")
+
+    r = await volatility_run_plugin(
+        plugin="windows.danger.LoadDriver",
+        image_path=str(image),
+    )
+    assert r.available is True
+    assert r.error and "not in Volatility allowlist" in r.error
+
+
+async def test_volatility_rejects_write_side_extra_args(monkeypatch, tmp_path):
+    fake_cli = tmp_path / "vol_stub"
+    fake_cli.write_text("#!/bin/sh\necho '[]'\n")
+    fake_cli.chmod(0o755)
+    monkeypatch.setenv("ARGUS_VOLATILITY_CLI", str(fake_cli))
+
+    image = tmp_path / "memory.raw"
+    image.write_bytes(b"\x00")
+
+    for bad in (
+        ["--output-dir=/tmp/exfil"],
+        ["--write-config"],
+        ["--config", "evil.yaml"],
+        ["-o", "evil.txt"],
+        ["/etc/passwd"],
+        ["..\\..\\evil"],
+    ):
+        r = await volatility_run_plugin(
+            plugin="windows.pslist", image_path=str(image),
+            extra_args=bad,
+        )
+        assert r.error and (
+            "unsafe extra_args rejected" in r.error
+            or "not in Volatility allowlist" in r.error
+        ), f"expected reject for {bad!r}, got {r.error!r}"
+
+
+async def test_volatility_chroot_blocks_paths_outside_image_dir(
+    monkeypatch, tmp_path,
+):
+    fake_cli = tmp_path / "vol_stub"
+    fake_cli.write_text("#!/bin/sh\necho '[]'\n")
+    fake_cli.chmod(0o755)
+    monkeypatch.setenv("ARGUS_VOLATILITY_CLI", str(fake_cli))
+
+    image_dir = tmp_path / "forensics"
+    image_dir.mkdir()
+    inside = image_dir / "ok.raw"
+    inside.write_bytes(b"\x00")
+    outside = tmp_path / "elsewhere.raw"
+    outside.write_bytes(b"\x00")
+
+    monkeypatch.setenv("ARGUS_FORENSICS_IMAGE_DIR", str(image_dir))
+
+    r = await volatility_run_plugin(
+        plugin="windows.pslist", image_path=str(outside),
+    )
+    assert r.error and "outside ARGUS_FORENSICS_IMAGE_DIR" in r.error
+
+    # Inside the chroot dir → continues to subprocess, succeeds.
+    r2 = await volatility_run_plugin(
+        plugin="windows.pslist", image_path=str(inside),
+        timeout_seconds=10,
+    )
+    assert r2.available is True
+    assert r2.returncode == 0
+
+
+async def test_velociraptor_artifact_allowlist(monkeypatch):
+    monkeypatch.setenv("ARGUS_VELOCIRAPTOR_URL", "https://vr.example:8889")
+    monkeypatch.setenv("ARGUS_VELOCIRAPTOR_TOKEN", "t")
+
+    from src.integrations.forensics import velociraptor_schedule_collection
+
+    r = await velociraptor_schedule_collection(
+        client_id="C.deadbeef",
+        artifact="Custom.Pwn.RemoteShell",
+    )
+    assert r.success is False
+    assert r.error and "not in Velociraptor allowlist" in r.error

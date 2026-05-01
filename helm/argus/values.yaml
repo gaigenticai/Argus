@@ -13,7 +13,8 @@ image:
 argus:
   # JWT signing secret — pin this from a real secret manager. The
   # chart's hard-coded value is for dev clusters only and **must not
-  # ship to production**.
+  # ship to production**. ``helm install`` fails fast if this still
+  # starts with ``CHANGE_ME_`` — see helm/argus/templates/secret.yaml.
   jwtSecret: "CHANGE_ME_dev_only_jwt_secret_at_least_32_chars_long"
 
   # Bootstrap users — the realistic seed honours these env vars and

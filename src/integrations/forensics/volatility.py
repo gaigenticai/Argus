@@ -16,6 +16,23 @@ Common plugins:
   windows.malfind  injected code
   linux.pslist
   linux.bash
+
+**Hardening (audit P3.11)** — even with admin gating, allowing arbitrary
+plugin / extra_args / image_path values would let a compromised admin
+shell out to dump or write arbitrary host paths via Volatility's
+flag surface. Three guards apply:
+
+  1. ``plugin`` must be in ``_PLUGIN_ALLOWLIST``.
+  2. ``image_path`` must resolve to a real file under
+     ``ARGUS_FORENSICS_IMAGE_DIR`` (default ``/var/lib/argus/forensics``).
+  3. ``extra_args`` are screened — items starting with ``--output``,
+     ``--write``, ``--config``, ``-o``, ``-w``, ``-c`` or containing
+     ``/`` are rejected.
+
+When ``ARGUS_FORENSICS_IMAGE_DIR`` is unset, the chroot check is
+disabled (legacy behaviour) — but the deploy guides direct customers
+to set it. Run-time access is read-only; Volatility never writes to
+the image (ro-mmap).
 """
 
 from __future__ import annotations
@@ -29,6 +46,80 @@ from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# Default plugin allowlist — covers the read-only, evidence-collection
+# plugins that case_copilot uses. Expand explicitly when a new plugin
+# is needed; do not delete entries from this list (downstream callers
+# rely on stable allowlist membership for tests / dashboards).
+_PLUGIN_ALLOWLIST: frozenset[str] = frozenset({
+    # Windows
+    "windows.pslist", "windows.pstree", "windows.psscan",
+    "windows.netscan", "windows.netstat",
+    "windows.malfind", "windows.cmdline", "windows.dlllist",
+    "windows.handles", "windows.svcscan", "windows.modules",
+    "windows.registry.hivelist", "windows.registry.printkey",
+    "windows.filescan", "windows.envars",
+    "windows.info",
+    # Linux
+    "linux.pslist", "linux.pstree", "linux.psscan",
+    "linux.bash", "linux.lsmod", "linux.lsof",
+    "linux.malfind", "linux.netstat", "linux.proc.Maps",
+    "linux.envars", "linux.elfs",
+    "linux.sockstat",
+    # macOS
+    "mac.pslist", "mac.pstree", "mac.psaux",
+    "mac.netstat", "mac.malfind",
+    "mac.bash", "mac.lsmod",
+})
+
+
+# Reject any extra-arg that could be used for write-side I/O. Volatility
+# 3's CLI uses ``--output`` / ``-o`` to choose a writer, ``--write-config``
+# / ``--save-config`` to persist a config, ``--config`` to read one.
+_BANNED_FLAG_PREFIXES: tuple[str, ...] = (
+    "--output", "-o", "--write", "-w", "--config", "-c", "--save-config",
+    "--render", "-r",
+)
+
+
+def _is_safe_extra_arg(arg: str) -> bool:
+    if not isinstance(arg, str) or not arg:
+        return False
+    if "/" in arg or "\\" in arg:
+        # Block path-shaped values; the only path the operator should
+        # supply is image_path which we vet separately.
+        return False
+    if arg.startswith("--") or arg.startswith("-"):
+        for banned in _BANNED_FLAG_PREFIXES:
+            # Match exact, =-suffixed, and -suffixed forms so e.g.
+            # ``--write-config`` is rejected by the ``--write`` rule
+            # without us listing every Volatility 3 write-flag variant.
+            if (
+                arg == banned
+                or arg.startswith(banned + "=")
+                or arg.startswith(banned + "-")
+            ):
+                return False
+    return True
+
+
+def _forensics_image_dir() -> str | None:
+    val = (os.environ.get("ARGUS_FORENSICS_IMAGE_DIR") or "").strip()
+    if not val:
+        return None
+    return os.path.realpath(val)
+
+
+def _is_under(path: str, parent: str) -> bool:
+    try:
+        path_real = os.path.realpath(path)
+        parent_real = os.path.realpath(parent)
+    except OSError:
+        return False
+    parent_real = parent_real.rstrip(os.sep) + os.sep
+    return path_real == parent_real.rstrip(os.sep) or \
+        path_real.startswith(parent_real)
 
 
 def _cli_path() -> str | None:
@@ -98,6 +189,15 @@ async def run_plugin(
             ),
         )
 
+    if plugin not in _PLUGIN_ALLOWLIST:
+        return VolatilityResult(
+            available=True, plugin=plugin, image_path=image_path,
+            error=(
+                f"plugin {plugin!r} not in Volatility allowlist; "
+                "edit _PLUGIN_ALLOWLIST in volatility.py to add it"
+            ),
+        )
+
     if not os.path.isabs(image_path):
         return VolatilityResult(
             available=True, plugin=plugin, image_path=image_path,
@@ -108,6 +208,29 @@ async def run_plugin(
             available=True, plugin=plugin, image_path=image_path,
             error=f"image not found: {image_path}",
         )
+
+    image_dir = _forensics_image_dir()
+    if image_dir and not _is_under(image_path, image_dir):
+        return VolatilityResult(
+            available=True, plugin=plugin, image_path=image_path,
+            error=(
+                f"image_path is outside ARGUS_FORENSICS_IMAGE_DIR "
+                f"({image_dir!r}); place memory images under that "
+                "directory or unset the env var to disable the chroot"
+            ),
+        )
+
+    if extra_args:
+        bad = [a for a in extra_args if not _is_safe_extra_arg(a)]
+        if bad:
+            return VolatilityResult(
+                available=True, plugin=plugin, image_path=image_path,
+                error=(
+                    f"unsafe extra_args rejected: {bad!r}. "
+                    "Path-shaped values and write-side flags "
+                    "(--output, --write, --config, …) are blocked."
+                ),
+            )
 
     args = [cli, "-q", "--renderer=json", "-f", image_path, plugin]
     if extra_args:

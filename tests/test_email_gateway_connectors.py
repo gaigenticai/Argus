@@ -98,6 +98,16 @@ def test_list_available_lists_three_connectors():
         assert c["configured"] is False
 
 
+def test_list_available_exposes_blocklist_capability_flag():
+    """Proofpoint TAP and Abnormal Security have no programmatic
+    blocklist write API; the capability flag lets the dashboard grey
+    out the action instead of misleading the analyst."""
+    by_name = {c["name"]: c for c in list_available()}
+    assert by_name["proofpoint"]["supports_blocklist_push"] is False
+    assert by_name["abnormal"]["supports_blocklist_push"] is False
+    assert by_name["mimecast"]["supports_blocklist_push"] is True
+
+
 # ── Proofpoint TAP ──────────────────────────────────────────────────
 
 

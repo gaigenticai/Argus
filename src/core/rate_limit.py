@@ -237,6 +237,32 @@ class RateLimiter:
                 headers={"Retry-After": str(retry_after)},
             )
 
+    async def check_for_key(self, key: str) -> None:
+        """Variant of ``check`` that's keyed by an arbitrary string
+        (typically a user id or API key prefix) rather than the client
+        IP. Lets callers rate-limit a logged-in analyst across IPs."""
+        try:
+            allowed = await self._check_redis(key)
+            if not allowed:
+                retry_after = await self._get_retry_after_redis(key)
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Rate limit exceeded. Try again in {retry_after}s.",
+                    headers={"Retry-After": str(retry_after)},
+                )
+            return
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+        allowed, retry_after = await self._check_memory(key)
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Rate limit exceeded. Try again in {retry_after}s.",
+                headers={"Retry-After": str(retry_after)},
+            )
+
     async def cleanup(self) -> None:
         """Remove stale in-memory entries. Call periodically to prevent memory growth.
 
@@ -269,3 +295,11 @@ async def close_redis_pool() -> None:
 login_limiter = RateLimiter(max_requests=10, window_seconds=300, name="login")
 register_limiter = RateLimiter(max_requests=5, window_seconds=3600, name="register")
 api_limiter = RateLimiter(max_requests=100, window_seconds=60, name="api")
+
+# Per-analyst limiter for sensitive operations that take SHA-1 password
+# hashes / k-anon prefixes as input (P3 #3.9 audit). Keeps a
+# single analyst with the API token from iterating through the
+# corporate password set.
+breach_password_limiter = RateLimiter(
+    max_requests=20, window_seconds=60, name="breach_password",
+)

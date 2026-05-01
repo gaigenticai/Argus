@@ -37,6 +37,7 @@ _FALCON_TYPE_MAP: dict[str, str] = {
     "ipv4":   "ipv4",
     "ipv6":   "ipv6",
     "domain": "domain",
+    "url":    "url",
     "md5":    "md5",
     "sha1":   "sha1",
     "sha256": "sha256",

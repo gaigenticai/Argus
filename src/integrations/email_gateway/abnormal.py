@@ -42,6 +42,11 @@ _DEFAULT_BASE = "https://api.abnormalplatform.com/v1"
 class AbnormalConnector(EmailGatewayConnector):
     name = "abnormal"
     label = "Abnormal Security"
+    # Abnormal blocks via its detection model + admin console; there's
+    # no programmatic blocklist write API. Flag the capability so the
+    # dashboard can grey out the action instead of misleading the
+    # analyst with a "success=False" surface.
+    supports_blocklist_push = False
 
     def __init__(self):
         self._base = (os.environ.get("ARGUS_ABNORMAL_BASE_URL")
