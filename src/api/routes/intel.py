@@ -654,6 +654,72 @@ async def sigma_translate(
     }
 
 
+@router.get("/edr/connectors")
+async def edr_connectors(analyst: AnalystUser):
+    """List every EDR connector + config state (P3 #3.2)."""
+    from src.integrations.edr import list_available
+    return {"connectors": list_available()}
+
+
+@router.get("/edr/{name}/health")
+async def edr_health(name: str, analyst: AnalystUser):
+    from src.integrations.edr import get_connector
+
+    conn = get_connector(name)
+    if conn is None:
+        raise HTTPException(404, f"unknown EDR connector {name!r}")
+    result = await conn.health_check()
+    return result.to_dict()
+
+
+class EdrIocPushRequest(BaseModel):
+    iocs: list[dict]   # [{type, value, severity?, action?, description?}, …]
+
+
+@router.post("/edr/{name}/iocs/push")
+async def edr_push_iocs(
+    name: str,
+    body: EdrIocPushRequest,
+    analyst: AnalystUser,
+):
+    from src.integrations.edr import EdrIoc, get_connector
+
+    conn = get_connector(name)
+    if conn is None:
+        raise HTTPException(404, f"unknown EDR connector {name!r}")
+    iocs = []
+    for d in body.iocs:
+        if not d.get("type") or not d.get("value"):
+            continue
+        iocs.append(EdrIoc(
+            type=d["type"], value=d["value"],
+            severity=d.get("severity") or "medium",
+            action=d.get("action") or "detect",
+            description=d.get("description"),
+        ))
+    result = await conn.push_iocs(iocs)
+    return result.to_dict()
+
+
+class EdrIsolateRequest(BaseModel):
+    host_id: str
+
+
+@router.post("/edr/{name}/isolate")
+async def edr_isolate(
+    name: str,
+    body: EdrIsolateRequest,
+    analyst: AnalystUser,
+):
+    from src.integrations.edr import get_connector
+
+    conn = get_connector(name)
+    if conn is None:
+        raise HTTPException(404, f"unknown EDR connector {name!r}")
+    result = await conn.isolate_host(host_id=body.host_id)
+    return result.to_dict()
+
+
 @router.get("/sandbox/connectors")
 async def sandbox_connectors(analyst: AnalystUser):
     """List every sandbox connector + config state (P3 #3.6)."""
