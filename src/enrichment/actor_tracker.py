@@ -136,6 +136,33 @@ async def create_or_update_actor(
     )
     db.add(sighting)
 
+    # Auto-apply curated TTPs (P1 #1.4) — when an alert is linked to an
+    # actor that ships with a known_ttps list (e.g. the Iran-nexus pack),
+    # the actor's techniques are immediately attached to the alert so
+    # the dashboard shows the MITRE coverage without analyst tagging.
+    if alert_id is not None and (actor.known_ttps or []):
+        from src.intel.iran_apt_pack import attach_actor_ttps_to_alert
+
+        await db.flush()  # ensure actor/sighting visible to the next query
+        try:
+            attached = await attach_actor_ttps_to_alert(
+                db,
+                organization_id=(await db.get(Alert, alert_id)).organization_id,
+                alert_id=alert_id,
+                actor=actor,
+            )
+            if attached:
+                logger.info(
+                    "[actor_tracker] auto-attached %d TTPs from %s to alert %s",
+                    attached, actor.primary_alias, alert_id,
+                )
+        except Exception as exc:  # noqa: BLE001 — never let the auto-apply
+            # break the sighting record itself
+            logger.warning(
+                "[actor_tracker] TTP auto-apply failed for actor=%s alert=%s: %s",
+                actor.primary_alias, alert_id, exc,
+            )
+
     # Recalculate risk score
     actor.risk_score = await calculate_risk_score(actor, db)
 

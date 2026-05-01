@@ -418,6 +418,8 @@ export const api = {
         : []
     ),
   getActorStats: () => request<ActorStats>("/actors/stats"),
+  getActorNavigatorLayerUrl: (id: string, matrix: "enterprise" | "ics" = "enterprise") =>
+    `${API_BASE}/actors/${id}/navigator-layer?matrix=${matrix}`,
 
   // Scanning
   scanSubdomains: (orgId: string) =>

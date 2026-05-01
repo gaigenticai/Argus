@@ -225,7 +225,23 @@ export default function ActorDetailPage() {
         {/* TTPs */}
         {actor.known_ttps.length > 0 && (
           <div className="mt-4 pt-4" style={{ borderTop: "1px solid var(--color-border)" }}>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.07em] mb-2" style={{ color: "var(--color-muted)" }}>Known TTPs (MITRE ATT&amp;CK)</div>
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-[10px] font-semibold uppercase tracking-[0.07em]" style={{ color: "var(--color-muted)" }}>Known TTPs (MITRE ATT&amp;CK)</div>
+              <a
+                href={api.getActorNavigatorLayerUrl(actor.id)}
+                download
+                className="inline-flex items-center gap-1.5 h-7 px-2.5 text-[11px] font-semibold transition-colors"
+                style={{
+                  borderRadius: "4px",
+                  border: "1px solid var(--color-border)",
+                  background: "var(--color-canvas)",
+                  color: "var(--color-ink)",
+                }}
+                title="Download MITRE ATT&CK Navigator layer (v4.5)"
+              >
+                Navigator layer ↓
+              </a>
+            </div>
             <div className="flex gap-1 flex-wrap">
               {actor.known_ttps.map((ttp) => (
                 <span

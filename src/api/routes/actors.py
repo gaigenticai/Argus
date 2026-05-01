@@ -177,6 +177,36 @@ async def merge_actor(
         raise HTTPException(400, str(e))
 
 
+@router.get("/{actor_id}/navigator-layer")
+async def get_actor_navigator_layer(
+    actor_id: uuid.UUID,
+    analyst: AnalystUser,
+    matrix: str = Query(default="enterprise", regex="^(enterprise|ics)$"),
+    db: AsyncSession = Depends(get_session),
+):
+    """Download a MITRE ATT&CK Navigator v4.5 layer for this actor.
+
+    Highlights every technique in the actor's ``known_ttps`` so the
+    analyst can overlay it against their detection-coverage map in the
+    hosted Navigator (https://mitre-attack.github.io/attack-navigator/)
+    or a self-hosted instance.
+    """
+    from fastapi.responses import JSONResponse
+    from src.intel.iran_apt_pack import build_navigator_layer
+
+    actor = await db.get(ThreatActor, actor_id)
+    if actor is None:
+        raise HTTPException(404, "Threat actor not found")
+    layer = build_navigator_layer(actor, matrix=matrix)
+    filename = (
+        f"argus-{actor.primary_alias.lower().replace(' ', '_')}-{matrix}-layer.json"
+    )
+    return JSONResponse(
+        content=layer,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.get("/{actor_id}", response_model=ActorDetail)
 async def get_actor(
     actor_id: uuid.UUID,
