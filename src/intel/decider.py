@@ -49,9 +49,11 @@ class _Rule:
     confidence_per_match: float = 0.6
 
 
-# 150-rule corpus covering the highest-leverage techniques for the
-# alert categories Argus sees. Keywords are matched word-boundary so
-# a substring "rdp" inside "FRDP" doesn't false-positive.
+# Curated rule corpus (~70 rules) covering the highest-leverage
+# techniques for the alert categories Argus sees. Keywords are matched
+# word-boundary so a substring "rdp" inside "FRDP" doesn't false-positive.
+# Refresh / count exposed via :func:`rule_count` and
+# :func:`corpus_version` (the API surface tests both).
 _RULES: list[_Rule] = [
     # ── Initial Access — Phishing (T1566.x) ──────────────────────────
     _Rule("T1566.001", "Spearphishing Attachment",
