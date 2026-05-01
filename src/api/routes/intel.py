@@ -654,6 +654,67 @@ async def sigma_translate(
     }
 
 
+class StixTranslateRequest(BaseModel):
+    stix_pattern: str
+    modules: list[str] | None = None
+
+
+class StixFromIocRequest(BaseModel):
+    ioc_type: str
+    ioc_value: str
+    modules: list[str] | None = None
+
+
+@router.get("/stix-shifter/modules")
+async def stix_shifter_modules(analyst: AnalystUser):
+    """List the stix-shifter data-source modules importable in this deployment."""
+    from src.intel.stix_shifter import available_modules
+    return {"modules": available_modules()}
+
+
+@router.post("/stix-shifter/translate")
+async def stix_shifter_translate(
+    body: StixTranslateRequest,
+    analyst: AnalystUser,
+):
+    """Translate a STIX 2.x pattern into native query language for every
+    available data-source module.
+
+    stix-shifter spawns its own event loop internally, so we run the
+    sync entry point inside ``asyncio.to_thread`` to avoid clashing
+    with FastAPI's running loop ("event loop is already running").
+    """
+    import asyncio
+    from src.intel.stix_shifter import translate_pattern
+
+    results = await asyncio.to_thread(
+        translate_pattern, body.stix_pattern, modules=body.modules,
+    )
+    return {
+        "stix_pattern": body.stix_pattern,
+        "translations": [t.to_dict() for t in results],
+    }
+
+
+@router.post("/stix-shifter/from-ioc")
+async def stix_shifter_from_ioc(
+    body: StixFromIocRequest,
+    analyst: AnalystUser,
+):
+    """One-shot IOC → STIX pattern → per-module translations."""
+    import asyncio
+    from src.intel.stix_shifter import translate_for_ioc
+
+    pattern, results = await asyncio.to_thread(
+        translate_for_ioc, body.ioc_type, body.ioc_value,
+        modules=body.modules,
+    )
+    return {
+        "stix_pattern": pattern,
+        "translations": [r.to_dict() for r in results],
+    }
+
+
 class CIRCLLookupRequest(BaseModel):
     """IOC enrichment via CIRCL public APIs (P2 #2.8). Provide one of
     ``hash`` / ``domain`` / ``ip`` per request — multiple ignored."""

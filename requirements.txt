@@ -40,6 +40,15 @@ pysigma-backend-kusto>=0.4.0
 pysigma-backend-microsoft365defender>=0.3.0
 pysigma-backend-qradar-aql>=0.3.0
 
+# STIX-Shifter (P2 #2.5) — translate STIX 2.x patterns into native query
+# language for ~35 data sources. Each module is independently installable.
+stix-shifter>=8.1.0
+stix-shifter-utils>=8.1.0
+stix-shifter-modules-splunk>=8.1.0
+stix-shifter-modules-elastic-ecs>=8.1.0
+stix-shifter-modules-qradar>=8.1.0
+stix-shifter-modules-azure-sentinel>=8.1.0
+
 # Notifications
 aiosmtplib>=3.0.0
 
