@@ -33,37 +33,46 @@ python-bidi>=0.6.0
 # pure-Python; backend modules pinned to stable releases. Each backend
 # emits one of Splunk SPL / Elastic Lucene+ES|QL / KQL (Sentinel,
 # M365Defender) / IBM QRadar AQL.
-pysigma>=0.11.0
-pysigma-backend-splunk>=1.1.0
-pysigma-backend-elasticsearch>=1.1.0
-pysigma-backend-kusto>=0.4.0
-pysigma-backend-microsoft365defender>=0.3.0
-pysigma-backend-qradar-aql>=0.3.0
+# pySigma — pinned to exact versions to avoid pip's resolver exploring
+# every minor combination across the six packages. The combination of
+# pysigma + 5 backends + stix-shifter + 4 modules + pycti expanded to
+# the resolver's max_rounds (200000) when left unbounded. Pin via the
+# active set in the host venv (./.venv/bin/pip freeze).
+pysigma==0.11.23
+pysigma-backend-splunk==1.1.3
+pysigma-backend-elasticsearch==1.1.6
+pysigma-backend-kusto==0.4.5
+pysigma-backend-microsoft365defender==0.3.2
+pysigma-backend-qradar-aql==0.3.2
 
 # STIX-Shifter (P2 #2.5) — translate STIX 2.x patterns into native query
-# language for ~35 data sources. Each module is independently installable.
-stix-shifter>=8.1.0
-stix-shifter-utils>=8.1.0
-stix-shifter-modules-splunk>=8.1.0
-stix-shifter-modules-elastic-ecs>=8.1.0
-stix-shifter-modules-qradar>=8.1.0
-stix-shifter-modules-azure-sentinel>=8.1.0
+# language for ~35 data sources. Pinned to 8.1.1 — modules MUST match
+# the main package version; with ``>=8.1.0`` pip explored every minor
+# release combination.
+stix-shifter==8.1.1
+stix-shifter-utils==8.1.1
+stix-shifter-modules-splunk==8.1.1
+stix-shifter-modules-elastic-ecs==8.1.1
+stix-shifter-modules-qradar==8.1.1
+stix-shifter-modules-azure-sentinel==8.1.1
 
 # YARA-X + Mandiant capa (P2 #2.10). yara-x is the Rust-rewrite of YARA
 # with a drop-in Python binding (~5x faster compile + scan vs yara-python);
 # capa extracts adversary capabilities from PE / ELF / Mach-O binaries.
-yara-x>=1.0.0
-flare-capa>=9.0.0
+yara-x==1.15.0
+flare-capa==9.4.0
 
 # PyMISP — Argus calls customer-private + CIRCL public MISP servers
 # (P2 #2.11). We consume the API only; the AGPL MISP server itself is
 # not bundled.
-pymisp>=2.5.0
+pymisp==2.5.34.1
 
 # pycti — read/write to a co-deployed OpenCTI instance (P2 #2.1).
 # Apache-2.0; we don't bundle the OpenCTI server, the operator runs
 # their own. The wrapper detects unavailability and degrades to no-op.
-pycti>=7.0.0
+# pycti's release cadence is daily (date-stamped versions like
+# 7.260430.0); pin to a known-good snapshot.
+pycti==7.260430.0
 
 # Notifications
 aiosmtplib>=3.0.0
@@ -86,11 +95,12 @@ python-whois>=0.9.5
 defusedxml>=0.7.1
 python-magic>=0.4.27
 
-# DMARC360 — RUA aggregate report parsing
-parsedmarc>=8.16.0
+# DMARC360 — RUA aggregate report parsing. parsedmarc 9.x pulls in
+# many transitive deps; pin so pip's resolver doesn't have to explore.
+parsedmarc==9.11.0
 
 # Brand Protection — typosquat / lookalike domain generator
-dnstwist>=20240924
+dnstwist==20250130
 
 # Brand Protection — TLD parsing driven by the Public Suffix List.
 # tldextract ships a bundled PSL snapshot; ``include_psl_private_domains``
@@ -132,24 +142,26 @@ pyotp>=2.9.0
 #        (https://itunes.apple.com/search) — no SDK or API key, hit
 #        directly with aiohttp. The third-party `app-store-scraper`
 #        package pins ancient urllib3 incompatible with Py 3.13.
-google-play-scraper>=1.2.7
+google-play-scraper==1.2.7
 
 # Social monitoring (Audit B3 — Phase 4.1) — open-source scrapers
 # that work without paid API keys. Each is opt-in per worker config.
+# Pinned because each one has loose transitive specs that fight the
+# rest of the dependency graph during pip resolution.
 #   Instagram: instaloader (Bellingcat-recommended OSINT tool, public
 #              profiles work without login at moderate rate limits).
 #   TikTok: davidteather/TikTok-Api — actively maintained, used by
 #          250+ companies, MIT license. Requires Playwright Chromium
 #          to be installed (`playwright install chromium`). Opt-in
 #          via ARGUS_WORKER_TIKTOK_INTERVAL > 0; default 0 (off).
-instaloader>=4.13.0
-TikTokApi>=7.0.0
+instaloader==4.15.1
+TikTokApi==7.3.3
 #   Twitter/X: Scweet — replays GraphQL via curl_cffi w/ TLS
 #              fingerprinting; multi-account pooling, proxy support.
 #              Operator must seed authenticated sessions via Scweet's
 #              account-session mechanism. Opt-in via
 #              ARGUS_WORKER_TWITTER_INTERVAL > 0 + populated session dir.
-Scweet>=5.3.0
+Scweet==5.3
 #   LinkedIn: linkedin-scraper — Selenium-based, requires
 #             ARGUS_LINKEDIN_USERNAME/PASSWORD operator credentials,
 #             very aggressive ban risk: limit to 1 req / 60s and only
