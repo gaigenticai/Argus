@@ -50,9 +50,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /build
 
 # Build-only deps. None of these end up in the runtime image.
+# bsdmainutils ships hexdump, which testssl.sh's ``--version`` self-test
+# uses; without it we get a noisy but non-fatal "You need to install
+# hexdump" warning during the builder stage's testssl install.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl unzip ca-certificates git \
         gcc python3-dev libffi-dev libmagic1 libpcap-dev \
+        bsdmainutils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
