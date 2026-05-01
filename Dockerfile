@@ -156,6 +156,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libmagic1 libpcap0.8 ca-certificates curl nmap bubblewrap \
         bsdmainutils bind9-dnsutils procps openssl \
+        fonts-noto-core fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
 # Install pre-built wheels from the builder stage. No compiler in
