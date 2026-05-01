@@ -86,6 +86,7 @@ const NAV_OPS = [
   { label: "Crawlers", href: "/crawlers", icon: Bot },
   { label: "Activity", href: "/activity", icon: Activity },
   { label: "Reports", href: "/reports", icon: FileText },
+  { label: "Compliance", href: "/compliance", icon: ClipboardList },
   { label: "Integrations", href: "/integrations", icon: Puzzle },
 ];
 

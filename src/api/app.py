@@ -32,6 +32,7 @@ from src.api.routes import takedown as takedown_routes
 from src.api.routes import audit_export as audit_export_routes
 from src.api.routes import exec_report as exec_report_routes
 from src.api.routes import admin_settings as admin_settings_routes
+from src.api.routes import compliance as compliance_routes
 
 
 import logging
@@ -403,6 +404,7 @@ app.include_router(brand_actions_routes.router, prefix="/api/v1")
 app.include_router(case_copilot_routes.router, prefix="/api/v1")
 app.include_router(threat_hunts_routes.router, prefix="/api/v1")
 app.include_router(agent_admin_routes.router, prefix="/api/v1")
+app.include_router(compliance_routes.router, prefix="/api/v1")
 
 
 @app.get("/health")

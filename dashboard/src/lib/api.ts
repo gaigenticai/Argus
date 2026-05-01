@@ -1341,6 +1341,28 @@ export const api = {
         { method: "DELETE" },
       ),
   },
+
+  // Compliance Evidence Pack (P1 #1.3)
+  compliance: {
+    listFrameworks: () =>
+      request<ComplianceFrameworkSummary[]>("/compliance/frameworks"),
+    createExport: (req: ComplianceExportRequest) =>
+      request<ComplianceExportResponse>("/compliance/exports", {
+        method: "POST",
+        body: JSON.stringify(req),
+      }),
+    listExports: (params?: { framework_code?: string; limit?: number }) => {
+      const qs = new URLSearchParams();
+      if (params?.framework_code) qs.set("framework_code", params.framework_code);
+      if (params?.limit) qs.set("limit", String(params.limit));
+      const tail = qs.toString() ? `?${qs.toString()}` : "";
+      return request<ComplianceExportResponse[]>(`/compliance/exports${tail}`);
+    },
+    getExport: (id: string) =>
+      request<ComplianceExportResponse>(`/compliance/exports/${id}`),
+    downloadExportUrl: (id: string) =>
+      `${API_BASE}/compliance/exports/${id}/download`,
+  },
 };
 
 /* ─────────────────── Admin types ─────────────────── */
@@ -3770,4 +3792,54 @@ export interface LegalHoldPayload {
   resource_id: string;
   legal_hold: boolean;
   reason?: string;
+}
+
+/* ─────────── Compliance Evidence Pack types (P1 #1.3) ─────────── */
+
+export interface ComplianceFrameworkSummary {
+  id: string;
+  code: string;
+  name_en: string;
+  name_ar: string | null;
+  version: string;
+  source_url: string | null;
+  description_en: string | null;
+  description_ar: string | null;
+}
+
+export type ComplianceExportLanguageMode = "en" | "ar" | "bilingual";
+export type ComplianceExportFormat = "pdf" | "json";
+export type ComplianceExportStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "failed"
+  | "expired";
+
+export interface ComplianceExportRequest {
+  framework_code: string;
+  language_mode: ComplianceExportLanguageMode;
+  format: ComplianceExportFormat;
+  period_from: string;
+  period_to: string;
+}
+
+export interface ComplianceExportResponse {
+  id: string;
+  organization_id: string;
+  framework_id: string;
+  framework_code: string;
+  framework_name_en: string;
+  requested_by_user_id: string | null;
+  language_mode: ComplianceExportLanguageMode;
+  format: ComplianceExportFormat;
+  period_from: string | null;
+  period_to: string | null;
+  status: ComplianceExportStatus;
+  hash_sha256: string | null;
+  byte_size: number | null;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+  expires_at: string;
 }
