@@ -33,6 +33,7 @@ from src.api.routes import audit_export as audit_export_routes
 from src.api.routes import exec_report as exec_report_routes
 from src.api.routes import admin_settings as admin_settings_routes
 from src.api.routes import compliance as compliance_routes
+from src.api.routes import taxii as taxii_routes
 
 
 import logging
@@ -405,6 +406,9 @@ app.include_router(case_copilot_routes.router, prefix="/api/v1")
 app.include_router(threat_hunts_routes.router, prefix="/api/v1")
 app.include_router(agent_admin_routes.router, prefix="/api/v1")
 app.include_router(compliance_routes.router, prefix="/api/v1")
+# TAXII 2.1 publish — mounted at /taxii2/, NO /api/v1 prefix because
+# TAXII clients expect the canonical TAXII 2.1 URL shape.
+app.include_router(taxii_routes.router)
 
 
 @app.get("/health")
