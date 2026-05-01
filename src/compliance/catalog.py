@@ -1,9 +1,9 @@
 """Control catalog data + idempotent seeder.
 
-Four frameworks ship in the v1 pack — the highest-leverage for the GCC
-banking and cross-vertical demos. Subsequent frameworks (NESA, ADHICS,
-Qatar NCSF, Bahrain CBB, Kuwait CITRA, Oman OCERT, PCI-DSS 4.0.1,
-SOC 2 CC7.3) are queued as a P1 follow-on (see MEGA_PHASE.md §11).
+Twelve frameworks ship in the v1 pack — the highest-leverage for the
+GCC banking and cross-vertical demos plus the regional follow-ons
+(NESA / TDRA, ADHICS, Qatar NIA, Bahrain CBB OM-7, Kuwait CITRA, Oman
+NISF) and the two cross-border standards (PCI-DSS, SOC 2 CC7).
 
 Per framework we seed only the controls that are reachable from at
 least one ``signal_kind/value`` — i.e., the ones the engine can
