@@ -15,3 +15,4 @@ from . import brand_actions  # noqa: F401 — register BrandAction table
 from . import case_copilot  # noqa: F401 — register CaseCopilotRun table
 from . import threat_hunts  # noqa: F401 — register ThreatHuntRun table
 from . import org_agent_settings  # noqa: F401 — register agent settings
+from . import compliance  # noqa: F401 — register compliance tables (P1 #1.3)
