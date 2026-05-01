@@ -40,18 +40,40 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_seed_catalogs_idempotent(session: AsyncSession):
-    """Re-running the seeder yields no duplicate rows."""
+    """Re-running the seeder yields no duplicate rows.
+
+    Uses ``flush()`` not ``commit()`` so the session fixture rolls back
+    cleanly at teardown. The TRUNCATE at the top guarantees a clean
+    starting point even if a prior test run accidentally committed
+    catalog rows — keeps the test repeatable forever.
+    """
+    from sqlalchemy import text
+    await session.execute(text(
+        "TRUNCATE compliance_evidence, compliance_exports, "
+        "compliance_control_mappings, compliance_controls, "
+        "compliance_frameworks CASCADE"
+    ))
+    await session.flush()
+
     counts1 = await seed_compliance_catalog(session)
-    await session.commit()
+    await session.flush()
 
     counts2 = await seed_compliance_catalog(session)
-    await session.commit()
+    await session.flush()
 
-    assert counts1["frameworks"] == len(FRAMEWORKS)
-    assert counts1["controls"] == len(CONTROLS)
+    # Idempotency: second run inserts nothing.
     assert counts2["frameworks"] == 0
     assert counts2["controls"] == 0
     assert counts2["mappings"] == 0
+
+    # First-run counts must match the catalog. If a prior committed test
+    # left rows we'd see counts1 < len(FRAMEWORKS); the assertion below
+    # makes that visible loudly.
+    assert counts1["frameworks"] == len(FRAMEWORKS), (
+        f"first-run frameworks={counts1['frameworks']}, expected {len(FRAMEWORKS)}; "
+        "did a prior test commit catalog rows?"
+    )
+    assert counts1["controls"] == len(CONTROLS)
 
     # Sanity: every framework code is present, no dupes.
     fw_codes = (await session.execute(
