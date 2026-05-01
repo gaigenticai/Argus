@@ -146,6 +146,16 @@ async def run(
         await seed_compliance_catalog(session)
         await session.commit()
 
+    # Phase 7 — Iran-nexus APT pack (P1 #1.4). Curated APT33 / APT34 /
+    # APT35 / MuddyWater / DEV-0270 / Cyber Av3ngers profiles with hand-
+    # tagged MITRE ATT&CK TTPs. New alerts that link to these actors via
+    # ``ActorSighting`` get their TTPs auto-attached via the hook in
+    # ``src/enrichment/actor_tracker.py``.
+    async with session_factory() as session:
+        from src.intel.iran_apt_pack import seed_iran_apt_pack
+        await seed_iran_apt_pack(session)
+        await session.commit()
+
     logger.info("realistic seed complete (stress mode=%s)" % stress)
     return 0
 
