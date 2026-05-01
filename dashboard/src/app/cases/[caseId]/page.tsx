@@ -52,11 +52,10 @@ const SEVERITIES: CaseSeverityValue[] = [
 
 const STATES: CaseStateValue[] = [
   "open",
-  "triaging",
-  "investigating",
-  "containing",
-  "remediating",
-  "monitoring",
+  "triaged",
+  "in_progress",
+  "remediated",
+  "verified",
   "closed",
 ];
 
@@ -106,12 +105,11 @@ const STATE_PRESENTATION: Record<
   { chipBorder: string; chipColor: string; label: string; rank: number }
 > = {
   open: { chipBorder: "rgba(147,144,132,0.5)", chipColor: "#36342e", label: "OPEN", rank: 0 },
-  triaging: { chipBorder: "rgba(0,187,217,0.5)", chipColor: "#007B8A", label: "TRIAGING", rank: 1 },
-  investigating: { chipBorder: "rgba(255,79,0,0.5)", chipColor: "var(--color-accent)", label: "INVESTIGATING", rank: 2 },
-  containing: { chipBorder: "rgba(255,171,0,0.5)", chipColor: "#B76E00", label: "CONTAINING", rank: 3 },
-  remediating: { chipBorder: "rgba(183,110,0,0.5)", chipColor: "#7A4100", label: "REMEDIATING", rank: 4 },
-  monitoring: { chipBorder: "rgba(0,167,111,0.5)", chipColor: "#007B55", label: "MONITORING", rank: 5 },
-  closed: { chipBorder: "rgba(147,144,132,0.3)", chipColor: "#939084", label: "CLOSED", rank: 6 },
+  triaged: { chipBorder: "rgba(0,187,217,0.5)", chipColor: "#007B8A", label: "TRIAGED", rank: 1 },
+  in_progress: { chipBorder: "rgba(255,79,0,0.5)", chipColor: "var(--color-accent)", label: "IN PROGRESS", rank: 2 },
+  remediated: { chipBorder: "rgba(183,110,0,0.5)", chipColor: "#7A4100", label: "REMEDIATED", rank: 3 },
+  verified: { chipBorder: "rgba(0,167,111,0.5)", chipColor: "#007B55", label: "VERIFIED", rank: 4 },
+  closed: { chipBorder: "rgba(147,144,132,0.3)", chipColor: "#939084", label: "CLOSED", rank: 5 },
 };
 
 const INV_STATUS_TONE: Record<InvestigationStatus, { bg: string; color: string }> = {
@@ -1633,7 +1631,7 @@ function TransitionModal({
 }) {
   const [target, setTarget] = useState<CaseStateValue>(
     STATES.find((s) => STATE_PRESENTATION[s].rank > STATE_PRESENTATION[current].rank) ||
-      "investigating",
+      "in_progress",
   );
   const [reason, setReason] = useState("");
   return (

@@ -2154,11 +2154,10 @@ export interface DiscoveryJobRecord {
 export type CaseSeverityValue = "critical" | "high" | "medium" | "low" | "info";
 export type CaseStateValue =
   | "open"
-  | "triaging"
-  | "investigating"
-  | "containing"
-  | "remediating"
-  | "monitoring"
+  | "triaged"
+  | "in_progress"
+  | "remediated"
+  | "verified"
   | "closed";
 
 export interface CaseListParams {

@@ -44,11 +44,10 @@ const SEVERITIES: CaseSeverityValue[] = [
 
 const STATES: CaseStateValue[] = [
   "open",
-  "triaging",
-  "investigating",
-  "containing",
-  "remediating",
-  "monitoring",
+  "triaged",
+  "in_progress",
+  "remediated",
+  "verified",
   "closed",
 ];
 
@@ -106,11 +105,10 @@ const STATE_PRESENTATION: Record<
   { chipBorder: string; chipColor: string; label: string }
 > = {
   open: { chipBorder: "var(--color-border)", chipColor: "var(--color-body)", label: "OPEN" },
-  triaging: { chipBorder: "rgba(0,187,217,0.6)", chipColor: "#007B8A", label: "TRIAGING" },
-  investigating: { chipBorder: "var(--color-border-strong)", chipColor: "var(--color-body)", label: "INVESTIGATING" },
-  containing: { chipBorder: "rgba(255,171,0,0.6)", chipColor: "#B76E00", label: "CONTAINING" },
-  remediating: { chipBorder: "rgba(255,171,0,0.6)", chipColor: "#B76E00", label: "REMEDIATING" },
-  monitoring: { chipBorder: "rgba(255,79,0,0.6)", chipColor: "var(--color-accent)", label: "MONITORING" },
+  triaged: { chipBorder: "rgba(0,187,217,0.6)", chipColor: "#007B8A", label: "TRIAGED" },
+  in_progress: { chipBorder: "var(--color-border-strong)", chipColor: "var(--color-body)", label: "IN PROGRESS" },
+  remediated: { chipBorder: "rgba(255,171,0,0.6)", chipColor: "#B76E00", label: "REMEDIATED" },
+  verified: { chipBorder: "rgba(255,79,0,0.6)", chipColor: "var(--color-accent)", label: "VERIFIED" },
   closed: { chipBorder: "var(--color-border)", chipColor: "var(--color-muted)", label: "CLOSED" },
 };
 
