@@ -16,3 +16,4 @@ from . import case_copilot  # noqa: F401 — register CaseCopilotRun table
 from . import threat_hunts  # noqa: F401 — register ThreatHuntRun table
 from . import org_agent_settings  # noqa: F401 — register agent settings
 from . import compliance  # noqa: F401 — register compliance tables (P1 #1.3)
+from . import d3fend_oscal  # noqa: F401 — register D3FEND + OSCAL tables (P2 #2.12)

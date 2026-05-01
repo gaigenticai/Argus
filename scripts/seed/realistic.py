@@ -156,6 +156,16 @@ async def run(
         await seed_iran_apt_pack(session)
         await session.commit()
 
+    # Phase 8 — D3FEND defenses + OSCAL NIST 800-53 r5 catalog (P2 #2.12).
+    # Curated subsets ship with the seed; the admin can run
+    # ``refresh_from_upstream`` for the full catalogs once online.
+    async with session_factory() as session:
+        from src.compliance.oscal_catalog import seed_minimal as seed_oscal
+        from src.intel.d3fend import seed_d3fend_minimal
+        await seed_d3fend_minimal(session)
+        await seed_oscal(session)
+        await session.commit()
+
     logger.info("realistic seed complete (stress mode=%s)" % stress)
     return 0
 
