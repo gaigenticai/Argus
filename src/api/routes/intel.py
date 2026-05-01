@@ -1470,3 +1470,87 @@ async def adversary_emulation_coverage_score(
     from src.integrations.adversary_emulation import coverage_score
     report = coverage_score(body.executed or {}, body.detected or {})
     return report.to_dict()
+
+
+# ── Telegram collector (P3 #3.10) ───────────────────────────────────
+
+
+@router.get("/telegram/availability")
+async def telegram_availability(analyst: AnalystUser):
+    """Surface Telethon-collector config state + curated-channel counts
+    so the dashboard can render the setup CTA."""
+    from src.integrations.telegram_collector import (
+        is_configured, list_curated_channels,
+    )
+    channels = list_curated_channels()
+    return {
+        "configured": is_configured(),
+        "curated_total": len(channels),
+        "curated_active": sum(1 for c in channels if c.status == "active"),
+    }
+
+
+@router.get("/telegram/channels")
+async def telegram_channels(
+    analyst: AnalystUser, cluster: str | None = None,
+):
+    """Return the curated Telegram-channel catalog, optionally filtered
+    by cluster (``iranian-apt`` / ``arabic-hacktivist`` /
+    ``ransomware-leak`` / ``carding`` / ``leaks``)."""
+    from src.integrations.telegram_collector import list_curated_channels
+    out = list_curated_channels()
+    if cluster:
+        out = [c for c in out if c.cluster == cluster]
+    return {"channels": [c.to_dict() for c in out]}
+
+
+class TelegramAnalyzeRequest(BaseModel):
+    text: str
+    channel: str = "@unknown"
+
+
+@router.post("/telegram/analyze")
+async def telegram_analyze(
+    body: TelegramAnalyzeRequest, analyst: AnalystUser,
+):
+    """Run language detection + IOC extraction + categorisation over a
+    Telegram-message body. Pure compute — analysts can paste a forwarded
+    message into the dashboard and get the IOC + language + category
+    triple back without involving the live MTProto collector."""
+    from src.integrations.telegram_collector import process_message
+    pm = process_message(body.text or "", channel=body.channel)
+    return pm.to_dict()
+
+
+class TelegramFetchRequest(BaseModel):
+    channels: list[str]
+    limit_per_channel: int = 50
+    since_message_id: int | None = None
+
+
+@router.post("/telegram/fetch")
+async def telegram_fetch(
+    body: TelegramFetchRequest, admin: AdminUser,
+):
+    """Trigger a Telethon fetch over the supplied channel handles. Admin
+    gated — Telethon issues a real Telegram-user authentication, so this
+    must not be analyst-callable."""
+    from src.integrations.telegram_collector import (
+        fetch_recent_messages, process_messages,
+    )
+    r = await fetch_recent_messages(
+        body.channels,
+        limit_per_channel=body.limit_per_channel,
+        since_message_id=body.since_message_id,
+    )
+    out = r.to_dict()
+    if r.success:
+        out["processed"] = [pm.to_dict() for pm in process_messages(r.messages)]
+    return out
+
+
+@router.get("/telegram/health")
+async def telegram_health(admin: AdminUser):
+    from src.integrations.telegram_collector import health_check
+    r = await health_check()
+    return r.to_dict()
