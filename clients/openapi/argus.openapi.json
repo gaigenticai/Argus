@@ -10682,6 +10682,19 @@
         "title": "ImpersonationStateChange",
         "type": "object"
       },
+      "InstallRequest": {
+        "properties": {
+          "tools": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tools",
+            "type": "array"
+          }
+        },
+        "title": "InstallRequest",
+        "type": "object"
+      },
       "IntegrationUpdateRequest": {
         "properties": {
           "api_key": {
@@ -35842,6 +35855,175 @@
         "summary": "Add Vip",
         "tags": [
           "Auth & Identity"
+        ]
+      }
+    },
+    "/api/v1/oss-tools/": {
+      "get": {
+        "operationId": "get_states_api_v1_oss_tools__get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get States",
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
+    "/api/v1/oss-tools/catalog": {
+      "get": {
+        "description": "Static catalog of OSS tools the admin can pick.",
+        "operationId": "get_catalog_api_v1_oss_tools_catalog_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Catalog",
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
+    "/api/v1/oss-tools/install": {
+      "post": {
+        "description": "Start install for the listed tools. Returns immediately with\n202 + per-tool ``pending`` rows; the dashboard polls\n``GET /oss-tools/`` for state transitions.\n\nTools the admin DIDN'T select are recorded as ``disabled`` so the\nonboarding wizard treats the choice as \"done\" and doesn't re-prompt\non the next admin login.",
+        "operationId": "post_install_api_v1_oss_tools_install_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstallRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Post Install",
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
+    "/api/v1/oss-tools/onboarding": {
+      "get": {
+        "description": "Has the wizard been completed? The dashboard auth-provider\npolls this on first admin login and redirects to the onboarding\npage if False.",
+        "operationId": "get_onboarding_status_api_v1_oss_tools_onboarding_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Onboarding Status",
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
+    "/api/v1/oss-tools/onboarding/skip": {
+      "post": {
+        "description": "Admin opted out of installing any OSS tools. Records every\ncatalog tool as ``disabled`` so the wizard doesn't re-prompt.",
+        "operationId": "post_skip_api_v1_oss_tools_onboarding_skip_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Post Skip",
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
+    "/api/v1/oss-tools/preflight": {
+      "get": {
+        "description": "Surface the docker.sock mount + gate-flag state so the dashboard\ncan render setup instructions before the admin hits Install.",
+        "operationId": "get_preflight_api_v1_oss_tools_preflight_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Preflight",
+        "tags": [
+          "Operations"
         ]
       }
     },

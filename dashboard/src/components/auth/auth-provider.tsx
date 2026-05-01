@@ -28,6 +28,7 @@ const AuthContext = createContext<AuthContextValue>({
 });
 
 const PUBLIC_PATHS = ["/login"];
+const ONBOARDING_PATH = "/onboarding/oss-tools";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserResponse | null>(null);
@@ -59,11 +60,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (loading) return;
     if (!user && !isPublicPath) {
       router.replace("/login");
+      return;
     }
     if (user && isPublicPath) {
       router.replace("/");
+      return;
     }
-  }, [user, loading, isPublicPath, router]);
+    // Admin first-login OSS onboarding gate. Only admins see it; the
+    // page itself decides whether to redirect back if the wizard is
+    // already complete (so we don't hit /onboarding/* on every render).
+    if (
+      user &&
+      user.role === "admin" &&
+      !isPublicPath &&
+      pathname !== ONBOARDING_PATH
+    ) {
+      api
+        .ossOnboardingStatus()
+        .then((s) => {
+          if (!s.complete) router.replace(ONBOARDING_PATH);
+        })
+        .catch(() => {
+          // Endpoint may not exist on older deployments — fall through.
+        });
+    }
+  }, [user, loading, isPublicPath, pathname, router]);
 
   const login = useCallback(
     async (email: string, password: string) => {

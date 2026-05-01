@@ -239,6 +239,16 @@ services:
     ports:
       - "127.0.0.1:${ARGUS_HOST_API_PORT:-8000}:8000"
     env_file: .env
+    # OSS-tool installer (admin-onboarding flow). When the operator sets
+    # ARGUS_OSS_INSTALLER_ENABLED=true in .env, the api container needs:
+    #   - the host's docker.sock so it can drive ``docker compose``
+    #   - a read-only view of the project root so it can read
+    #     ``compose.optional.yml`` and rewrite the host ``.env``
+    # Both mounts are scoped tightly; the installer code refuses to
+    # run unless the gate flag is on AND both mounts are present.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - .:/app/host-project:rw
     # Linux compose needs an explicit host-gateway mapping so containers
     # can reach a Claude Code bridge / LiteLLM proxy / etc. running on
     # the operator's machine. Mac/Windows Docker Desktop provide this

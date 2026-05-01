@@ -550,6 +550,23 @@ export const api = {
       { method: "POST", body: JSON.stringify({ alert }) },
     ),
 
+  // ── Admin OSS-tools onboarding (P3 #3.4 closeout) ──
+  ossCatalog: () => request<{ tools: OssToolCatalogEntry[] }>(`/oss-tools/catalog`),
+  ossPreflight: () => request<OssPreflight>(`/oss-tools/preflight`),
+  ossStates: () => request<{ tools: OssToolState[] }>(`/oss-tools/`),
+  ossInstall: (tools: string[]) =>
+    request<{ started: string[]; preflight: OssPreflight }>(`/oss-tools/install`, {
+      method: "POST",
+      body: JSON.stringify({ tools }),
+    }),
+  ossSkip: () => request<{ complete: boolean }>(`/oss-tools/onboarding/skip`, {
+    method: "POST",
+  }),
+  ossOnboardingStatus: () =>
+    request<{ complete: boolean; installer_enabled: boolean }>(
+      `/oss-tools/onboarding`,
+    ),
+
   // Asset Registry (Phase 0.1)
   listAssets: (params: AssetListParams) => {
     const qs = new URLSearchParams();
@@ -3990,4 +4007,38 @@ export interface FeedSubscriptionCreate {
   filter: Record<string, unknown>;
   channels: FeedSubscriptionChannelEntry[];
   active?: boolean;
+}
+
+
+// ── OSS-tools onboarding ────────────────────────────────────────
+
+export interface OssToolCatalogEntry {
+  name: string;
+  label: string;
+  summary: string;
+  capability: string;
+  ram_estimate_mb: number;
+  disk_estimate_gb: number;
+  compose_profile: string;
+  env_vars: Record<string, string>;
+  docs_url: string | null;
+  is_heavyweight: boolean;
+  post_install_action: string | null;
+}
+
+export interface OssToolState {
+  tool_name: string;
+  state: "pending" | "installing" | "installed" | "failed" | "disabled";
+  installed_at: string | null;
+  last_attempt_at: string | null;
+  error_message: string | null;
+}
+
+export interface OssPreflight {
+  enabled: boolean;
+  host_project: string;
+  host_project_mounted: boolean;
+  docker_sock_mounted: boolean;
+  ready: boolean;
+  issues: string[];
 }

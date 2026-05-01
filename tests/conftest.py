@@ -184,6 +184,7 @@ _GLOBAL_TABLES_TO_SCRUB_PER_TEST = (
     "news_articles",
     "intel_syncs",
     "cve_records",
+    "oss_tool_installs",
 )
 
 
