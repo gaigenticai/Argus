@@ -1,4 +1,5 @@
-import { type LucideIcon } from "lucide-react";
+import Link from "next/link";
+import { ArrowUpRight, type LucideIcon } from "lucide-react";
 
 interface StatCardProps {
   title: string;
@@ -7,6 +8,8 @@ interface StatCardProps {
   icon: LucideIcon;
   /** Accent color for the icon. Defaults to Zapier orange. */
   color?: string;
+  /** Optional drill-down target — wraps the card in a link with hover affordance. */
+  href?: string;
   /** Unused — kept for call-site compat. Pass anything; the card is always cream+border. */
   bgColor?: string;
   /** Unused — kept for call-site compat. */
@@ -17,6 +20,8 @@ interface StatCardProps {
  * Zapier-style stat tile.
  * Border-forward: cream canvas with sand border, no shadow elevation.
  * The icon gets an optional accent color; the value uses Zapier ink.
+ * If ``href`` is given the entire card becomes a clickable drill-down with
+ * a subtle hover state and an arrow indicator.
  */
 export function StatCard({
   title,
@@ -24,16 +29,10 @@ export function StatCard({
   subtitle,
   icon: Icon,
   color = "var(--color-accent)",
+  href,
 }: StatCardProps) {
-  return (
-    <div
-      className="p-5"
-      style={{
-        background: "var(--color-canvas)",
-        border: "1px solid var(--color-border)",
-        borderRadius: "5px",
-      }}
-    >
+  const inner = (
+    <>
       <div className="flex items-center justify-between mb-3">
         <span
           className="text-[11px] font-semibold uppercase tracking-[0.8px]"
@@ -41,11 +40,16 @@ export function StatCard({
         >
           {title}
         </span>
-        <Icon
-          className="w-4 h-4"
-          style={{ color }}
-          strokeWidth={1.75}
-        />
+        <div className="flex items-center gap-1.5">
+          <Icon className="w-4 h-4" style={{ color }} strokeWidth={1.75} />
+          {href ? (
+            <ArrowUpRight
+              className="w-3.5 h-3.5 stat-card-arrow"
+              style={{ color: "var(--color-muted)" }}
+              strokeWidth={2}
+            />
+          ) : null}
+        </div>
       </div>
       <p
         className="text-[36px] font-medium leading-none tracking-[-0.02em]"
@@ -61,6 +65,31 @@ export function StatCard({
           {subtitle}
         </p>
       )}
+    </>
+  );
+
+  const cardStyle = {
+    background: "var(--color-canvas)",
+    border: "1px solid var(--color-border)",
+    borderRadius: "5px",
+    transition: "border-color 0.15s ease, transform 0.15s ease",
+  } as const;
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className="p-5 stat-card-link block"
+        style={cardStyle}
+        aria-label={`${title}: ${value}. View details.`}
+      >
+        {inner}
+      </Link>
+    );
+  }
+  return (
+    <div className="p-5" style={cardStyle}>
+      {inner}
     </div>
   );
 }

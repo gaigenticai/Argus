@@ -155,6 +155,7 @@ export default function DashboardPage() {
           subtitle="All time"
           icon={AlertTriangle}
           color="var(--color-muted)"
+          href="/alerts"
         />
         <StatCard
           title="Critical"
@@ -162,6 +163,7 @@ export default function DashboardPage() {
           subtitle="Immediate action required"
           icon={ShieldAlert}
           color="var(--color-error)"
+          href="/alerts?severity=critical"
         />
         <StatCard
           title="New / Unreviewed"
@@ -169,6 +171,7 @@ export default function DashboardPage() {
           subtitle="Awaiting triage"
           icon={Eye}
           color="var(--color-accent)"
+          href="/alerts?status=new"
         />
         <StatCard
           title="Resolved"
@@ -176,6 +179,7 @@ export default function DashboardPage() {
           subtitle="Successfully handled"
           icon={ShieldCheck}
           color="var(--color-success-dark)"
+          href="/alerts?status=resolved"
         />
       </div>
 
@@ -236,17 +240,19 @@ export default function DashboardPage() {
 
           <div className="grid grid-cols-3 gap-2">
             {[
-              { label: "Feed Entries", value: threatStats?.total_entries?.toLocaleString() || "0" },
-              { label: "C2 Servers", value: threatStats?.active_c2_servers || 0 },
-              { label: "Exploited CVEs", value: threatStats?.exploited_cves_count || 0 },
+              { label: "Feed Entries", value: threatStats?.total_entries?.toLocaleString() || "0", href: "/feeds" },
+              { label: "C2 Servers", value: threatStats?.active_c2_servers || 0, href: "/threat-map?layer=c2" },
+              { label: "Exploited CVEs", value: threatStats?.exploited_cves_count || 0, href: "/intel" },
             ].map((s) => (
-              <div
+              <Link
                 key={s.label}
-                className="p-3"
+                href={s.href}
+                className="p-3 dark-stat-tile block"
                 style={{
                   background: "rgba(255,254,251,0.05)",
                   borderRadius: "5px",
                   border: "1px solid rgba(255,254,251,0.08)",
+                  transition: "background 0.15s ease, border-color 0.15s ease",
                 }}
               >
                 <p
@@ -261,7 +267,7 @@ export default function DashboardPage() {
                 >
                   {s.label}
                 </p>
-              </div>
+              </Link>
             ))}
           </div>
         </div>

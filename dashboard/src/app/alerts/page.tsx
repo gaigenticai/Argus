@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Filter, RefreshCw, Brain, Loader2 } from "lucide-react";
 import { api, type Alert } from "@/lib/api";
 import { SeverityBadge } from "@/components/shared/severity-badge";
@@ -14,10 +15,19 @@ const SEVERITIES = ["all", "critical", "high", "medium", "low", "info"];
 const STATUSES = ["all", "new", "triaged", "investigating", "confirmed", "false_positive", "resolved"];
 
 export default function AlertsPage() {
+  const searchParams = useSearchParams();
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
-  const [severity, setSeverity] = useState("all");
-  const [status, setStatus] = useState("all");
+  // Initialise filters from ``?severity=...&status=...`` so deep-links
+  // from the dashboard KPI tiles arrive pre-filtered.
+  const [severity, setSeverity] = useState(() => {
+    const v = searchParams?.get("severity");
+    return v && SEVERITIES.includes(v) ? v : "all";
+  });
+  const [status, setStatus] = useState(() => {
+    const v = searchParams?.get("status");
+    return v && STATUSES.includes(v) ? v : "all";
+  });
   const [triageRunning, setTriageRunning] = useState(false);
   const { toast } = useToast();
 

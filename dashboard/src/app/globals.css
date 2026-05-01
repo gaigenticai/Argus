@@ -200,3 +200,17 @@ button {
   background: rgba(255, 79, 0, 0.15);
   color: var(--color-ink);
 }
+
+/* Drill-down stat tiles — subtle hover that hints at clickability
+   without competing with the table data they link into. */
+.stat-card-link:hover {
+  border-color: var(--color-border-mid) !important;
+  transform: translateY(-1px);
+}
+.stat-card-link:hover .stat-card-arrow {
+  color: var(--color-accent) !important;
+}
+.dark-stat-tile:hover {
+  background: rgba(255, 79, 0, 0.12) !important;
+  border-color: rgba(255, 79, 0, 0.4) !important;
+}
