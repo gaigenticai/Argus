@@ -337,6 +337,16 @@ export const api = {
   addAsset: (orgId: string, data: CreateAsset) =>
     request(`/organizations/${orgId}/assets`, { method: "POST", body: JSON.stringify(data) }),
 
+  // Org locale (P1 #1.2 — Hijri / Asia/Riyadh)
+  organizations: {
+    getLocale: () => request<LocaleResponse>("/organizations/current/locale"),
+    updateLocale: (body: { timezone?: string; calendar_system?: string }) =>
+      request<LocaleResponse>("/organizations/current/locale", {
+        method: "PATCH",
+        body: JSON.stringify(body),
+      }),
+  },
+
   // Alerts
   getAlerts: (params?: AlertParams) => {
     const qs = new URLSearchParams();
@@ -3844,4 +3854,16 @@ export interface ComplianceExportResponse {
   created_at: string;
   completed_at: string | null;
   expires_at: string;
+}
+
+/* ───────── Locale (P1 #1.2 — Hijri / Asia/Riyadh) ───────── */
+
+export interface LocaleResponse {
+  timezone: string;
+  calendar_system: string;
+  supported: {
+    timezones: readonly string[];
+    calendars: readonly string[];
+    defaults: { timezone: string; calendar_system: string };
+  };
 }

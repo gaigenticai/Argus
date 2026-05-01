@@ -41,14 +41,61 @@ export const categoryLabels: Record<string, string> = {
   initial_access: "Initial Access",
 };
 
-export function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+/* ───────── Locale (P1 #1.2 — Hijri / Asia/Riyadh) ───────── */
+
+export type CalendarSystem = "gregorian" | "islamic-umalqura";
+
+export interface AppLocale {
+  timeZone: string;
+  calendar: CalendarSystem;
+}
+
+// Module-level default — overwritten on app mount by LocaleProvider after
+// it fetches /api/v1/organizations/current/locale. Existing call sites
+// (formatDate(x), timeAgo(x)) keep working unchanged and start
+// respecting the tenant's locale on the next React re-render.
+let _defaultLocale: AppLocale = {
+  timeZone: "Asia/Riyadh",
+  calendar: "gregorian",
+};
+
+export function setDefaultLocale(locale: AppLocale): void {
+  _defaultLocale = locale;
+}
+
+export function getDefaultLocale(): AppLocale {
+  return _defaultLocale;
+}
+
+export function formatDate(dateStr: string, opts?: Partial<AppLocale>): string {
+  if (!dateStr) return "";
+  const { timeZone, calendar } = { ..._defaultLocale, ...(opts || {}) };
+  // The "en-u-ca-<calendar>" locale tag pins Intl.DateTimeFormat to the
+  // requested calendar without changing the language of the month
+  // names — which is what GCC analysts want: numerals + month strings
+  // stay readable in English while the year/month follow Hijri.
+  const localeTag = `en-u-ca-${calendar}`;
+  try {
+    return new Date(dateStr).toLocaleString(localeTag, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone,
+    });
+  } catch {
+    // Fallback if the runtime doesn't ship the requested calendar
+    // (older browser / Node test runtime without ICU full data).
+    return new Date(dateStr).toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone,
+    });
+  }
 }
 
 export function timeAgo(dateStr: string): string {

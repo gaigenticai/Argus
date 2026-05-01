@@ -12,6 +12,7 @@ import {
   Copy,
   Check,
   Trash2,
+  Globe,
 } from "lucide-react";
 import {
   api,
@@ -21,6 +22,7 @@ import {
   type AuditLogEntry,
 } from "@/lib/api";
 import { useAuth } from "@/components/auth/auth-provider";
+import { useLocale } from "@/components/locale-provider";
 import { useToast } from "@/components/shared/toast";
 import { formatDate } from "@/lib/utils";
 import { Select as ThemedSelect } from "@/components/shared/select";
@@ -29,10 +31,11 @@ const TABS: { id: string; label: string; icon: typeof User; adminOnly?: boolean 
   { id: "profile", label: "Profile", icon: User },
   { id: "users", label: "Users", icon: Users, adminOnly: true },
   { id: "apikeys", label: "API Keys", icon: Key },
+  { id: "locale", label: "Locale", icon: Globe, adminOnly: true },
   { id: "audit", label: "Audit Log", icon: ScrollText, adminOnly: true },
 ];
 
-type TabId = "profile" | "users" | "apikeys" | "audit";
+type TabId = "profile" | "users" | "apikeys" | "locale" | "audit";
 
 const AUDIT_ACTIONS = [
   "all",
@@ -121,7 +124,120 @@ export default function SettingsPage() {
       {tab === "profile" && <ProfileTab />}
       {tab === "users" && isAdmin && <UsersTab />}
       {tab === "apikeys" && <APIKeysTab />}
+      {tab === "locale" && isAdmin && <LocaleTab />}
       {tab === "audit" && isAdmin && <AuditTab />}
+    </div>
+  );
+}
+
+/* ── Locale Tab (P1 #1.2 — Hijri / Asia/Riyadh) ─────────────────────── */
+
+function LocaleTab() {
+  const { locale, supported, setLocale } = useLocale();
+  const { toast } = useToast();
+  const [saving, setSaving] = useState(false);
+
+  async function save(next: { timeZone?: string; calendar?: "gregorian" | "islamic-umalqura" }) {
+    setSaving(true);
+    try {
+      await setLocale(next);
+      toast("success", "Locale updated");
+    } catch (err) {
+      toast("error", err instanceof Error ? err.message : "Failed to update locale");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Live preview using a fixed reference date so analysts can compare formats.
+  const preview = new Date("2026-05-01T15:30:00.000Z");
+  const fmt = (cal: string, tz: string) => {
+    try {
+      return preview.toLocaleString(`en-u-ca-${cal}`, {
+        month: "short", day: "numeric", year: "numeric",
+        hour: "2-digit", minute: "2-digit", timeZone: tz,
+      });
+    } catch {
+      return preview.toISOString();
+    }
+  };
+
+  return (
+    <div
+      className="p-6 space-y-6"
+      style={{
+        background: "var(--color-canvas)",
+        border: "1px solid var(--color-border)",
+        borderRadius: "8px",
+      }}
+    >
+      <div>
+        <h2 className="text-[16px] font-semibold" style={{ color: "var(--color-ink)" }}>
+          Tenant locale
+        </h2>
+        <p className="text-[12px] mt-1" style={{ color: "var(--color-muted)" }}>
+          Sets the timezone and calendar used across the dashboard, exports, and PDF reports.
+          Defaults to <strong>Asia/Riyadh</strong> + Gregorian.
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label
+            className="text-[12px] font-semibold uppercase tracking-[0.07em] block mb-1.5"
+            style={{ color: "var(--color-muted)" }}
+          >
+            Timezone
+          </label>
+          <ThemedSelect
+            value={locale.timeZone}
+            onChange={(v) => save({ timeZone: v })}
+            options={supported.timezones.map((tz) => ({
+              value: tz,
+              label: `${tz} — ${fmt(locale.calendar, tz)}`,
+            }))}
+            disabled={saving}
+            ariaLabel="Timezone"
+          />
+        </div>
+        <div>
+          <label
+            className="text-[12px] font-semibold uppercase tracking-[0.07em] block mb-1.5"
+            style={{ color: "var(--color-muted)" }}
+          >
+            Calendar
+          </label>
+          <ThemedSelect
+            value={locale.calendar}
+            onChange={(v) => save({ calendar: v as "gregorian" | "islamic-umalqura" })}
+            options={supported.calendars.map((cal) => ({
+              value: cal,
+              label: `${cal === "islamic-umalqura" ? "Hijri (Umm al-Qura)" : "Gregorian"} — ${fmt(cal, locale.timeZone)}`,
+            }))}
+            disabled={saving}
+            ariaLabel="Calendar"
+          />
+        </div>
+      </div>
+
+      <div
+        className="p-3"
+        style={{
+          background: "var(--color-canvas-subtle)",
+          border: "1px solid var(--color-border)",
+          borderRadius: "6px",
+        }}
+      >
+        <div
+          className="text-[11px] font-semibold uppercase tracking-[0.07em] mb-1"
+          style={{ color: "var(--color-muted)" }}
+        >
+          Reference timestamp (2026-05-01T15:30 UTC)
+        </div>
+        <div className="text-[13px] font-mono" style={{ color: "var(--color-ink)" }}>
+          {fmt(locale.calendar, locale.timeZone)}
+        </div>
+      </div>
     </div>
   );
 }
