@@ -13,13 +13,22 @@ import {
   Check,
   Trash2,
   Globe,
+  Plug,
+  ExternalLink,
+  Loader2,
+  CheckCircle2,
+  XCircle,
 } from "lucide-react";
+import Link from "next/link";
 import {
   api,
   type UserResponse,
   type APIKeyResponse,
   type APIKeyCreatedResponse,
   type AuditLogEntry,
+  type OssToolCatalogEntry,
+  type OssToolState,
+  type OssPreflight,
 } from "@/lib/api";
 import { useAuth } from "@/components/auth/auth-provider";
 import { useLocale } from "@/components/locale-provider";
@@ -32,10 +41,11 @@ const TABS: { id: string; label: string; icon: typeof User; adminOnly?: boolean 
   { id: "users", label: "Users", icon: Users, adminOnly: true },
   { id: "apikeys", label: "API Keys", icon: Key },
   { id: "locale", label: "Locale", icon: Globe, adminOnly: true },
+  { id: "oss", label: "OSS Stack", icon: Plug, adminOnly: true },
   { id: "audit", label: "Audit Log", icon: ScrollText, adminOnly: true },
 ];
 
-type TabId = "profile" | "users" | "apikeys" | "locale" | "audit";
+type TabId = "profile" | "users" | "apikeys" | "locale" | "oss" | "audit";
 
 const AUDIT_ACTIONS = [
   "all",
@@ -125,8 +135,253 @@ export default function SettingsPage() {
       {tab === "users" && isAdmin && <UsersTab />}
       {tab === "apikeys" && <APIKeysTab />}
       {tab === "locale" && isAdmin && <LocaleTab />}
+      {tab === "oss" && isAdmin && <OssStackTab />}
       {tab === "audit" && isAdmin && <AuditTab />}
     </div>
+  );
+}
+
+
+/* ── OSS Stack Tab — re-enter the onboarding flow + per-tool actions ── */
+
+function OssStackTab() {
+  const [catalog, setCatalog] = useState<OssToolCatalogEntry[] | null>(null);
+  const [states, setStates] = useState<OssToolState[]>([]);
+  const [preflight, setPreflight] = useState<OssPreflight | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const { toast } = useToast();
+
+  const reload = useCallback(async () => {
+    try {
+      const [cat, st, pre] = await Promise.all([
+        api.ossCatalog(),
+        api.ossStates(),
+        api.ossPreflight(),
+      ]);
+      setCatalog(cat.tools);
+      setStates(st.tools);
+      setPreflight(pre);
+    } catch (err) {
+      toast("error", `Load failed: ${(err as Error).message}`);
+    }
+  }, [toast]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const installOne = async (name: string) => {
+    setBusy(name);
+    try {
+      await api.ossInstall([name]);
+      toast("success", `${name} install kicked off — refresh in a minute`);
+      // Optimistic poll: state will flip to installing → installed.
+      setTimeout(reload, 1500);
+    } catch (err) {
+      toast("error", `Install failed: ${(err as Error).message}`);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const stateByName = new Map(states.map((s) => [s.tool_name, s]));
+
+  return (
+    <div
+      className="p-6 space-y-5"
+      style={{
+        background: "var(--color-canvas)",
+        border: "1px solid var(--color-border)",
+        borderRadius: "8px",
+      }}
+    >
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h2 className="text-[16px] font-semibold" style={{ color: "var(--color-ink)" }}>
+            Open-source security stack
+          </h2>
+          <p className="text-[12px] mt-1 max-w-[640px]" style={{ color: "var(--color-muted)" }}>
+            Argus integrates with these well-known OSS tools and can install
+            them alongside the platform on your host. Pick one below and hit
+            Install — or re-run the full onboarding wizard to revisit your
+            original choices.
+          </p>
+        </div>
+        <Link
+          href="/onboarding/oss-tools"
+          className="inline-flex items-center gap-1 text-[13px] font-medium px-3 py-1.5"
+          style={{
+            background: "var(--color-canvas)",
+            border: "1px solid var(--color-border)",
+            borderRadius: "5px",
+            color: "var(--color-ink)",
+          }}
+        >
+          <RefreshCw className="w-3.5 h-3.5" aria-hidden />
+          Re-run onboarding wizard
+        </Link>
+      </div>
+
+      {preflight && !preflight.ready && (
+        <div
+          className="px-3 py-2 text-[12px]"
+          style={{
+            border: "1px solid rgba(245,158,11,0.3)",
+            background: "rgba(245,158,11,0.05)",
+            borderRadius: "5px",
+            color: "var(--color-warning-dark)",
+          }}
+        >
+          <strong>Installer not ready:</strong>
+          <ul className="list-disc pl-4 mt-1 space-y-0.5">
+            {preflight.issues.map((i, idx) => <li key={idx}>{i}</li>)}
+          </ul>
+        </div>
+      )}
+
+      <div
+        className="overflow-hidden"
+        style={{ border: "1px solid var(--color-border)", borderRadius: "5px" }}
+      >
+        {catalog === null ? (
+          <div className="px-4 py-8 text-[13px] text-center" style={{ color: "var(--color-muted)" }}>
+            <Loader2 className="w-4 h-4 animate-spin inline mr-1" aria-hidden /> Loading…
+          </div>
+        ) : catalog.length === 0 ? (
+          <div className="px-4 py-8 text-[13px] text-center" style={{ color: "var(--color-muted)" }}>
+            Catalog empty — refresh the page.
+          </div>
+        ) : (
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr
+                className="text-[10px] uppercase tracking-[0.8px]"
+                style={{
+                  background: "var(--color-surface-muted)",
+                  color: "var(--color-muted)",
+                }}
+              >
+                <th className="text-left px-4 py-2 font-semibold">Tool</th>
+                <th className="text-left px-3 py-2 font-semibold">RAM / Disk</th>
+                <th className="text-left px-3 py-2 font-semibold">State</th>
+                <th className="text-right px-4 py-2 font-semibold">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {catalog.map((t) => {
+                const st = stateByName.get(t.name);
+                const isInstalled = st?.state === "installed";
+                const isBusy = busy === t.name || st?.state === "installing" || st?.state === "pending";
+                const isFailed = st?.state === "failed";
+                return (
+                  <tr key={t.name} style={{ borderTop: "1px solid var(--color-border)" }}>
+                    <td className="px-4 py-3">
+                      <div className="font-semibold" style={{ color: "var(--color-ink)" }}>
+                        {t.label}
+                      </div>
+                      <div className="text-[11px] mt-0.5" style={{ color: "var(--color-muted)" }}>
+                        {t.summary}
+                      </div>
+                      {t.docs_url && (
+                        <a
+                          href={t.docs_url}
+                          target="_blank"
+                          rel="noreferrer noopener"
+                          className="inline-flex items-center gap-0.5 mt-1 text-[10px] underline"
+                          style={{ color: "var(--color-muted)" }}
+                        >
+                          docs <ExternalLink className="w-2.5 h-2.5" aria-hidden />
+                        </a>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-[11px] font-mono" style={{ color: "var(--color-muted)" }}>
+                      {t.ram_estimate_mb} MB / {t.disk_estimate_gb} GB
+                    </td>
+                    <td className="px-3 py-3">
+                      <StateBadge state={st?.state ?? "disabled"} />
+                      {isFailed && st?.error_message && (
+                        <div
+                          className="text-[10px] mt-1 max-w-[260px] truncate"
+                          style={{ color: "var(--color-error-dark)" }}
+                          title={st.error_message ?? ""}
+                        >
+                          {st.error_message}
+                        </div>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <button
+                        type="button"
+                        onClick={() => installOne(t.name)}
+                        disabled={isBusy}
+                        className="inline-flex items-center gap-1.5 text-[12px] font-medium px-3 py-1.5"
+                        style={{
+                          ...btnSecondary,
+                          opacity: isBusy ? 0.5 : 1,
+                        }}
+                      >
+                        {isBusy ? (
+                          <Loader2 className="w-3 h-3 animate-spin" aria-hidden />
+                        ) : (
+                          <RefreshCw className="w-3 h-3" aria-hidden />
+                        )}
+                        {isInstalled ? "Reinstall" : "Install"}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+
+function StateBadge({ state }: { state: string }) {
+  const cls = "inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5";
+  const radius = "999px";
+  if (state === "installed") {
+    return (
+      <span className={cls} style={{
+        background: "rgba(16,185,129,0.08)",
+        color: "var(--color-success-dark)",
+        border: "1px solid rgba(16,185,129,0.25)", borderRadius: radius,
+      }}>
+        <CheckCircle2 className="w-2.5 h-2.5" aria-hidden /> Installed
+      </span>
+    );
+  }
+  if (state === "installing" || state === "pending") {
+    return (
+      <span className={cls} style={{
+        background: "rgba(255,79,0,0.06)",
+        color: "var(--color-accent)",
+        border: "1px solid rgba(255,79,0,0.25)", borderRadius: radius,
+      }}>
+        <Loader2 className="w-2.5 h-2.5 animate-spin" aria-hidden /> Installing
+      </span>
+    );
+  }
+  if (state === "failed") {
+    return (
+      <span className={cls} style={{
+        background: "rgba(239,68,68,0.06)",
+        color: "var(--color-error-dark)",
+        border: "1px solid rgba(239,68,68,0.25)", borderRadius: radius,
+      }}>
+        <XCircle className="w-2.5 h-2.5" aria-hidden /> Failed
+      </span>
+    );
+  }
+  return (
+    <span className={cls} style={{
+      background: "var(--color-surface-muted)",
+      color: "var(--color-muted)",
+      border: "1px solid var(--color-border)", borderRadius: radius,
+    }}>
+      Not installed
+    </span>
   );
 }
 
