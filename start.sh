@@ -664,7 +664,11 @@ export COMPOSE_FILE_OVERRIDE="$COMPOSE_FILES"
 dc() { docker compose $COMPOSE_FILE_OVERRIDE "$@"; }
 
 step "Building images (cached layers will be skipped)"
-dc build --quiet
+# Show progress so a long ``pip wheel`` rebuild — triggered whenever
+# requirements.txt changes — doesn't look like a hang. ``--progress
+# plain`` is a goes-before-build global flag in compose v2.
+log "build can take 5-10 min on the first run after a requirements.txt change"
+dc --progress plain build
 log "build complete"
 
 if [ "$NEED_SEED" -eq 1 ]; then
