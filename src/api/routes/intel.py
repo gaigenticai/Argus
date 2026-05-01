@@ -654,6 +654,56 @@ async def sigma_translate(
     }
 
 
+@router.get("/opencti/availability")
+async def opencti_availability(analyst: AnalystUser):
+    from src.integrations import opencti as opencti_mod
+    return {"configured": opencti_mod.is_configured()}
+
+
+class OpenCTIProjectIocRequest(BaseModel):
+    ioc_type: str
+    value: str
+    confidence: int = 75
+    actor_alias: str | None = None
+
+
+@router.post("/opencti/project/ioc")
+async def opencti_project_ioc(
+    body: OpenCTIProjectIocRequest,
+    analyst: AnalystUser,
+):
+    """Project an IOC into the co-deployed OpenCTI as a STIX Indicator."""
+    import asyncio
+    from src.integrations import opencti as opencti_mod
+
+    result = await asyncio.to_thread(
+        opencti_mod.project_ioc,
+        ioc_type=body.ioc_type, value=body.value,
+        confidence=body.confidence, actor_alias=body.actor_alias,
+    )
+    return result.to_dict()
+
+
+@router.get("/opencti/graph/{stix_id:path}")
+async def opencti_graph(
+    stix_id: str,
+    analyst: AnalystUser,
+    depth: int = Query(default=1, ge=1, le=3),
+    limit: int = Query(default=50, ge=1, le=200),
+):
+    """Fetch a STIX entity's neighbourhood from OpenCTI for the graph
+    view. Returns ``{root, nodes, edges, note}`` even when OpenCTI is
+    unavailable so the dashboard renders an explanatory empty state."""
+    import asyncio
+    from src.integrations import opencti as opencti_mod
+
+    n = await asyncio.to_thread(
+        opencti_mod.fetch_neighbourhood,
+        stix_id=stix_id, depth=depth, limit=limit,
+    )
+    return n.to_dict()
+
+
 @router.get("/misp/availability")
 async def misp_availability(analyst: AnalystUser):
     from src.integrations import misp as misp_mod

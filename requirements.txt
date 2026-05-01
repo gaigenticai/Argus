@@ -60,6 +60,11 @@ flare-capa>=9.0.0
 # not bundled.
 pymisp>=2.5.0
 
+# pycti — read/write to a co-deployed OpenCTI instance (P2 #2.1).
+# Apache-2.0; we don't bundle the OpenCTI server, the operator runs
+# their own. The wrapper detects unavailability and degrades to no-op.
+pycti>=7.0.0
+
 # Notifications
 aiosmtplib>=3.0.0
 
