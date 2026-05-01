@@ -654,6 +654,75 @@ async def sigma_translate(
     }
 
 
+@router.get("/forensics/availability")
+async def forensics_availability(analyst: AnalystUser):
+    """Report which IR-workbench tools are available in this deployment
+    (P3 #3.11)."""
+    from src.integrations.forensics import (
+        velociraptor_configured,
+        volatility_available,
+    )
+    return {
+        "volatility": volatility_available(),
+        "velociraptor": {"configured": velociraptor_configured()},
+    }
+
+
+class VolatilityRunRequest(BaseModel):
+    plugin: str
+    image_path: str  # absolute path to the memory image on the host
+    extra_args: list[str] | None = None
+    timeout_seconds: int = 1800
+
+
+@router.post("/forensics/volatility/run")
+async def forensics_volatility_run(
+    body: VolatilityRunRequest,
+    analyst: AnalystUser,
+):
+    """Run a Volatility 3 plugin against a memory image."""
+    from src.integrations.forensics import volatility_run_plugin
+
+    result = await volatility_run_plugin(
+        plugin=body.plugin, image_path=body.image_path,
+        extra_args=body.extra_args, timeout_seconds=body.timeout_seconds,
+    )
+    return result.to_dict()
+
+
+@router.get("/forensics/velociraptor/clients")
+async def forensics_velociraptor_clients(
+    analyst: AnalystUser,
+    search: str = "",
+    limit: int = Query(default=50, ge=1, le=500),
+):
+    from src.integrations.forensics import velociraptor_list_clients
+
+    result = await velociraptor_list_clients(search=search, limit=limit)
+    return result.to_dict()
+
+
+class VelociraptorScheduleRequest(BaseModel):
+    client_id: str
+    artifact: str
+    parameters: dict[str, str] | None = None
+
+
+@router.post("/forensics/velociraptor/schedule")
+async def forensics_velociraptor_schedule(
+    body: VelociraptorScheduleRequest,
+    analyst: AnalystUser,
+):
+    from src.integrations.forensics import velociraptor_schedule_collection
+
+    result = await velociraptor_schedule_collection(
+        client_id=body.client_id,
+        artifact=body.artifact,
+        parameters=body.parameters,
+    )
+    return result.to_dict()
+
+
 @router.get("/breach/providers")
 async def breach_providers(analyst: AnalystUser):
     """List every breach-credential provider + config state (P3 #3.9)."""
