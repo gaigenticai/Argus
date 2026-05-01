@@ -219,3 +219,37 @@ async def update_alert(
     await db.commit()
     await db.refresh(alert)
     return alert
+
+
+@router.get("/{alert_id}/navigator-layer")
+async def get_alert_navigator_layer(
+    alert_id: uuid.UUID,
+    analyst: AnalystUser,
+    matrix: str = Query(default="enterprise", pattern="^(enterprise|ics)$"),
+    db: AsyncSession = Depends(get_session),
+):
+    """Download a MITRE ATT&CK Navigator v4.5 layer for this alert.
+
+    Combines (a) every ``AttackTechniqueAttachment`` row on the alert
+    with (b) the curated ``known_ttps`` of every threat actor sighted
+    on the alert. The layer's per-square comments preserve provenance
+    so the analyst sees which agent / actor / rule attached each
+    technique.
+    """
+    from fastapi.responses import JSONResponse
+    from src.intel.navigator_layer import build_alert_layer
+
+    org_id = await get_system_org_id(db)
+    alert = await db.get(Alert, alert_id)
+    if not alert or alert.organization_id != org_id:
+        raise HTTPException(404, "Alert not found")
+
+    layer = await build_alert_layer(db, alert_id=alert_id, matrix=matrix)
+    if layer is None:
+        raise HTTPException(404, "Alert not found")
+
+    filename = f"argus-alert-{alert_id}-{matrix}-layer.json"
+    return JSONResponse(
+        content=layer,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

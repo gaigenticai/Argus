@@ -169,9 +169,25 @@ export default function AlertDetailPage() {
               {categoryLabels[alert.category] || alert.category}
             </span>
           </div>
-          <span className="text-[12px]" style={{ color: "var(--color-muted)" }}>
-            {formatDate(alert.created_at)}
-          </span>
+          <div className="flex items-center gap-2">
+            <a
+              href={api.getAlertNavigatorLayerUrl(alert.id)}
+              download
+              className="inline-flex items-center gap-1.5 h-7 px-2.5 text-[11px] font-semibold transition-colors"
+              style={{
+                borderRadius: "4px",
+                border: "1px solid var(--color-border)",
+                background: "var(--color-canvas)",
+                color: "var(--color-ink)",
+              }}
+              title="Download MITRE ATT&CK Navigator layer (v4.5)"
+            >
+              Navigator layer ↓
+            </a>
+            <span className="text-[12px]" style={{ color: "var(--color-muted)" }}>
+              {formatDate(alert.created_at)}
+            </span>
+          </div>
         </div>
 
         <h1 dir="auto" className="text-[22px] font-medium tracking-[-0.02em] mb-2" style={{ color: "var(--color-ink)" }}>
