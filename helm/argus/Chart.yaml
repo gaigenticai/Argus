@@ -1,0 +1,23 @@
+apiVersion: v2
+name: argus
+description: |
+  Argus — Threat Intelligence + Digital Risk Protection platform for
+  banks, regulated institutions, and critical-sector enterprises.
+  Single-tenant on-prem deployment in v1; multi-tenant MSSP mode is
+  P3 #3.1 (in progress).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - threat-intelligence
+  - dark-web-monitoring
+  - mitre-attack
+  - sigma
+  - taxii
+home: https://github.com/gaigenticai/Argus
+sources:
+  - https://github.com/gaigenticai/Argus
+maintainers:
+  - name: Argus Threat Intelligence Platform
+    url: https://github.com/gaigenticai/Argus
+icon: https://raw.githubusercontent.com/gaigenticai/Argus/main/dashboard/public/favicon.ico

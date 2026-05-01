@@ -1,0 +1,197 @@
+# Default values for the Argus Helm chart.
+# Every ARGUS_* env var documented in .env.example has a matching
+# field here so operators can drive the entire deployment from one
+# values.yaml.
+
+image:
+  repository: ghcr.io/gaigenticai/argus
+  tag: ""              # empty → falls back to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+# ── Argus app config ────────────────────────────────────────────────
+argus:
+  # JWT signing secret — pin this from a real secret manager. The
+  # chart's hard-coded value is for dev clusters only and **must not
+  # ship to production**.
+  jwtSecret: "CHANGE_ME_dev_only_jwt_secret_at_least_32_chars_long"
+
+  # Bootstrap users — the realistic seed honours these env vars and
+  # creates accounts on first install (P1 #1.8).
+  bootstrapAdmin:
+    email: admin@argus.local
+    password: ""        # empty → seed prints a randomly-generated one
+
+  bootstrapAnalyst:
+    email: analyst@argus.local
+    password: ""
+
+  # Tenant locale — defaults to KSA (P1 #1.2).
+  locale:
+    timezone: "Asia/Riyadh"
+    calendar: "gregorian"  # or "islamic-umalqura"
+
+  # Compliance frameworks shipped pre-mapped in the seed catalog.
+  # The dashboard exposes every framework that's enabled here.
+  complianceFrameworks:
+    - NCA-ECC-V2
+    - SAMA-CSF-V1
+    - NESA-IA-V2
+    - ADHICS-V2
+    - QATAR-NIA-V2
+    - CBB-CYBER-V2
+    - CITRA-CSF-V1
+    - OMAN-NISF-V1
+    - ISO-27001-2022
+    - NIST-CSF-V2
+    - PCI-DSS-V4
+    - SOC2-CC7
+
+# ── argus-api (FastAPI) ─────────────────────────────────────────────
+api:
+  replicaCount: 3
+  resources:
+    requests: {cpu: 500m, memory: 512Mi}
+    limits:   {cpu: 2000m, memory: 2Gi}
+  env: {}            # operator-supplied extra env
+
+# ── argus-worker (feed scheduler + agents) ──────────────────────────
+worker:
+  replicaCount: 1    # singleton — feed scheduler must not run twice
+  resources:
+    requests: {cpu: 1000m, memory: 1Gi}
+    limits:   {cpu: 4000m, memory: 4Gi}
+
+# ── argus-tor (Tor SOCKS5 + control) ────────────────────────────────
+tor:
+  enabled: true
+  resources:
+    requests: {cpu: 100m, memory: 256Mi}
+    limits:   {cpu: 500m, memory: 1Gi}
+
+# ── PostgreSQL ──────────────────────────────────────────────────────
+# Set ``postgres.enabled: false`` and supply ``postgres.external.*``
+# to point at a managed Postgres (RDS, Cloud SQL, OVH DB, …).
+postgres:
+  enabled: true
+  image: postgres:16-alpine
+  persistence:
+    enabled: true
+    size: 100Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: 2000m, memory: 4Gi}
+    limits:   {cpu: 8000m, memory: 16Gi}
+  database: argus
+  username: argus
+  # Pin the password from an external secret in production.
+  password: "CHANGE_ME_dev_only_postgres_password"
+  external:
+    host: ""
+    port: 5432
+    database: argus
+    secret: ""        # name of a Secret containing ARGUS_DB_PASSWORD
+
+# ── Redis ───────────────────────────────────────────────────────────
+redis:
+  enabled: true
+  image: redis:7-alpine
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: 200m, memory: 256Mi}
+    limits:   {cpu: 1000m, memory: 2Gi}
+  external:
+    url: ""           # e.g. redis://customer-redis.internal:6379
+
+# ── Meilisearch ─────────────────────────────────────────────────────
+meilisearch:
+  enabled: true
+  image: getmeili/meilisearch:latest
+  persistence:
+    enabled: true
+    size: 50Gi
+    storageClass: ""
+  resources:
+    requests: {cpu: 500m, memory: 512Mi}
+    limits:   {cpu: 2000m, memory: 4Gi}
+  masterKey: "CHANGE_ME_dev_only_meili_master_key"
+
+# ── MinIO / S3-compatible object storage (Evidence Vault) ──────────
+evidence:
+  enabled: true                  # set false to use external S3
+  image: minio/minio:latest
+  persistence:
+    enabled: true
+    size: 1000Gi
+    storageClass: ""
+  bucket: argus-evidence
+  rootUser: argus_minio
+  rootPassword: "CHANGE_ME_dev_only_minio_password"
+  external:
+    endpoint: ""                 # e.g. https://s3.amazonaws.com
+    region: ""
+    bucket: ""
+    accessKey: ""
+    secretKey: ""
+
+# ── Ollama (optional local LLM) ─────────────────────────────────────
+# When enabled, ships an Ollama instance for Gemma 3 27B local
+# inference. Disabled by default because it requires GPU. For BYOK
+# Anthropic, leave this off and set argus.llm.* below.
+ollama:
+  enabled: false
+  image: ollama/ollama:latest
+  persistence:
+    enabled: true
+    size: 100Gi
+  model: "gemma3:27b"
+  resources:
+    requests: {cpu: 2, memory: 16Gi}
+    limits:   {cpu: 8, memory: 64Gi, "nvidia.com/gpu": 1}
+
+# ── LLM backend (choose one) ────────────────────────────────────────
+# When ollama.enabled=true, the chart wires Argus to that automatically.
+# Otherwise:
+#   provider: "anthropic" | "openai_compatible"
+#   apiKey:    BYOK key
+#   baseUrl:   override (Core42 Inception, Together AI, etc.)
+llm:
+  provider: ""
+  apiKey: ""
+  baseUrl: ""
+  model: "claude-opus-4-7"
+
+# ── Ingress ─────────────────────────────────────────────────────────
+ingress:
+  enabled: false
+  className: nginx
+  hostname: argus.example.com
+  annotations: {}
+  tls:
+    - secretName: argus-tls
+      hosts:
+        - argus.example.com
+
+# ── ServiceAccount / RBAC ───────────────────────────────────────────
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: [ALL]
+  readOnlyRootFilesystem: false   # set true after migrating tmp dirs
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
