@@ -1382,3 +1382,91 @@ async def analyze_phishing(
         sender=body.sender, urls=body.urls,
     )
     return score.to_dict()
+
+
+# ── Adversary-emulation validation loop (P3 #3.5) ───────────────────
+
+
+@router.get("/adversary-emulation/availability")
+async def adversary_emulation_availability(analyst: AnalystUser):
+    """Surface Atomic Red Team + Caldera config state to the dashboard."""
+    from src.integrations.adversary_emulation import (
+        atomic_red_team_available,
+        caldera_configured,
+    )
+    return {
+        "atomic_red_team": atomic_red_team_available(),
+        "caldera": {"configured": caldera_configured()},
+    }
+
+
+@router.get("/adversary-emulation/atomic/techniques")
+async def adversary_emulation_atomic_techniques(analyst: AnalystUser):
+    from src.integrations.adversary_emulation import atomic_list_techniques
+    return {"techniques": atomic_list_techniques()}
+
+
+@router.get("/adversary-emulation/atomic/{technique_id}")
+async def adversary_emulation_atomic_tests(
+    technique_id: str, analyst: AnalystUser,
+):
+    from src.integrations.adversary_emulation import atomic_tests_for
+    tests = atomic_tests_for(technique_id)
+    return {
+        "technique_id": technique_id,
+        "tests": [t.to_dict() for t in tests],
+    }
+
+
+@router.get("/adversary-emulation/caldera/abilities")
+async def adversary_emulation_caldera_abilities(
+    analyst: AnalystUser, tactic: str | None = None,
+):
+    from src.integrations.adversary_emulation.caldera import list_abilities
+    r = await list_abilities(tactic=tactic)
+    return r.to_dict()
+
+
+@router.get("/adversary-emulation/caldera/operations")
+async def adversary_emulation_caldera_operations(analyst: AnalystUser):
+    from src.integrations.adversary_emulation.caldera import list_operations
+    r = await list_operations()
+    return r.to_dict()
+
+
+class CalderaStartOperationRequest(BaseModel):
+    adversary_id: str
+    group: str = "red"
+    name: str | None = None
+    planner: str = "atomic"
+    auto_close: bool = True
+
+
+@router.post("/adversary-emulation/caldera/operations")
+async def adversary_emulation_caldera_start(
+    body: CalderaStartOperationRequest, admin: AdminUser,
+):
+    """Start a Caldera operation. Admin-gated — this triggers attacker
+    behaviour on customer endpoints, so analysts can't kick it off."""
+    from src.integrations.adversary_emulation.caldera import start_operation
+    r = await start_operation(
+        adversary_id=body.adversary_id, group=body.group,
+        name=body.name, planner=body.planner, auto_close=body.auto_close,
+    )
+    return r.to_dict()
+
+
+class CoverageScoreRequest(BaseModel):
+    executed: dict[str, int]
+    detected: dict[str, int]
+
+
+@router.post("/adversary-emulation/coverage/score")
+async def adversary_emulation_coverage_score(
+    body: CoverageScoreRequest, analyst: AnalystUser,
+):
+    """Compute a per-technique coverage report from executed / detected
+    technique tallies. Pure compute — no DB writes."""
+    from src.integrations.adversary_emulation import coverage_score
+    report = coverage_score(body.executed or {}, body.detected or {})
+    return report.to_dict()

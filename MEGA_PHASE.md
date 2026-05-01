@@ -252,7 +252,7 @@ Sovereign deployment on KSA STC Cloud / UAE Core42 / Khazna *plus* native NCA-EC
 | | • Mimecast — secure email gateway API + URL Protect lists | | |
 | | • Abnormal Security — case enrichment + abuse-mailbox sync | | |
 | 3.4 | **Customer-facing OpenAPI 3.1 schema** + **Python SDK** + **JS/TS SDK** + per-tenant TAXII publish (so the customer's downstream Splunk ES / Anomali / ThreatConnect can subscribe to *Argus-as-a-feed*). Per-user feed subscriptions + filter rules. | 8d | 65 % dealbreaker; TAXII publish alone is RF's $150K/yr feature. |
-| 3.5 | **Adversary-emulation validation loop** — Atomic Red Team YAMLs + MITRE Caldera + Velociraptor agent. `threat_hunter_agent` runs Atomic tests against Velociraptor-managed endpoints; confirms detections fired in Wazuh / Suricata / customer SIEM; auto-generates a "detection coverage" score per ATT&CK technique. | 10d | Mandiant charges $$$ via consulting; we ship it as a premium SKU. |
+| 3.5 | **Adversary-emulation validation loop** — Atomic Red Team YAMLs + MITRE Caldera + Velociraptor agent. `threat_hunter_agent` runs Atomic tests against Velociraptor-managed endpoints; confirms detections fired in Wazuh / Suricata / customer SIEM; auto-generates a "detection coverage" score per ATT&CK technique. **DONE** — 14-test curated Atomic catalog + filesystem loader for full repo, Caldera 5.x REST client (read + start-operation, admin-gated), per-technique coverage scorer with covered/partial/gap status, 25 tests passing. | 10d | Mandiant charges $$$ via consulting; we ship it as a premium SKU. |
 | 3.6 | **Sandbox integrations** (4) | 10d | 70 % dealbreaker. |
 | | • CAPEv2 (open-source) — co-deployed; Argus submits samples + ingests reports | | |
 | | • Joe Sandbox Cloud — paid customer BYOK | | |
