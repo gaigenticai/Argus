@@ -654,6 +654,65 @@ async def sigma_translate(
     }
 
 
+@router.get("/sandbox/connectors")
+async def sandbox_connectors(analyst: AnalystUser):
+    """List every sandbox connector + config state (P3 #3.6)."""
+    from src.integrations.sandbox import list_available
+    return {"connectors": list_available()}
+
+
+@router.get("/sandbox/{name}/health")
+async def sandbox_health(name: str, analyst: AnalystUser):
+    from src.integrations.sandbox import get_connector
+
+    conn = get_connector(name)
+    if conn is None:
+        raise HTTPException(404, f"unknown sandbox connector {name!r}")
+    result = await conn.health_check()
+    return result.to_dict()
+
+
+class SandboxSubmitRequest(BaseModel):
+    filename: str
+    sample_b64: str
+
+
+@router.post("/sandbox/{name}/submit")
+async def sandbox_submit(
+    name: str,
+    body: SandboxSubmitRequest,
+    analyst: AnalystUser,
+):
+    import base64
+    from src.integrations.sandbox import get_connector
+
+    conn = get_connector(name)
+    if conn is None:
+        raise HTTPException(404, f"unknown sandbox connector {name!r}")
+    try:
+        sample = base64.b64decode(body.sample_b64, validate=False)
+    except Exception:
+        raise HTTPException(400, "sample_b64 is not valid base64")
+    result = await conn.submit_file(
+        sample_bytes=sample, filename=body.filename,
+    )
+    return result.to_dict()
+
+
+@router.get("/sandbox/{name}/report/{analysis_id}")
+async def sandbox_report(
+    name: str, analysis_id: str,
+    analyst: AnalystUser,
+):
+    from src.integrations.sandbox import get_connector
+
+    conn = get_connector(name)
+    if conn is None:
+        raise HTTPException(404, f"unknown sandbox connector {name!r}")
+    result = await conn.get_report(analysis_id)
+    return result.to_dict()
+
+
 @router.get("/forensics/availability")
 async def forensics_availability(analyst: AnalystUser):
     """Report which IR-workbench tools are available in this deployment
