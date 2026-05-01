@@ -654,6 +654,68 @@ async def sigma_translate(
     }
 
 
+@router.get("/email-gateway/connectors")
+async def email_gateway_connectors(analyst: AnalystUser):
+    """List every email-gateway connector + config state (P3 #3.3)."""
+    from src.integrations.email_gateway import list_available
+    return {"connectors": list_available()}
+
+
+@router.get("/email-gateway/{name}/health")
+async def email_gateway_health(name: str, analyst: AnalystUser):
+    from src.integrations.email_gateway import get_connector
+
+    conn = get_connector(name)
+    if conn is None:
+        raise HTTPException(404, f"unknown email-gateway connector {name!r}")
+    result = await conn.health_check()
+    return result.to_dict()
+
+
+@router.get("/email-gateway/{name}/threats")
+async def email_gateway_threats(
+    name: str,
+    analyst: AnalystUser,
+    since_iso: str | None = None,
+):
+    from src.integrations.email_gateway import get_connector
+
+    conn = get_connector(name)
+    if conn is None:
+        raise HTTPException(404, f"unknown email-gateway connector {name!r}")
+    result = await conn.fetch_threats(since_iso=since_iso)
+    return result.to_dict()
+
+
+class EmailBlocklistRequest(BaseModel):
+    items: list[dict]   # [{type, value, description?}, …]
+
+
+@router.post("/email-gateway/{name}/blocklist")
+async def email_gateway_blocklist(
+    name: str,
+    body: EmailBlocklistRequest,
+    analyst: AnalystUser,
+):
+    from src.integrations.email_gateway import (
+        EmailBlocklistItem,
+        get_connector,
+    )
+
+    conn = get_connector(name)
+    if conn is None:
+        raise HTTPException(404, f"unknown email-gateway connector {name!r}")
+    items = []
+    for d in body.items:
+        if d.get("type") and d.get("value"):
+            items.append(EmailBlocklistItem(
+                type=d["type"], value=d["value"],
+                description=d.get("description"),
+            ))
+    result = await conn.push_blocklist(items)
+    return result.to_dict()
+
+
 @router.get("/edr/connectors")
 async def edr_connectors(analyst: AnalystUser):
     """List every EDR connector + config state (P3 #3.2)."""
