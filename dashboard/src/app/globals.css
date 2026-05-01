@@ -128,6 +128,11 @@
 html, body {
   background: var(--color-canvas);
   color: var(--color-ink);
+  /* Force native form controls (select dropdown, date picker, scrollbars,
+     dialogs) to render in light mode regardless of the operator's OS
+     preference. Without this, macOS Dark Mode renders <select> popups
+     with a dark background that clashes with the warm-cream theme. */
+  color-scheme: light;
 }
 
 body {
@@ -136,6 +141,30 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+/* Native <select> options — rendered by the OS. ``color-scheme: light``
+   on the root forces light system colors; we additionally style the
+   inline options for the cases (Chromium / Edge) where the OS allows
+   per-element overrides. Safari ignores option styling but uses
+   color-scheme reliably. */
+select option {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+}
+select option:checked,
+select option:hover {
+  background: var(--color-accent-bg);
+  color: var(--color-ink);
+}
+
+/* Form-control focus ring — accent-tinted, no jarring blue default */
+select:focus,
+input:focus,
+textarea:focus,
+button:focus-visible {
+  outline: 2px solid rgba(255, 79, 0, 0.35);
+  outline-offset: 1px;
 }
 
 h1, h2, h3, h4, h5, h6 {
