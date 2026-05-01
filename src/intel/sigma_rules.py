@@ -8,7 +8,7 @@ Two surfaces:
 
   :func:`translate_rule` — take a Sigma YAML and convert it to every
   registered SIEM backend in parallel: Splunk SPL · Elastic Lucene ·
-  Elastic ES|QL · Microsoft Sentinel KQL · Microsoft 365 Defender KQL
+  Elastic EQL · Microsoft Sentinel KQL · Microsoft 365 Defender KQL
   · IBM QRadar AQL.
 
 Usage from the API:
