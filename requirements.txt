@@ -29,6 +29,17 @@ reportlab>=4.1.0
 arabic-reshaper>=3.0.0
 python-bidi>=0.6.0
 
+# Sigma rule generation + multi-SIEM translation (P2 #2.3). pysigma
+# pure-Python; backend modules pinned to stable releases. Each backend
+# emits one of Splunk SPL / Elastic Lucene+ES|QL / KQL (Sentinel,
+# M365Defender) / IBM QRadar AQL.
+pysigma>=0.11.0
+pysigma-backend-splunk>=1.1.0
+pysigma-backend-elasticsearch>=1.1.0
+pysigma-backend-kusto>=0.4.0
+pysigma-backend-microsoft365defender>=0.3.0
+pysigma-backend-qradar-aql>=0.3.0
+
 # Notifications
 aiosmtplib>=3.0.0
 

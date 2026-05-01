@@ -573,6 +573,87 @@ class PhishingAnalyzeRequest(BaseModel):
     urls: list[str] = []
 
 
+class SigmaFromIocRequest(BaseModel):
+    """Generate + translate a Sigma rule from a single IOC (P2 #2.3)."""
+    ioc_value: str
+    ioc_type: str
+    technique_id: str | None = None
+    title: str | None = None
+    description: str | None = None
+    rule_id: str | None = None
+
+
+class SigmaFromTechniqueRequest(BaseModel):
+    technique_id: str
+    selection: dict[str, str] | None = None
+    title: str | None = None
+    description: str | None = None
+    rule_id: str | None = None
+
+
+class SigmaTranslateRequest(BaseModel):
+    sigma_yaml: str
+
+
+@router.get("/sigma/backends")
+async def sigma_backends(analyst: AnalystUser):
+    """List the SIEM-dialect backends available in this deployment."""
+    from src.intel.sigma_rules import available_backends
+    return {"backends": available_backends()}
+
+
+@router.post("/sigma/from-ioc")
+async def sigma_from_ioc(
+    body: SigmaFromIocRequest,
+    analyst: AnalystUser,
+):
+    """Build a Sigma rule from an IOC and translate to every backend."""
+    from src.intel.sigma_rules import translate_for_ioc
+
+    yaml, results = translate_for_ioc(
+        ioc_value=body.ioc_value, ioc_type=body.ioc_type,
+        technique_id=body.technique_id,
+        title=body.title, description=body.description,
+        rule_id=body.rule_id,
+    )
+    return {
+        "sigma_yaml": yaml,
+        "translations": [r.to_dict() for r in results],
+    }
+
+
+@router.post("/sigma/from-technique")
+async def sigma_from_technique(
+    body: SigmaFromTechniqueRequest,
+    analyst: AnalystUser,
+):
+    """Build a Sigma rule from a MITRE technique and translate."""
+    from src.intel.sigma_rules import translate_for_technique
+
+    yaml, results = translate_for_technique(
+        technique_id=body.technique_id, selection=body.selection,
+        title=body.title, description=body.description,
+        rule_id=body.rule_id,
+    )
+    return {
+        "sigma_yaml": yaml,
+        "translations": [r.to_dict() for r in results],
+    }
+
+
+@router.post("/sigma/translate")
+async def sigma_translate(
+    body: SigmaTranslateRequest,
+    analyst: AnalystUser,
+):
+    """Translate an arbitrary Sigma YAML rule to every backend."""
+    from src.intel.sigma_rules import translate_rule
+
+    return {
+        "translations": [r.to_dict() for r in translate_rule(body.sigma_yaml)],
+    }
+
+
 class CIRCLLookupRequest(BaseModel):
     """IOC enrichment via CIRCL public APIs (P2 #2.8). Provide one of
     ``hash`` / ``domain`` / ``ip`` per request — multiple ignored."""
