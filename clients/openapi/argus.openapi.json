@@ -3465,6 +3465,46 @@
         "title": "BrandTermResponse",
         "type": "object"
       },
+      "BreachSearchEmailRequest": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "providers": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Providers"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "BreachSearchEmailRequest",
+        "type": "object"
+      },
+      "BreachSearchPasswordRequest": {
+        "properties": {
+          "sha1_hash": {
+            "title": "Sha1 Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sha1_hash"
+        ],
+        "title": "BreachSearchPasswordRequest",
+        "type": "object"
+      },
       "BulkImportRequest": {
         "properties": {
           "organization_id": {
@@ -3597,6 +3637,99 @@
           "found"
         ],
         "title": "BulkSearchResult",
+        "type": "object"
+      },
+      "CIRCLLookupRequest": {
+        "description": "IOC enrichment via CIRCL public APIs (P2 #2.8). Provide one of\n``hash`` / ``domain`` / ``ip`` per request \u2014 multiple ignored.",
+        "properties": {
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain"
+          },
+          "hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hash"
+          },
+          "ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ip"
+          }
+        },
+        "title": "CIRCLLookupRequest",
+        "type": "object"
+      },
+      "CalderaStartOperationRequest": {
+        "properties": {
+          "adversary_id": {
+            "title": "Adversary Id",
+            "type": "string"
+          },
+          "auto_close": {
+            "default": true,
+            "title": "Auto Close",
+            "type": "boolean"
+          },
+          "group": {
+            "default": "red",
+            "title": "Group",
+            "type": "string"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "planner": {
+            "default": "atomic",
+            "title": "Planner",
+            "type": "string"
+          }
+        },
+        "required": [
+          "adversary_id"
+        ],
+        "title": "CalderaStartOperationRequest",
+        "type": "object"
+      },
+      "CapaExtractRequest": {
+        "description": "Submit a base64-encoded PE / ELF / Mach-O for capa analysis.",
+        "properties": {
+          "sample_b64": {
+            "title": "Sample B64",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sample_b64"
+        ],
+        "title": "CapaExtractRequest",
         "type": "object"
       },
       "CardLeakageResponse": {
@@ -5180,6 +5313,192 @@
         "title": "CompletionResult",
         "type": "object"
       },
+      "ComplianceExportRequest": {
+        "properties": {
+          "format": {
+            "$ref": "#/components/schemas/ExportFormat",
+            "default": "pdf"
+          },
+          "framework_code": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Framework Code",
+            "type": "string"
+          },
+          "language_mode": {
+            "$ref": "#/components/schemas/ExportLanguageMode",
+            "default": "en"
+          },
+          "period_from": {
+            "format": "date-time",
+            "title": "Period From",
+            "type": "string"
+          },
+          "period_to": {
+            "format": "date-time",
+            "title": "Period To",
+            "type": "string"
+          }
+        },
+        "required": [
+          "framework_code",
+          "period_from",
+          "period_to"
+        ],
+        "title": "ComplianceExportRequest",
+        "type": "object"
+      },
+      "ComplianceExportResponse": {
+        "properties": {
+          "byte_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Byte Size"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "format": {
+            "title": "Format",
+            "type": "string"
+          },
+          "framework_code": {
+            "title": "Framework Code",
+            "type": "string"
+          },
+          "framework_id": {
+            "format": "uuid",
+            "title": "Framework Id",
+            "type": "string"
+          },
+          "framework_name_en": {
+            "title": "Framework Name En",
+            "type": "string"
+          },
+          "hash_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hash Sha256"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "language_mode": {
+            "title": "Language Mode",
+            "type": "string"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "period_from": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period From"
+          },
+          "period_to": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period To"
+          },
+          "requested_by_user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Requested By User Id"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "organization_id",
+          "framework_id",
+          "framework_code",
+          "framework_name_en",
+          "requested_by_user_id",
+          "language_mode",
+          "format",
+          "period_from",
+          "period_to",
+          "status",
+          "hash_sha256",
+          "byte_size",
+          "error_message",
+          "created_at",
+          "completed_at",
+          "expires_at"
+        ],
+        "title": "ComplianceExportResponse",
+        "type": "object"
+      },
       "ConfusionEntry": {
         "properties": {
           "corrected_category": {
@@ -5448,6 +5767,30 @@
           "started_at"
         ],
         "title": "CopilotRunDetail",
+        "type": "object"
+      },
+      "CoverageScoreRequest": {
+        "properties": {
+          "detected": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Detected",
+            "type": "object"
+          },
+          "executed": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Executed",
+            "type": "object"
+          }
+        },
+        "required": [
+          "executed",
+          "detected"
+        ],
+        "title": "CoverageScoreRequest",
         "type": "object"
       },
       "CrawlerTargetCreate": {
@@ -5911,6 +6254,25 @@
           "count"
         ],
         "title": "DailyActivity",
+        "type": "object"
+      },
+      "DeciderClassifyRequest": {
+        "description": "Free-text \u2192 MITRE technique mapping. Pure compute.",
+        "properties": {
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "top_n": {
+            "default": 5,
+            "title": "Top N",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "DeciderClassifyRequest",
         "type": "object"
       },
       "DeleteRequest": {
@@ -6811,6 +7173,53 @@
         "title": "DmarcReportResponse",
         "type": "object"
       },
+      "EdrIocPushRequest": {
+        "properties": {
+          "iocs": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Iocs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "iocs"
+        ],
+        "title": "EdrIocPushRequest",
+        "type": "object"
+      },
+      "EdrIsolateRequest": {
+        "properties": {
+          "host_id": {
+            "title": "Host Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "host_id"
+        ],
+        "title": "EdrIsolateRequest",
+        "type": "object"
+      },
+      "EmailBlocklistRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "EmailBlocklistRequest",
+        "type": "object"
+      },
       "EndpointCreate": {
         "properties": {
           "enabled": {
@@ -7418,6 +7827,23 @@
         ],
         "title": "EvidenceResponse",
         "type": "object"
+      },
+      "ExportFormat": {
+        "enum": [
+          "pdf",
+          "json"
+        ],
+        "title": "ExportFormat",
+        "type": "string"
+      },
+      "ExportLanguageMode": {
+        "enum": [
+          "en",
+          "ar",
+          "bilingual"
+        ],
+        "title": "ExportLanguageMode",
+        "type": "string"
       },
       "ExposureCategory": {
         "enum": [
@@ -8047,6 +8473,289 @@
         "title": "FeedResponse",
         "type": "object"
       },
+      "FeedSubscriptionChannel": {
+        "description": "A delivery channel attached to a subscription.",
+        "properties": {
+          "address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Address"
+          },
+          "secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Secret"
+          },
+          "type": {
+            "description": "One of 'webhook', 'email', 'slack'.",
+            "title": "Type",
+            "type": "string"
+          },
+          "url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "FeedSubscriptionChannel",
+        "type": "object"
+      },
+      "FeedSubscriptionCreate": {
+        "properties": {
+          "active": {
+            "default": true,
+            "title": "Active",
+            "type": "boolean"
+          },
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/FeedSubscriptionChannel"
+            },
+            "title": "Channels",
+            "type": "array"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "filter": {
+            "additionalProperties": true,
+            "title": "Filter",
+            "type": "object"
+          },
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "FeedSubscriptionCreate",
+        "type": "object"
+      },
+      "FeedSubscriptionResponse": {
+        "properties": {
+          "active": {
+            "title": "Active",
+            "type": "boolean"
+          },
+          "channels": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Channels",
+            "type": "array"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "filter": {
+            "additionalProperties": true,
+            "title": "Filter",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "last_dispatched_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Dispatched At"
+          },
+          "last_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Error"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "organization_id": {
+            "format": "uuid",
+            "title": "Organization Id",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          },
+          "user_id": {
+            "format": "uuid",
+            "title": "User Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "organization_id",
+          "name",
+          "description",
+          "filter",
+          "channels",
+          "active",
+          "last_dispatched_at",
+          "last_error",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "FeedSubscriptionResponse",
+        "type": "object"
+      },
+      "FeedSubscriptionTestRequest": {
+        "properties": {
+          "alert": {
+            "additionalProperties": true,
+            "title": "Alert",
+            "type": "object"
+          }
+        },
+        "required": [
+          "alert"
+        ],
+        "title": "FeedSubscriptionTestRequest",
+        "type": "object"
+      },
+      "FeedSubscriptionTestResponse": {
+        "properties": {
+          "matches": {
+            "title": "Matches",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "matches"
+        ],
+        "title": "FeedSubscriptionTestResponse",
+        "type": "object"
+      },
+      "FeedSubscriptionUpdate": {
+        "properties": {
+          "active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Active"
+          },
+          "channels": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/FeedSubscriptionChannel"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Channels"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "filter": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Filter"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "title": "FeedSubscriptionUpdate",
+        "type": "object"
+      },
       "FeedSummary": {
         "properties": {
           "feeds": {
@@ -8438,6 +9147,79 @@
         ],
         "title": "FindingState",
         "type": "string"
+      },
+      "FrameworkSummary": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "description_ar": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description Ar"
+          },
+          "description_en": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description En"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name_ar": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name Ar"
+          },
+          "name_en": {
+            "title": "Name En",
+            "type": "string"
+          },
+          "source_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Url"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "code",
+          "name_en",
+          "version"
+        ],
+        "title": "FrameworkSummary",
+        "type": "object"
       },
       "FraudChannel": {
         "enum": [
@@ -10363,6 +11145,64 @@
         "title": "InvestigationListItem",
         "type": "object"
       },
+      "KestrelExecuteRequest": {
+        "properties": {
+          "script": {
+            "title": "Script",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "default": 120,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "script"
+        ],
+        "title": "KestrelExecuteRequest",
+        "type": "object"
+      },
+      "KestrelRenderRequest": {
+        "properties": {
+          "iocs": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "title": "Iocs",
+            "type": "array"
+          },
+          "source_name": {
+            "title": "Source Name",
+            "type": "string"
+          },
+          "technique_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Technique Id"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "source_name",
+          "iocs"
+        ],
+        "title": "KestrelRenderRequest",
+        "type": "object"
+      },
       "LeakageState": {
         "enum": [
           "open",
@@ -11543,6 +12383,40 @@
         "title": "OnboardingTransition",
         "type": "object"
       },
+      "OpenCTIProjectIocRequest": {
+        "properties": {
+          "actor_alias": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Alias"
+          },
+          "confidence": {
+            "default": 75,
+            "title": "Confidence",
+            "type": "integer"
+          },
+          "ioc_type": {
+            "title": "Ioc Type",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ioc_type",
+          "value"
+        ],
+        "title": "OpenCTIProjectIocRequest",
+        "type": "object"
+      },
       "OrgCreate": {
         "properties": {
           "domains": {
@@ -11721,6 +12595,36 @@
           }
         },
         "title": "OrgUpdate",
+        "type": "object"
+      },
+      "PhishingAnalyzeRequest": {
+        "description": "Free-form message scoring \u2014 no DB lookups, no auth-context\nmutation. Pass whatever you have; missing fields contribute 0\nconfidence to the result.",
+        "properties": {
+          "body": {
+            "default": "",
+            "title": "Body",
+            "type": "string"
+          },
+          "sender": {
+            "default": "",
+            "title": "Sender",
+            "type": "string"
+          },
+          "subject": {
+            "default": "",
+            "title": "Subject",
+            "type": "string"
+          },
+          "urls": {
+            "default": [],
+            "items": {
+              "type": "string"
+            },
+            "title": "Urls",
+            "type": "array"
+          }
+        },
+        "title": "PhishingAnalyzeRequest",
         "type": "object"
       },
       "PostureResponse": {
@@ -13428,6 +14332,24 @@
         "title": "RuleUpdate",
         "type": "object"
       },
+      "SandboxSubmitRequest": {
+        "properties": {
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "sample_b64": {
+            "title": "Sample B64",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "sample_b64"
+        ],
+        "title": "SandboxSubmitRequest",
+        "type": "object"
+      },
       "ScanRequest": {
         "properties": {
           "asset_id": {
@@ -13740,6 +14662,160 @@
         "title": "SeverityLevel",
         "type": "string"
       },
+      "SiemPushEventsRequest": {
+        "description": "Push a batch of pre-shaped events to a SIEM connector. The dict\nshape is the connector's responsibility to translate.",
+        "properties": {
+          "events": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Events",
+            "type": "array"
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "title": "SiemPushEventsRequest",
+        "type": "object"
+      },
+      "SigmaFromIocRequest": {
+        "description": "Generate + translate a Sigma rule from a single IOC (P2 #2.3).",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "ioc_type": {
+            "title": "Ioc Type",
+            "type": "string"
+          },
+          "ioc_value": {
+            "title": "Ioc Value",
+            "type": "string"
+          },
+          "rule_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Id"
+          },
+          "technique_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Technique Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "ioc_value",
+          "ioc_type"
+        ],
+        "title": "SigmaFromIocRequest",
+        "type": "object"
+      },
+      "SigmaFromTechniqueRequest": {
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "rule_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rule Id"
+          },
+          "selection": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Selection"
+          },
+          "technique_id": {
+            "title": "Technique Id",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "required": [
+          "technique_id"
+        ],
+        "title": "SigmaFromTechniqueRequest",
+        "type": "object"
+      },
+      "SigmaTranslateRequest": {
+        "properties": {
+          "sigma_yaml": {
+            "title": "Sigma Yaml",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sigma_yaml"
+        ],
+        "title": "SigmaTranslateRequest",
+        "type": "object"
+      },
       "SlaBreachResponse": {
         "properties": {
           "case_id": {
@@ -13892,6 +14968,23 @@
           "remediation_minutes"
         ],
         "title": "SlaPolicyUpsert",
+        "type": "object"
+      },
+      "SoarPushEventsRequest": {
+        "properties": {
+          "events": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Events",
+            "type": "array"
+          }
+        },
+        "required": [
+          "events"
+        ],
+        "title": "SoarPushEventsRequest",
         "type": "object"
       },
       "SocialAccountCreate": {
@@ -14692,6 +15785,65 @@
           "data"
         ],
         "title": "StepUpdate",
+        "type": "object"
+      },
+      "StixFromIocRequest": {
+        "properties": {
+          "ioc_type": {
+            "title": "Ioc Type",
+            "type": "string"
+          },
+          "ioc_value": {
+            "title": "Ioc Value",
+            "type": "string"
+          },
+          "modules": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modules"
+          }
+        },
+        "required": [
+          "ioc_type",
+          "ioc_value"
+        ],
+        "title": "StixFromIocRequest",
+        "type": "object"
+      },
+      "StixTranslateRequest": {
+        "properties": {
+          "modules": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Modules"
+          },
+          "stix_pattern": {
+            "title": "Stix Pattern",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stix_pattern"
+        ],
+        "title": "StixTranslateRequest",
         "type": "object"
       },
       "SubmitTakedownPayload": {
@@ -15511,6 +16663,56 @@
           "updated_at"
         ],
         "title": "TechniqueResponse",
+        "type": "object"
+      },
+      "TelegramAnalyzeRequest": {
+        "properties": {
+          "channel": {
+            "default": "@unknown",
+            "title": "Channel",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "title": "TelegramAnalyzeRequest",
+        "type": "object"
+      },
+      "TelegramFetchRequest": {
+        "properties": {
+          "channels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Channels",
+            "type": "array"
+          },
+          "limit_per_channel": {
+            "default": 50,
+            "title": "Limit Per Channel",
+            "type": "integer"
+          },
+          "since_message_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Since Message Id"
+          }
+        },
+        "required": [
+          "channels"
+        ],
+        "title": "TelegramFetchRequest",
         "type": "object"
       },
       "TemplateCreate": {
@@ -16868,6 +18070,38 @@
         "title": "ValidationReport",
         "type": "object"
       },
+      "VelociraptorScheduleRequest": {
+        "properties": {
+          "artifact": {
+            "title": "Artifact",
+            "type": "string"
+          },
+          "client_id": {
+            "title": "Client Id",
+            "type": "string"
+          },
+          "parameters": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parameters"
+          }
+        },
+        "required": [
+          "client_id",
+          "artifact"
+        ],
+        "title": "VelociraptorScheduleRequest",
+        "type": "object"
+      },
       "VendorOnboardingStage": {
         "enum": [
           "invited",
@@ -17079,6 +18313,43 @@
         "title": "VipResponse",
         "type": "object"
       },
+      "VolatilityRunRequest": {
+        "properties": {
+          "extra_args": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extra Args"
+          },
+          "image_path": {
+            "title": "Image Path",
+            "type": "string"
+          },
+          "plugin": {
+            "title": "Plugin",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "default": 1800,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "plugin",
+          "image_path"
+        ],
+        "title": "VolatilityRunRequest",
+        "type": "object"
+      },
       "WeeklyAccuracy": {
         "properties": {
           "accuracy": {
@@ -17216,6 +18487,25 @@
           "rationale"
         ],
         "title": "WizardResponse",
+        "type": "object"
+      },
+      "YaraScanRequest": {
+        "description": "yara-x scan over a base64-encoded blob (P2 #2.10).",
+        "properties": {
+          "rules_text": {
+            "title": "Rules Text",
+            "type": "string"
+          },
+          "sample_b64": {
+            "title": "Sample B64",
+            "type": "string"
+          }
+        },
+        "required": [
+          "rules_text",
+          "sample_b64"
+        ],
+        "title": "YaraScanRequest",
         "type": "object"
       },
       "src__api__routes__assets__AssetCreate": {
@@ -18395,6 +19685,64 @@
         ]
       }
     },
+    "/api/v1/actors/{actor_id}/navigator-layer": {
+      "get": {
+        "description": "Download a MITRE ATT&CK Navigator v4.5 layer for this actor.\n\nHighlights every technique in the actor's ``known_ttps`` so the\nanalyst can overlay it against their detection-coverage map in the\nhosted Navigator (https://mitre-attack.github.io/attack-navigator/)\nor a self-hosted instance.",
+        "operationId": "get_actor_navigator_layer_api_v1_actors__actor_id__navigator_layer_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "actor_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Actor Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "matrix",
+            "required": false,
+            "schema": {
+              "default": "enterprise",
+              "pattern": "^(enterprise|ics)$",
+              "title": "Matrix",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Actor Navigator Layer",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
     "/api/v1/actors/{actor_id}/timeline": {
       "get": {
         "description": "Chronological timeline of all sightings for an actor.",
@@ -19538,6 +20886,123 @@
           }
         ],
         "summary": "Update Alert",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/alerts/{alert_id}/attribution": {
+      "get": {
+        "description": "Rank candidate threat actors for this alert with confidence\nbreakdowns (P2 #2.9). Pure read-only \u2014 no DB writes.",
+        "operationId": "get_alert_attribution_api_v1_alerts__alert_id__attribution_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "alert_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Alert Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "maximum": 50,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Alert Attribution",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/alerts/{alert_id}/navigator-layer": {
+      "get": {
+        "description": "Download a MITRE ATT&CK Navigator v4.5 layer for this alert.\n\nCombines (a) every ``AttackTechniqueAttachment`` row on the alert\nwith (b) the curated ``known_ttps`` of every threat actor sighted\non the alert. The layer's per-square comments preserve provenance\nso the analyst sees which agent / actor / rule attached each\ntechnique.",
+        "operationId": "get_alert_navigator_layer_api_v1_alerts__alert_id__navigator_layer_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "alert_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Alert Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "matrix",
+            "required": false,
+            "schema": {
+              "default": "enterprise",
+              "pattern": "^(enterprise|ics)$",
+              "title": "Matrix",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Alert Navigator Layer",
         "tags": [
           "Threat Intelligence"
         ]
@@ -22990,6 +24455,248 @@
         ]
       }
     },
+    "/api/v1/compliance/exports": {
+      "get": {
+        "description": "List exports for the current tenant, newest first.",
+        "operationId": "list_exports_api_v1_compliance_exports_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "framework_code",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Framework Code"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ComplianceExportResponse"
+                  },
+                  "title": "Response List Exports Api V1 Compliance Exports Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Exports",
+        "tags": [
+          "Compliance"
+        ]
+      },
+      "post": {
+        "description": "Queue a Compliance Evidence Pack export.",
+        "operationId": "create_export_api_v1_compliance_exports_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComplianceExportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComplianceExportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Export",
+        "tags": [
+          "Compliance"
+        ]
+      }
+    },
+    "/api/v1/compliance/exports/{export_id}": {
+      "get": {
+        "operationId": "get_export_api_v1_compliance_exports__export_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Export Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComplianceExportResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Export",
+        "tags": [
+          "Compliance"
+        ]
+      }
+    },
+    "/api/v1/compliance/exports/{export_id}/download": {
+      "get": {
+        "description": "Stream the rendered export file.",
+        "operationId": "download_export_api_v1_compliance_exports__export_id__download_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "export_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Export Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Download Export",
+        "tags": [
+          "Compliance"
+        ]
+      }
+    },
+    "/api/v1/compliance/frameworks": {
+      "get": {
+        "description": "List active compliance frameworks available to the tenant.",
+        "operationId": "list_frameworks_api_v1_compliance_frameworks_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FrameworkSummary"
+                  },
+                  "title": "Response List Frameworks Api V1 Compliance Frameworks Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Frameworks",
+        "tags": [
+          "Compliance"
+        ]
+      }
+    },
     "/api/v1/copilot-runs/{run_id}": {
       "get": {
         "operationId": "get_copilot_run_api_v1_copilot_runs__run_id__get",
@@ -24670,6 +26377,282 @@
         ]
       }
     },
+    "/api/v1/feed-subscriptions": {
+      "get": {
+        "operationId": "list_subscriptions_api_v1_feed_subscriptions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/FeedSubscriptionResponse"
+                  },
+                  "title": "Response List Subscriptions Api V1 Feed Subscriptions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Subscriptions",
+        "tags": [
+          "Operations"
+        ]
+      },
+      "post": {
+        "operationId": "create_subscription_api_v1_feed_subscriptions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedSubscriptionCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedSubscriptionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Subscription",
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
+    "/api/v1/feed-subscriptions/{sub_id}": {
+      "delete": {
+        "operationId": "delete_subscription_api_v1_feed_subscriptions__sub_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sub_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Sub Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Delete Subscription",
+        "tags": [
+          "Operations"
+        ]
+      },
+      "get": {
+        "operationId": "get_subscription_api_v1_feed_subscriptions__sub_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sub_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Sub Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedSubscriptionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Subscription",
+        "tags": [
+          "Operations"
+        ]
+      },
+      "patch": {
+        "operationId": "update_subscription_api_v1_feed_subscriptions__sub_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sub_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Sub Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedSubscriptionUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedSubscriptionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Subscription",
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
+    "/api/v1/feed-subscriptions/{sub_id}/test": {
+      "post": {
+        "description": "Dry-run a sample alert payload against this subscription's filter.\nNo dispatch happens \u2014 just tells the SDK whether the filter would\nhave matched.",
+        "operationId": "test_subscription_api_v1_feed_subscriptions__sub_id__test_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sub_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Sub Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedSubscriptionTestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedSubscriptionTestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Test Subscription",
+        "tags": [
+          "Operations"
+        ]
+      }
+    },
     "/api/v1/feedback/": {
       "get": {
         "description": "List all feedback entries with optional filters.",
@@ -25715,6 +27698,468 @@
         ]
       }
     },
+    "/api/v1/intel/adversary-emulation/atomic/techniques": {
+      "get": {
+        "operationId": "adversary_emulation_atomic_techniques_api_v1_intel_adversary_emulation_atomic_techniques_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Adversary Emulation Atomic Techniques",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/adversary-emulation/atomic/{technique_id}": {
+      "get": {
+        "operationId": "adversary_emulation_atomic_tests_api_v1_intel_adversary_emulation_atomic__technique_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "technique_id",
+            "required": true,
+            "schema": {
+              "title": "Technique Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Adversary Emulation Atomic Tests",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/adversary-emulation/availability": {
+      "get": {
+        "description": "Surface Atomic Red Team + Caldera config state to the dashboard.",
+        "operationId": "adversary_emulation_availability_api_v1_intel_adversary_emulation_availability_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Adversary Emulation Availability",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/adversary-emulation/caldera/abilities": {
+      "get": {
+        "operationId": "adversary_emulation_caldera_abilities_api_v1_intel_adversary_emulation_caldera_abilities_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "tactic",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tactic"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Adversary Emulation Caldera Abilities",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/adversary-emulation/caldera/operations": {
+      "get": {
+        "operationId": "adversary_emulation_caldera_operations_api_v1_intel_adversary_emulation_caldera_operations_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Adversary Emulation Caldera Operations",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      },
+      "post": {
+        "description": "Start a Caldera operation. Admin-gated \u2014 this triggers attacker\nbehaviour on customer endpoints, so analysts can't kick it off.",
+        "operationId": "adversary_emulation_caldera_start_api_v1_intel_adversary_emulation_caldera_operations_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalderaStartOperationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Adversary Emulation Caldera Start",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/adversary-emulation/coverage/score": {
+      "post": {
+        "description": "Compute a per-technique coverage report from executed / detected\ntechnique tallies. Pure compute \u2014 no DB writes.",
+        "operationId": "adversary_emulation_coverage_score_api_v1_intel_adversary_emulation_coverage_score_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CoverageScoreRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Adversary Emulation Coverage Score",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/breach/providers": {
+      "get": {
+        "description": "List every breach-credential provider + config state (P3 #3.9).",
+        "operationId": "breach_providers_api_v1_intel_breach_providers_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Breach Providers",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/breach/search/email": {
+      "post": {
+        "description": "Fan-out email lookup across configured breach providers.",
+        "operationId": "breach_search_email_api_v1_intel_breach_search_email_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BreachSearchEmailRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Breach Search Email",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/breach/search/password": {
+      "post": {
+        "description": "HIBP k-anonymity password lookup. Only the first 5 chars of the\nSHA-1 leave Argus.",
+        "operationId": "breach_search_password_api_v1_intel_breach_search_password_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BreachSearchPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Breach Search Password",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/capa/extract": {
+      "post": {
+        "operationId": "capa_extract_api_v1_intel_capa_extract_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CapaExtractRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Capa Extract",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/circl/enrich": {
+      "post": {
+        "description": "Run CIRCL hashlookup / Passive DNS / Passive SSL on the supplied\nIOC and return the classification + records. pDNS and Passive SSL\nrequire ARGUS_CIRCL_USERNAME / _PASSWORD; the wrappers no-op\nsilently when creds are absent so the route remains usable for\nhash lookups against the anonymous endpoint.",
+        "operationId": "circl_enrich_api_v1_intel_circl_enrich_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CIRCLLookupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Circl Enrich",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
     "/api/v1/intel/cves": {
       "get": {
         "operationId": "list_cves_api_v1_intel_cves_get",
@@ -25855,6 +28300,593 @@
           }
         ],
         "summary": "Get Cve",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/decider/classify": {
+      "post": {
+        "description": "Run the curated CISA-Decider-style classifier (P2 #2.2) against\narbitrary text and return ranked technique hits with confidence\nscores and the keywords that matched. Pure compute, analyst-gated.",
+        "operationId": "decider_classify_api_v1_intel_decider_classify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeciderClassifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Decider Classify",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/edr/connectors": {
+      "get": {
+        "description": "List every EDR connector + config state (P3 #3.2).",
+        "operationId": "edr_connectors_api_v1_intel_edr_connectors_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Edr Connectors",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/edr/{name}/health": {
+      "get": {
+        "operationId": "edr_health_api_v1_intel_edr__name__health_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Edr Health",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/edr/{name}/iocs/push": {
+      "post": {
+        "description": "Admin-gated \u2014 pushes IOCs into the customer's EDR vendor\n(CrowdStrike / SentinelOne / MDE) blocklist where they may\nauto-block / quarantine endpoints. C6: this is a vendor-side\nproduction change, not analyst-grade.",
+        "operationId": "edr_push_iocs_api_v1_intel_edr__name__iocs_push_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EdrIocPushRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Edr Push Iocs",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/edr/{name}/isolate": {
+      "post": {
+        "description": "Admin-gated \u2014 host isolation kicks an endpoint off the network\n(CrowdStrike contain / S1 disconnect / MDE isolate). High-blast\nradius; C6 says analysts cannot trigger this.",
+        "operationId": "edr_isolate_api_v1_intel_edr__name__isolate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EdrIsolateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Edr Isolate",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/email-gateway/connectors": {
+      "get": {
+        "description": "List every email-gateway connector + config state (P3 #3.3).",
+        "operationId": "email_gateway_connectors_api_v1_intel_email_gateway_connectors_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Email Gateway Connectors",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/email-gateway/{name}/blocklist": {
+      "post": {
+        "description": "Admin-gated \u2014 pushes a deny-list entry into the customer's mail\ngateway, which is a production-impacting change.",
+        "operationId": "email_gateway_blocklist_api_v1_intel_email_gateway__name__blocklist_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailBlocklistRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Email Gateway Blocklist",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/email-gateway/{name}/health": {
+      "get": {
+        "operationId": "email_gateway_health_api_v1_intel_email_gateway__name__health_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Email Gateway Health",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/email-gateway/{name}/threats": {
+      "get": {
+        "operationId": "email_gateway_threats_api_v1_intel_email_gateway__name__threats_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since_iso",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since Iso"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Email Gateway Threats",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/forensics/availability": {
+      "get": {
+        "description": "Report which IR-workbench tools are available in this deployment\n(P3 #3.11).",
+        "operationId": "forensics_availability_api_v1_intel_forensics_availability_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Forensics Availability",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/forensics/velociraptor/clients": {
+      "get": {
+        "operationId": "forensics_velociraptor_clients_api_v1_intel_forensics_velociraptor_clients_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "search",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Search",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Forensics Velociraptor Clients",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/forensics/velociraptor/schedule": {
+      "post": {
+        "description": "Admin-gated \u2014 schedules a Velociraptor artifact (VQL) on a live\ncustomer endpoint. Same blast-radius class as Caldera operations,\nso we mirror that gating.",
+        "operationId": "forensics_velociraptor_schedule_api_v1_intel_forensics_velociraptor_schedule_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VelociraptorScheduleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Forensics Velociraptor Schedule",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/forensics/volatility/run": {
+      "post": {
+        "description": "Admin-gated \u2014 shells out to the host's vol3 binary against an\narbitrary absolute file path supplied by the caller. Allowing an\nanalyst to drive subprocess + arbitrary file-read of host paths is\na C6 escalation; admin gating is the floor.",
+        "operationId": "forensics_volatility_run_api_v1_intel_forensics_volatility_run_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/VolatilityRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Forensics Volatility Run",
         "tags": [
           "Threat Intelligence"
         ]
@@ -26055,6 +29087,1224 @@
           }
         ],
         "summary": "Change Hardening State",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/kestrel/availability": {
+      "get": {
+        "description": "Report whether the Kestrel CLI / module is available in this\ndeployment so the dashboard can grey out the \"Run hunt\" button\nwhen only the script-rendering path is usable.",
+        "operationId": "kestrel_availability_api_v1_intel_kestrel_availability_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Kestrel Availability",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/kestrel/execute": {
+      "post": {
+        "description": "Run a Kestrel hunt script. Returns ``available=False`` when\nKestrel is not installed; the analyst can still copy the script.",
+        "operationId": "kestrel_execute_api_v1_intel_kestrel_execute_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KestrelExecuteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Kestrel Execute",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/kestrel/render": {
+      "post": {
+        "description": "Compose a Kestrel hunt script \u2014 pure function, works regardless\nof whether Kestrel is installed. The output script is the durable\ncase artefact.",
+        "operationId": "kestrel_render_api_v1_intel_kestrel_render_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KestrelRenderRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Kestrel Render",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/misp/availability": {
+      "get": {
+        "operationId": "misp_availability_api_v1_intel_misp_availability_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Misp Availability",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/misp/events": {
+      "get": {
+        "description": "List MISP events updated in the last N days. Optional tag filter.",
+        "operationId": "misp_events_api_v1_intel_misp_events_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 7,
+              "maximum": 90,
+              "minimum": 1,
+              "title": "Days",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "tag",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tag"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Misp Events",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/misp/events/{event_uuid}/attributes": {
+      "get": {
+        "operationId": "misp_event_attributes_api_v1_intel_misp_events__event_uuid__attributes_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_uuid",
+            "required": true,
+            "schema": {
+              "title": "Event Uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to_ids_only",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "To Ids Only",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Misp Event Attributes",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/misp/galaxies/{galaxy_type}": {
+      "get": {
+        "operationId": "misp_galaxy_clusters_api_v1_intel_misp_galaxies__galaxy_type__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "galaxy_type",
+            "required": true,
+            "schema": {
+              "title": "Galaxy Type",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Misp Galaxy Clusters",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/opencti/availability": {
+      "get": {
+        "operationId": "opencti_availability_api_v1_intel_opencti_availability_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Opencti Availability",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/opencti/graph/{stix_id}": {
+      "get": {
+        "description": "Fetch a STIX entity's neighbourhood from OpenCTI for the graph\nview. Returns ``{root, nodes, edges, note}`` even when OpenCTI is\nunavailable so the dashboard renders an explanatory empty state.",
+        "operationId": "opencti_graph_api_v1_intel_opencti_graph__stix_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "stix_id",
+            "required": true,
+            "schema": {
+              "title": "Stix Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "depth",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 3,
+              "minimum": 1,
+              "title": "Depth",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Opencti Graph",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/opencti/project/ioc": {
+      "post": {
+        "description": "Project an IOC into the co-deployed OpenCTI as a STIX Indicator.",
+        "operationId": "opencti_project_ioc_api_v1_intel_opencti_project_ioc_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenCTIProjectIocRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Opencti Project Ioc",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/phishing/analyze": {
+      "post": {
+        "description": "Score an email/message against the Arabic-phishing analyzer.\n\nReturns the full scoreboard (homoglyphs, bidi-overrides,\nmixed-script domains, GCC pretexts, impersonated brands) so the\ndashboard can render each signal individually. Pure compute \u2014 no\nDB or external calls \u2014 so admin gating is intentionally not required.",
+        "operationId": "analyze_phishing_api_v1_intel_phishing_analyze_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PhishingAnalyzeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Analyze Phishing",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/sandbox/connectors": {
+      "get": {
+        "description": "List every sandbox connector + config state (P3 #3.6).",
+        "operationId": "sandbox_connectors_api_v1_intel_sandbox_connectors_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Sandbox Connectors",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/sandbox/{name}/health": {
+      "get": {
+        "operationId": "sandbox_health_api_v1_intel_sandbox__name__health_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Sandbox Health",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/sandbox/{name}/report/{analysis_id}": {
+      "get": {
+        "operationId": "sandbox_report_api_v1_intel_sandbox__name__report__analysis_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Sandbox Report",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/sandbox/{name}/submit": {
+      "post": {
+        "description": "Admin-gated \u2014 uploads the customer's binary to an external\nsandbox vendor (CAPE / Joe / Hybrid-Analysis / VirusTotal).\nSensitive files leaving the tenant boundary is a C6-class\ndecision \u2014 analysts request, admins approve + submit.",
+        "operationId": "sandbox_submit_api_v1_intel_sandbox__name__submit_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SandboxSubmitRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Sandbox Submit",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/siem/connectors": {
+      "get": {
+        "description": "List every SIEM connector + its configuration state (P2 #2.7).",
+        "operationId": "siem_connectors_api_v1_intel_siem_connectors_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Siem Connectors",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/siem/{name}/health": {
+      "get": {
+        "operationId": "siem_health_api_v1_intel_siem__name__health_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Siem Health",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/siem/{name}/push": {
+      "post": {
+        "operationId": "siem_push_api_v1_intel_siem__name__push_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SiemPushEventsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Siem Push",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/sigma/backends": {
+      "get": {
+        "description": "List the SIEM-dialect backends available in this deployment.",
+        "operationId": "sigma_backends_api_v1_intel_sigma_backends_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Sigma Backends",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/sigma/from-ioc": {
+      "post": {
+        "description": "Build a Sigma rule from an IOC and translate to every backend.",
+        "operationId": "sigma_from_ioc_api_v1_intel_sigma_from_ioc_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SigmaFromIocRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Sigma From Ioc",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/sigma/from-technique": {
+      "post": {
+        "description": "Build a Sigma rule from a MITRE technique and translate.",
+        "operationId": "sigma_from_technique_api_v1_intel_sigma_from_technique_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SigmaFromTechniqueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Sigma From Technique",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/sigma/translate": {
+      "post": {
+        "description": "Translate an arbitrary Sigma YAML rule to every backend.",
+        "operationId": "sigma_translate_api_v1_intel_sigma_translate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SigmaTranslateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Sigma Translate",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/soar/connectors": {
+      "get": {
+        "description": "List every SOAR connector + its configuration state (P3 #3.7).",
+        "operationId": "soar_connectors_api_v1_intel_soar_connectors_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Soar Connectors",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/soar/{name}/health": {
+      "get": {
+        "operationId": "soar_health_api_v1_intel_soar__name__health_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Soar Health",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/soar/{name}/push": {
+      "post": {
+        "description": "Admin-gated \u2014 creates incidents in the customer's SOAR (XSOAR /\nTines / Splunk SOAR), which fans out to other downstream systems.\nAnalysts can read; only admins push.",
+        "operationId": "soar_push_api_v1_intel_soar__name__push_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "title": "Name",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SoarPushEventsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Soar Push",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/stix-shifter/from-ioc": {
+      "post": {
+        "description": "One-shot IOC \u2192 STIX pattern \u2192 per-module translations.",
+        "operationId": "stix_shifter_from_ioc_api_v1_intel_stix_shifter_from_ioc_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StixFromIocRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Stix Shifter From Ioc",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/stix-shifter/modules": {
+      "get": {
+        "description": "List the stix-shifter data-source modules importable in this deployment.",
+        "operationId": "stix_shifter_modules_api_v1_intel_stix_shifter_modules_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Stix Shifter Modules",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/stix-shifter/translate": {
+      "post": {
+        "description": "Translate a STIX 2.x pattern into native query language for every\navailable data-source module.\n\nstix-shifter spawns its own event loop internally, so we run the\nsync entry point inside ``asyncio.to_thread`` to avoid clashing\nwith FastAPI's running loop (\"event loop is already running\").",
+        "operationId": "stix_shifter_translate_api_v1_intel_stix_shifter_translate_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StixTranslateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Stix Shifter Translate",
         "tags": [
           "Threat Intelligence"
         ]
@@ -26263,6 +30513,267 @@
           }
         ],
         "summary": "List Intel Syncs",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/telegram/analyze": {
+      "post": {
+        "description": "Run language detection + IOC extraction + categorisation over a\nTelegram-message body. Pure compute \u2014 analysts can paste a forwarded\nmessage into the dashboard and get the IOC + language + category\ntriple back without involving the live MTProto collector.",
+        "operationId": "telegram_analyze_api_v1_intel_telegram_analyze_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TelegramAnalyzeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Telegram Analyze",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/telegram/availability": {
+      "get": {
+        "description": "Surface Telethon-collector config state + curated-channel counts\nso the dashboard can render the setup CTA.",
+        "operationId": "telegram_availability_api_v1_intel_telegram_availability_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Telegram Availability",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/telegram/channels": {
+      "get": {
+        "description": "Return the curated Telegram-channel catalog, optionally filtered\nby cluster (``iranian-apt`` / ``arabic-hacktivist`` /\n``ransomware-leak`` / ``carding`` / ``leaks``).",
+        "operationId": "telegram_channels_api_v1_intel_telegram_channels_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cluster",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cluster"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Telegram Channels",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/telegram/fetch": {
+      "post": {
+        "description": "Trigger a Telethon fetch over the supplied channel handles. Admin\ngated \u2014 Telethon issues a real Telegram-user authentication, so this\nmust not be analyst-callable.",
+        "operationId": "telegram_fetch_api_v1_intel_telegram_fetch_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TelegramFetchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Telegram Fetch",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/telegram/health": {
+      "get": {
+        "operationId": "telegram_health_api_v1_intel_telegram_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Telegram Health",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/yara/availability": {
+      "get": {
+        "operationId": "yara_availability_api_v1_intel_yara_availability_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Yara Availability",
+        "tags": [
+          "Threat Intelligence"
+        ]
+      }
+    },
+    "/api/v1/intel/yara/scan": {
+      "post": {
+        "description": "Compile + scan once. For repeated scans against the same rules\nuse the in-process scanner \u2014 this route is for ad-hoc analyst use.",
+        "operationId": "yara_scan_api_v1_intel_yara_scan_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/YaraScanRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Yara Scan",
         "tags": [
           "Threat Intelligence"
         ]
@@ -30847,6 +35358,76 @@
           }
         ],
         "summary": "Update Current Organization",
+        "tags": [
+          "Auth & Identity"
+        ]
+      }
+    },
+    "/api/v1/organizations/current/locale": {
+      "get": {
+        "description": "Return the tenant's timezone + calendar (for the dashboard's\nformatDate helper) along with the picker's allowed values.",
+        "operationId": "get_current_locale_api_v1_organizations_current_locale_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Current Locale",
+        "tags": [
+          "Auth & Identity"
+        ]
+      },
+      "patch": {
+        "description": "Patch one or both locale fields. Body: {timezone?, calendar_system?}.",
+        "operationId": "update_current_locale_api_v1_organizations_current_locale_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": true,
+                "title": "Body",
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update Current Locale",
         "tags": [
           "Auth & Identity"
         ]
@@ -36355,6 +40936,201 @@
           }
         },
         "summary": "Health"
+      }
+    },
+    "/taxii2/": {
+      "get": {
+        "description": "TAXII 2.1 discovery resource (RFC \u00a74.1).",
+        "operationId": "taxii_discovery_taxii2__get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Taxii Discovery",
+        "tags": [
+          "TAXII"
+        ]
+      }
+    },
+    "/taxii2/api/": {
+      "get": {
+        "description": "API root resource (RFC \u00a74.2).",
+        "operationId": "taxii_api_root_taxii2_api__get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Taxii Api Root",
+        "tags": [
+          "TAXII"
+        ]
+      }
+    },
+    "/taxii2/api/collections/": {
+      "get": {
+        "description": "List collections \u2014 one per tenant org. Argus is single-tenant\non-prem so this returns exactly one row in v1.",
+        "operationId": "taxii_collections_list_taxii2_api_collections__get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Taxii Collections List",
+        "tags": [
+          "TAXII"
+        ]
+      }
+    },
+    "/taxii2/api/collections/{collection_id}/": {
+      "get": {
+        "description": "Single-collection descriptor (RFC \u00a75.2).",
+        "operationId": "taxii_collection_info_taxii2_api_collections__collection_id___get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Taxii Collection Info",
+        "tags": [
+          "TAXII"
+        ]
+      }
+    },
+    "/taxii2/api/collections/{collection_id}/objects/": {
+      "get": {
+        "description": "Stream the collection's STIX 2.1 indicators (RFC \u00a75.3).\n\n``?added_after=<RFC 3339>`` lets subscribers fetch only the diff\nsince their last poll. ``limit`` caps the envelope size; the\nresponse sets ``more=false`` because v1 doesn't paginate further\n\u2014 clients should call back with a tighter ``added_after``.",
+        "operationId": "taxii_collection_objects_taxii2_api_collections__collection_id__objects__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "collection_id",
+            "required": true,
+            "schema": {
+              "title": "Collection Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "added_after",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Added After"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 1000,
+              "maximum": 10000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Taxii Collection Objects",
+        "tags": [
+          "TAXII"
+        ]
       }
     }
   },

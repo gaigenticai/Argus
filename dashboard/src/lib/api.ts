@@ -498,6 +498,42 @@ export const api = {
   getTriageHistory: (limit: number = 20) =>
     request<TriageRunItem[]>(`/tools/triage/history?limit=${limit}`),
 
+  // ── P3 connectors (EDR / email-gateway / sandbox / SOAR / breach /
+  //                   forensics / telegram / adversary-emulation) ──
+  // Each group exposes: a list of {name, label, configured} entries
+  // and a per-name health probe.
+  listConnectors: (group: P3ConnectorGroup) =>
+    request<{ connectors?: ConnectorRow[]; providers?: ConnectorRow[] }>(
+      `/intel/${P3_GROUP_PATH[group]}`,
+    ),
+  connectorHealth: (group: P3ConnectorGroup, name: string) =>
+    request<ConnectorHealth>(
+      `/intel/${P3_GROUP_PATH[group]}/${name}/health`,
+    ),
+  forensicsAvailability: () =>
+    request<{
+      volatility: { available: boolean; cli_path: string | null };
+      velociraptor: { configured: boolean };
+    }>(`/intel/forensics/availability`),
+  telegramAvailability: () =>
+    request<{
+      configured: boolean;
+      curated_total: number;
+      curated_active: number;
+    }>(`/intel/telegram/availability`),
+  telegramChannels: () =>
+    request<{ channels: TelegramChannel[] }>(`/intel/telegram/channels`),
+  adversaryEmulationAvailability: () =>
+    request<{
+      atomic_red_team: {
+        filesystem_path: string | null;
+        filesystem_active: boolean;
+        curated_count: number;
+        techniques_indexed: number;
+      };
+      caldera: { configured: boolean };
+    }>(`/intel/adversary-emulation/availability`),
+
   // Asset Registry (Phase 0.1)
   listAssets: (params: AssetListParams) => {
     const qs = new URLSearchParams();
@@ -3868,4 +3904,46 @@ export interface LocaleResponse {
     calendars: readonly string[];
     defaults: { timezone: string; calendar_system: string };
   };
+}
+
+
+// ── P3 connector types ─────────────────────────────────────────────
+
+export type P3ConnectorGroup =
+  | "edr"
+  | "email-gateway"
+  | "sandbox"
+  | "soar"
+  | "breach";
+
+export const P3_GROUP_PATH: Record<P3ConnectorGroup, string> = {
+  edr: "edr/connectors",
+  "email-gateway": "email-gateway/connectors",
+  sandbox: "sandbox/connectors",
+  soar: "soar/connectors",
+  breach: "breach/providers",
+};
+
+export interface ConnectorRow {
+  name: string;
+  label?: string;
+  configured: boolean;
+}
+
+export interface ConnectorHealth {
+  success?: boolean;
+  note?: string | null;
+  error?: string | null;
+  // Group-specific result fields are tolerated here.
+  [extra: string]: unknown;
+}
+
+export interface TelegramChannel {
+  handle: string;
+  cluster: string;
+  language: string;
+  rationale: string;
+  actor_link: string | null;
+  status: string;
+  region_focus: string[];
 }

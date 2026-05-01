@@ -193,6 +193,21 @@ class AuditAction(str, enum.Enum):
     TAKEDOWN_STATE_CHANGE = "takedown_state_change"
     PUBLIC_API_RATE_LIMIT_EXCEEDED = "public_api_rate_limit_exceeded"
 
+    # P3 vendor-side / host-side actions (audit-trail required for
+    # SAMA / NCA-ECC / SOC2 — "who triggered the contain on host X?").
+    EDR_IOC_PUSH = "edr_ioc_push"
+    EDR_HOST_ISOLATE = "edr_host_isolate"
+    EMAIL_GATEWAY_BLOCKLIST_PUSH = "email_gateway_blocklist_push"
+    SANDBOX_SUBMIT = "sandbox_submit"
+    SOAR_PUSH = "soar_push"
+    VELOCIRAPTOR_SCHEDULE = "velociraptor_schedule"
+    VOLATILITY_RUN = "volatility_run"
+    CALDERA_OPERATION_START = "caldera_operation_start"
+    TELEGRAM_FETCH = "telegram_fetch"
+    FEED_SUBSCRIPTION_CREATE = "feed_subscription_create"
+    FEED_SUBSCRIPTION_UPDATE = "feed_subscription_update"
+    FEED_SUBSCRIPTION_DELETE = "feed_subscription_delete"
+
 
 class AuditLog(Base, UUIDMixin):
     __tablename__ = "audit_logs"

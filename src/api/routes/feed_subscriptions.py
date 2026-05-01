@@ -25,16 +25,24 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.auth import CurrentUser
+from src.core.auth import CurrentUser, audit_log
 from src.core.feed_subscription_match import match_alert
 from src.core.tenant import get_system_org_id
+from src.models.auth import AuditAction
 from src.models.feed_subscription import FeedSubscription
 from src.storage.database import get_session
+
+
+def _client_meta(request: Request) -> tuple[str, str]:
+    fwd = request.headers.get("X-Forwarded-For")
+    ip = (fwd.split(",")[0].strip() if fwd
+          else (request.client.host if request.client else "unknown"))
+    return ip, request.headers.get("User-Agent", "unknown")[:500]
 
 router = APIRouter(prefix="/feed-subscriptions", tags=["Operations"])
 
@@ -136,6 +144,7 @@ async def _load_owned(
 @router.post("", response_model=FeedSubscriptionResponse, status_code=201)
 async def create_subscription(
     body: FeedSubscriptionCreate,
+    request: Request,
     user: CurrentUser,
     db: AsyncSession = Depends(get_session),
 ):
@@ -150,6 +159,21 @@ async def create_subscription(
         active=body.active,
     )
     db.add(sub)
+    await db.flush()
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db, AuditAction.FEED_SUBSCRIPTION_CREATE, user=user,
+        resource_type="feed_subscription", resource_id=str(sub.id),
+        details={
+            "name": sub.name,
+            "filter_keys": sorted((sub.filter or {}).keys()),
+            "channel_types": sorted({
+                c.get("type") for c in (sub.channels or [])
+                if isinstance(c, dict)
+            } - {None}),
+        },
+        ip_address=ip, user_agent=ua,
+    )
     await db.commit()
     await db.refresh(sub)
     return sub
@@ -181,20 +205,34 @@ async def get_subscription(
 async def update_subscription(
     sub_id: uuid.UUID,
     body: FeedSubscriptionUpdate,
+    request: Request,
     user: CurrentUser,
     db: AsyncSession = Depends(get_session),
 ):
     sub = await _load_owned(sub_id, user.id, db)
+    changed: list[str] = []
     if body.name is not None:
         sub.name = body.name.strip()
+        changed.append("name")
     if body.description is not None:
         sub.description = body.description
+        changed.append("description")
     if body.filter is not None:
         sub.filter = body.filter
+        changed.append("filter")
     if body.channels is not None:
         sub.channels = _validate_channels(body.channels)
+        changed.append("channels")
     if body.active is not None:
         sub.active = body.active
+        changed.append("active")
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db, AuditAction.FEED_SUBSCRIPTION_UPDATE, user=user,
+        resource_type="feed_subscription", resource_id=str(sub.id),
+        details={"changed_fields": changed},
+        ip_address=ip, user_agent=ua,
+    )
     await db.commit()
     await db.refresh(sub)
     return sub
@@ -203,11 +241,20 @@ async def update_subscription(
 @router.delete("/{sub_id}", status_code=204)
 async def delete_subscription(
     sub_id: uuid.UUID,
+    request: Request,
     user: CurrentUser,
     db: AsyncSession = Depends(get_session),
 ):
     sub = await _load_owned(sub_id, user.id, db)
+    sub_name = sub.name
     await db.delete(sub)
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db, AuditAction.FEED_SUBSCRIPTION_DELETE, user=user,
+        resource_type="feed_subscription", resource_id=str(sub_id),
+        details={"name": sub_name},
+        ip_address=ip, user_agent=ua,
+    )
     await db.commit()
     return None
 

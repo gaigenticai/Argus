@@ -47,6 +47,78 @@ argus:
     - PCI-DSS-V4
     - SOC2-CC7
 
+  # ── Phase 3 connector credentials (all opt-in / BYOK) ───────────
+  # Every value here defaults to empty so the connector's
+  # is_configured() returns False and the entry-points no-op cleanly.
+  # Pin real values from your secret manager (Vault, AWS Secrets
+  # Manager, Sealed Secrets, External Secrets Operator, …) — never
+  # commit production values to this file.
+  connectors:
+    crowdstrike:
+      clientId: ""
+      clientSecret: ""
+      baseUrl: "https://api.crowdstrike.com"
+    sentinelone:
+      apiToken: ""
+      baseUrl: ""               # e.g. https://your-tenant.sentinelone.net
+    mde:                        # Microsoft Defender for Endpoint
+      tenantId: ""
+      clientId: ""
+      clientSecret: ""
+    proofpoint:
+      principal: ""
+      secret: ""
+    mimecast:
+      baseUrl: ""               # https://eu-api.mimecast.com
+      appId: ""
+      appKey: ""
+      accessKey: ""
+      secretKey: ""             # base64-encoded — see Mimecast docs
+    abnormal:
+      token: ""
+    cape:                       # operator-self-hosted CAPEv2
+      url: ""
+      apiKey: ""
+    joeSandbox:
+      apiKey: ""
+    hybridAnalysis:
+      apiKey: ""
+    virustotal:
+      apiKey: ""
+      enterprise: "false"       # MUST be "true" — free-tier ToS
+                                # forbids commercial-product use
+    xsoar:
+      url: ""                   # https://xsoar.example.com
+      apiKey: ""
+    tines:
+      webhookUrl: ""
+    splunkSoar:
+      url: ""
+      token: ""
+    volatility:
+      cli: ""                   # absolute path to vol3, e.g.
+                                # /opt/volatility-venv/bin/vol
+    velociraptor:
+      url: ""                   # https://velociraptor.example:8889
+      token: ""
+      verifySsl: "true"
+    hibp:                       # HaveIBeenPwned commercial / Enterprise
+      apiKey: ""
+    intelx:
+      apiKey: ""
+    dehashed:
+      apiKey: ""
+    atomicRedTeam:
+      path: ""                  # mounted path of the atomics/ checkout
+    caldera:
+      url: ""                   # https://caldera.internal:8888
+      apiKey: ""
+    telegram:
+      enabled: "false"          # operator attests legal review done
+      apiId: ""                 # from my.telegram.org
+      apiHash: ""
+      sessionPath: "/var/lib/argus/telegram.session"
+
 # ── argus-api (FastAPI) ─────────────────────────────────────────────
 api:
   replicaCount: 3

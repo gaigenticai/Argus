@@ -34,6 +34,7 @@ import {
   ClipboardList,
   SlidersHorizontal,
   Layers,
+  Plug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/auth/auth-provider";
@@ -88,6 +89,7 @@ const NAV_OPS = [
   { label: "Reports", href: "/reports", icon: FileText },
   { label: "Compliance", href: "/compliance", icon: ClipboardList },
   { label: "Integrations", href: "/integrations", icon: Puzzle },
+  { label: "Connectors", href: "/connectors", icon: Plug },
 ];
 
 const NAV_ADMIN = [

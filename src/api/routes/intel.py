@@ -695,7 +695,9 @@ class EmailBlocklistRequest(BaseModel):
 async def email_gateway_blocklist(
     name: str,
     body: EmailBlocklistRequest,
+    request: Request,
     admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
 ):
     """Admin-gated — pushes a deny-list entry into the customer's mail
     gateway, which is a production-impacting change."""
@@ -715,6 +717,19 @@ async def email_gateway_blocklist(
                 description=d.get("description"),
             ))
     result = await conn.push_blocklist(items)
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db, AuditAction.EMAIL_GATEWAY_BLOCKLIST_PUSH, user=admin,
+        resource_type="email_gateway", resource_id=name,
+        details={
+            "item_count": len(items),
+            "success": result.success,
+            "pushed_count": getattr(result, "pushed_count", None),
+            "error": result.error,
+        },
+        ip_address=ip, user_agent=ua,
+    )
+    await db.commit()
     return result.to_dict()
 
 
@@ -744,7 +759,9 @@ class EdrIocPushRequest(BaseModel):
 async def edr_push_iocs(
     name: str,
     body: EdrIocPushRequest,
+    request: Request,
     admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
 ):
     """Admin-gated — pushes IOCs into the customer's EDR vendor
     (CrowdStrike / SentinelOne / MDE) blocklist where they may
@@ -766,6 +783,19 @@ async def edr_push_iocs(
             description=d.get("description"),
         ))
     result = await conn.push_iocs(iocs)
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db, AuditAction.EDR_IOC_PUSH, user=admin,
+        resource_type="edr_connector", resource_id=name,
+        details={
+            "ioc_count": len(iocs),
+            "success": result.success,
+            "pushed_count": getattr(result, "pushed_count", None),
+            "error": result.error,
+        },
+        ip_address=ip, user_agent=ua,
+    )
+    await db.commit()
     return result.to_dict()
 
 
@@ -777,7 +807,9 @@ class EdrIsolateRequest(BaseModel):
 async def edr_isolate(
     name: str,
     body: EdrIsolateRequest,
+    request: Request,
     admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
 ):
     """Admin-gated — host isolation kicks an endpoint off the network
     (CrowdStrike contain / S1 disconnect / MDE isolate). High-blast
@@ -788,6 +820,18 @@ async def edr_isolate(
     if conn is None:
         raise HTTPException(404, f"unknown EDR connector {name!r}")
     result = await conn.isolate_host(host_id=body.host_id)
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db, AuditAction.EDR_HOST_ISOLATE, user=admin,
+        resource_type="edr_connector", resource_id=name,
+        details={
+            "host_id": body.host_id,
+            "success": result.success,
+            "error": result.error,
+        },
+        ip_address=ip, user_agent=ua,
+    )
+    await db.commit()
     return result.to_dict()
 
 
@@ -818,13 +862,16 @@ class SandboxSubmitRequest(BaseModel):
 async def sandbox_submit(
     name: str,
     body: SandboxSubmitRequest,
+    request: Request,
     admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
 ):
     """Admin-gated — uploads the customer's binary to an external
     sandbox vendor (CAPE / Joe / Hybrid-Analysis / VirusTotal).
     Sensitive files leaving the tenant boundary is a C6-class
     decision — analysts request, admins approve + submit."""
     import base64
+    import hashlib as _hashlib
     from src.integrations.sandbox import get_connector
 
     conn = get_connector(name)
@@ -837,6 +884,20 @@ async def sandbox_submit(
     result = await conn.submit_file(
         sample_bytes=sample, filename=body.filename,
     )
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db, AuditAction.SANDBOX_SUBMIT, user=admin,
+        resource_type="sandbox", resource_id=name,
+        details={
+            "filename": body.filename,
+            "sample_sha256": _hashlib.sha256(sample).hexdigest(),
+            "byte_size": len(sample),
+            "success": result.success,
+            "error": result.error,
+        },
+        ip_address=ip, user_agent=ua,
+    )
+    await db.commit()
     return result.to_dict()
 
 
@@ -878,7 +939,9 @@ class VolatilityRunRequest(BaseModel):
 @router.post("/forensics/volatility/run")
 async def forensics_volatility_run(
     body: VolatilityRunRequest,
+    request: Request,
     admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
 ):
     """Admin-gated — shells out to the host's vol3 binary against an
     arbitrary absolute file path supplied by the caller. Allowing an
@@ -890,6 +953,20 @@ async def forensics_volatility_run(
         plugin=body.plugin, image_path=body.image_path,
         extra_args=body.extra_args, timeout_seconds=body.timeout_seconds,
     )
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db, AuditAction.VOLATILITY_RUN, user=admin,
+        resource_type="forensics", resource_id="volatility",
+        details={
+            "plugin": body.plugin,
+            "image_path": body.image_path,
+            "timeout_seconds": body.timeout_seconds,
+            "success": result.success,
+            "error": result.error,
+        },
+        ip_address=ip, user_agent=ua,
+    )
+    await db.commit()
     return result.to_dict()
 
 
@@ -914,7 +991,9 @@ class VelociraptorScheduleRequest(BaseModel):
 @router.post("/forensics/velociraptor/schedule")
 async def forensics_velociraptor_schedule(
     body: VelociraptorScheduleRequest,
+    request: Request,
     admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
 ):
     """Admin-gated — schedules a Velociraptor artifact (VQL) on a live
     customer endpoint. Same blast-radius class as Caldera operations,
@@ -926,6 +1005,19 @@ async def forensics_velociraptor_schedule(
         artifact=body.artifact,
         parameters=body.parameters,
     )
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db, AuditAction.VELOCIRAPTOR_SCHEDULE, user=admin,
+        resource_type="forensics", resource_id="velociraptor",
+        details={
+            "client_id": body.client_id,
+            "artifact": body.artifact,
+            "success": result.success,
+            "error": result.error,
+        },
+        ip_address=ip, user_agent=ua,
+    )
+    await db.commit()
     return result.to_dict()
 
 
@@ -1001,7 +1093,9 @@ class SoarPushEventsRequest(BaseModel):
 async def soar_push(
     name: str,
     body: SoarPushEventsRequest,
+    request: Request,
     admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
 ):
     """Admin-gated — creates incidents in the customer's SOAR (XSOAR /
     Tines / Splunk SOAR), which fans out to other downstream systems.
@@ -1012,6 +1106,19 @@ async def soar_push(
     if conn is None:
         raise HTTPException(404, f"unknown SOAR connector {name!r}")
     result = await conn.push_events(body.events)
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db, AuditAction.SOAR_PUSH, user=admin,
+        resource_type="soar_connector", resource_id=name,
+        details={
+            "event_count": len(body.events or []),
+            "success": result.success,
+            "pushed_count": getattr(result, "pushed_count", None),
+            "error": result.error,
+        },
+        ip_address=ip, user_agent=ua,
+    )
+    await db.commit()
     return result.to_dict()
 
 
@@ -1466,7 +1573,10 @@ class CalderaStartOperationRequest(BaseModel):
 
 @router.post("/adversary-emulation/caldera/operations")
 async def adversary_emulation_caldera_start(
-    body: CalderaStartOperationRequest, admin: AdminUser,
+    body: CalderaStartOperationRequest,
+    request: Request,
+    admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
 ):
     """Start a Caldera operation. Admin-gated — this triggers attacker
     behaviour on customer endpoints, so analysts can't kick it off."""
@@ -1475,6 +1585,21 @@ async def adversary_emulation_caldera_start(
         adversary_id=body.adversary_id, group=body.group,
         name=body.name, planner=body.planner, auto_close=body.auto_close,
     )
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db, AuditAction.CALDERA_OPERATION_START, user=admin,
+        resource_type="caldera", resource_id=body.adversary_id,
+        details={
+            "adversary_id": body.adversary_id,
+            "group": body.group,
+            "planner": body.planner,
+            "auto_close": body.auto_close,
+            "success": r.success,
+            "error": r.error,
+        },
+        ip_address=ip, user_agent=ua,
+    )
+    await db.commit()
     return r.to_dict()
 
 
@@ -1552,7 +1677,10 @@ class TelegramFetchRequest(BaseModel):
 
 @router.post("/telegram/fetch")
 async def telegram_fetch(
-    body: TelegramFetchRequest, admin: AdminUser,
+    body: TelegramFetchRequest,
+    request: Request,
+    admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
 ):
     """Trigger a Telethon fetch over the supplied channel handles. Admin
     gated — Telethon issues a real Telegram-user authentication, so this
@@ -1565,6 +1693,21 @@ async def telegram_fetch(
         limit_per_channel=body.limit_per_channel,
         since_message_id=body.since_message_id,
     )
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db, AuditAction.TELEGRAM_FETCH, user=admin,
+        resource_type="telegram", resource_id=",".join(body.channels)[:120],
+        details={
+            "channel_count": len(body.channels),
+            "channels": body.channels[:20],
+            "limit_per_channel": body.limit_per_channel,
+            "success": r.success,
+            "message_count": len(r.messages),
+            "error": r.error,
+        },
+        ip_address=ip, user_agent=ua,
+    )
+    await db.commit()
     out = r.to_dict()
     if r.success:
         out["processed"] = [pm.to_dict() for pm in process_messages(r.messages)]
