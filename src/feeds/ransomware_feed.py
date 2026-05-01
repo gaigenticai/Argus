@@ -134,12 +134,29 @@ class RansomwareFeed(BaseFeed):
                     desc_parts.append(f"leak site: {leak_url}")
                 description = " | ".join(desc_parts)
 
+                # GCC relevance scoring (P1 #1.5) — adds gcc_relevance
+                # block to feed_metadata so dashboards / alert pipelines
+                # can filter to the regional subset without re-scoring.
+                from src.intel.gcc_ransomware_filter import score_gcc_relevance
+                gcc = score_gcc_relevance(
+                    victim_name=victim_name,
+                    country=country,
+                    url=leak_url,
+                    sector=sector,
+                    group=group_name,
+                    description=description,
+                )
+
                 yield FeedEntry(
                     feed_name=self.name,
                     layer=self.layer,
                     entry_type="victim",
                     value=victim_name,
-                    label=f"{group_name}: {victim_name}",
+                    label=(
+                        f"[GCC] {group_name}: {victim_name}"
+                        if gcc.is_gcc
+                        else f"{group_name}: {victim_name}"
+                    ),
                     description=description,
                     severity="critical",
                     confidence=0.9,
@@ -152,6 +169,7 @@ class RansomwareFeed(BaseFeed):
                         "discovery_date": discovery_date or None,
                         "leak_url": leak_url or None,
                         "source": "ransomware_live_victims",
+                        "gcc_relevance": gcc.to_dict(),
                     },
                     first_seen=first_seen,
                     expires_hours=720,  # 30 days — ransomware victims stay relevant
