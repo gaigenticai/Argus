@@ -167,6 +167,19 @@ async def run(
         await seed_oscal(session)
         await session.commit()
 
+    # Final phase — backfill any table the earlier phases left under
+    # the demo floor (≥10 rows) so every dashboard panel has data.
+    # Idempotent: each backfill task counts existing rows and only
+    # inserts the delta. Adds users/orgs/api_keys/feed_subscriptions/
+    # compliance_evidence/exports/mitre_mitigations/etc.
+    from scripts.seed.backfill_to_min import run_backfill
+    inserted = await run_backfill(session_factory)
+    nonzero = {k: v for k, v in inserted.items() if v}
+    if nonzero:
+        logger.info("backfill_to_min: %s", nonzero)
+    else:
+        logger.info("backfill_to_min: every table already at floor")
+
     logger.info("realistic seed complete (stress mode=%s)" % stress)
     return 0
 
