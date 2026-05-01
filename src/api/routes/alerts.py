@@ -221,6 +221,25 @@ async def update_alert(
     return alert
 
 
+@router.get("/{alert_id}/attribution")
+async def get_alert_attribution(
+    alert_id: uuid.UUID,
+    analyst: AnalystUser,
+    limit: int = Query(default=10, ge=1, le=50),
+    db: AsyncSession = Depends(get_session),
+):
+    """Rank candidate threat actors for this alert with confidence
+    breakdowns (P2 #2.9). Pure read-only — no DB writes."""
+    from src.intel.attribution import score_alert
+
+    org_id = await get_system_org_id(db)
+    alert = await db.get(Alert, alert_id)
+    if not alert or alert.organization_id != org_id:
+        raise HTTPException(404, "Alert not found")
+    scores = await score_alert(db, alert_id=alert_id, limit=limit)
+    return {"scores": [s.to_dict() for s in scores]}
+
+
 @router.get("/{alert_id}/navigator-layer")
 async def get_alert_navigator_layer(
     alert_id: uuid.UUID,
