@@ -1,11 +1,18 @@
 """OpenCTI projection + read-only graph proxy (P2 #2.1).
 
 Argus's PostgreSQL stays system-of-record. OpenCTI is the **graph
-projection** layer: every alert / IOC / actor / case Argus produces is
-mirrored as STIX 2.1 objects + relationships into a co-deployed
-OpenCTI instance. Analysts then drill into the rich relationship view
+projection** layer: ``project_ioc`` / ``project_alert`` / ``project_actor``
+/ ``project_case`` push STIX 2.1 objects + relationships into a
+co-deployed OpenCTI instance, and ``fetch_neighbourhood`` reads the
+graph back so analysts can drill into the rich relationship view
 (observable → attributed-to → actor → uses → technique → mitigated-by
-→ defense) inside OpenCTI without leaving the Argus workflow.
+→ defense) without leaving the Argus workflow.
+
+v1 surface: projection is opt-in. Analysts trigger it from
+``POST /api/v1/intel/opencti/project/ioc`` (the only route wired in
+intel.py today); ``project_alert`` / ``project_actor`` / ``project_case``
+are reachable as Python entry points for forthcoming auto-projection
+hooks but no pipeline calls them yet.
 
 The legacy ``client.py`` in this package is the original GraphQL stub
 left from an earlier prototype. This module is the v1 projection +
