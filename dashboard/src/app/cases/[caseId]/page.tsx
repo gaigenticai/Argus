@@ -484,7 +484,7 @@ export default function CaseDetailPage() {
               className="group flex items-baseline gap-2 cursor-text"
               onClick={() => setEditingTitle(true)}
             >
-              <h1 className="text-[24px] leading-[30px] font-extrabold tracking-[-0.01em]" style={{ color: "var(--color-ink)" }}>
+              <h1 dir="auto" className="text-[24px] leading-[30px] font-extrabold tracking-[-0.01em]" style={{ color: "var(--color-ink)" }}>
                 {c.title}
               </h1>
               <Edit2 className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: "var(--color-muted)" }} />
@@ -492,7 +492,7 @@ export default function CaseDetailPage() {
           )}
 
           {c.summary ? (
-            <p className="text-[13.5px] mt-2 max-w-[760px]" style={{ color: "var(--color-body)" }}>
+            <p dir="auto" className="text-[13.5px] mt-2 max-w-[760px]" style={{ color: "var(--color-body)" }}>
               {c.summary}
             </p>
           ) : null}
@@ -1042,7 +1042,7 @@ function CommentsTab({
                         </div>
                       </div>
                     ) : (
-                      <div className="text-[13px] whitespace-pre-wrap" style={{ color: "var(--color-body)" }}>
+                      <div dir="auto" className="text-[13px] whitespace-pre-wrap" style={{ color: "var(--color-body)" }}>
                         {cm.body}
                       </div>
                     )}

@@ -34,7 +34,7 @@ export function RecentAlerts({ alerts }: RecentAlertsProps) {
         >
           <div className="flex-1 min-w-0 flex items-center gap-3">
             <SeverityBadge severity={alert.severity} />
-            <p className="text-[13px] font-semibold truncate" style={{ color: "var(--color-body)" }}>
+            <p dir="auto" className="text-[13px] font-semibold truncate" style={{ color: "var(--color-body)" }}>
               {alert.title}
             </p>
             <span className="text-[12px] shrink-0 hidden sm:inline" style={{ color: "var(--color-muted)" }}>

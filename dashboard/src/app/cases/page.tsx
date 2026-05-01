@@ -700,11 +700,11 @@ function CaseRow({
         {_shortId(c.id)}
       </td>
       <td className="px-3">
-        <div className="text-[13px] font-semibold line-clamp-1" style={{ color: "var(--color-ink)" }}>
+        <div dir="auto" className="text-[13px] font-semibold line-clamp-1" style={{ color: "var(--color-ink)" }}>
           {c.title}
         </div>
         {c.summary ? (
-          <div className="text-[12px] line-clamp-1 mt-0.5" style={{ color: "var(--color-muted)" }}>
+          <div dir="auto" className="text-[12px] line-clamp-1 mt-0.5" style={{ color: "var(--color-muted)" }}>
             {c.summary}
           </div>
         ) : null}

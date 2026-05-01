@@ -202,6 +202,7 @@ export default function AlertsPage() {
                     <div className="flex items-center gap-2">
                       <Link
                         href={`/alerts/${alert.id}`}
+                        dir="auto"
                         className="text-[13px] font-semibold line-clamp-1 transition-colors"
                         style={{ color: "var(--color-ink)" }}
                         onMouseEnter={e => (e.currentTarget.style.color = "var(--color-accent)")}

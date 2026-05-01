@@ -176,6 +176,7 @@ export default function NewsPage() {
                     href={a.url}
                     target="_blank"
                     rel="noopener noreferrer"
+                    dir="auto"
                     className="text-[13.5px] font-semibold line-clamp-1 inline-flex items-center gap-1 transition-colors"
                     style={{ color: "var(--color-ink)" }}
                     onMouseEnter={e => (e.currentTarget.style.color = "var(--color-accent)")}
@@ -185,7 +186,7 @@ export default function NewsPage() {
                     <ExternalLink className="w-3 h-3 shrink-0" style={{ color: "var(--color-muted)" }} />
                   </a>
                   {a.summary ? (
-                    <p className="text-[12px] mt-0.5 line-clamp-2" style={{ color: "var(--color-body)" }}>
+                    <p dir="auto" className="text-[12px] mt-0.5 line-clamp-2" style={{ color: "var(--color-body)" }}>
                       {a.summary}
                     </p>
                   ) : null}

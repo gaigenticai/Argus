@@ -174,10 +174,10 @@ export default function AlertDetailPage() {
           </span>
         </div>
 
-        <h1 className="text-[22px] font-medium tracking-[-0.02em] mb-2" style={{ color: "var(--color-ink)" }}>
+        <h1 dir="auto" className="text-[22px] font-medium tracking-[-0.02em] mb-2" style={{ color: "var(--color-ink)" }}>
           {alert.title}
         </h1>
-        <p className="text-[13px] leading-relaxed" style={{ color: "var(--color-body)" }}>
+        <p dir="auto" className="text-[13px] leading-relaxed" style={{ color: "var(--color-body)" }}>
           {alert.summary}
         </p>
 
