@@ -16,6 +16,7 @@ import {
 import { api, type OnboardingSessionRecord, type Org } from "@/lib/api";
 import { useToast } from "@/components/shared/toast";
 import { timeAgo } from "@/lib/utils";
+import { Select as ThemedSelect } from "@/components/shared/select";
 
 const STATE_BADGE: Record<string, { bg: string; color: string; icon: typeof Clock }> = {
   draft: { bg: "rgba(255,171,0,0.1)", color: "#B76E00", icon: Clock },
@@ -353,26 +354,16 @@ function CreateSessionModal({
             <label style={{ fontSize: "11.5px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--color-muted)", display: "block", marginBottom: "4px" }}>
               Bind to existing organization (optional)
             </label>
-            <select
+            <ThemedSelect
               value={bindOrgId}
-              onChange={(e) => setBindOrgId(e.target.value)}
-              style={{
-                width: "100%",
-                height: "40px",
-                borderRadius: "4px",
-                border: "1px solid var(--color-border)",
-                background: "var(--color-canvas)",
-                color: "var(--color-ink)",
-                padding: "0 12px",
-                fontSize: "14px",
-                outline: "none",
-              }}
-            >
-              <option value="">— Create a new organization at completion —</option>
-              {orgs.map((o) => (
-                <option key={o.id} value={o.id}>{o.name}</option>
-              ))}
-            </select>
+              onChange={setBindOrgId}
+              ariaLabel="Bind to existing organization"
+              options={[
+                { value: "", label: "— Create a new organization at completion —" },
+                ...orgs.map((o) => ({ value: o.id, label: o.name })),
+              ]}
+              style={{ width: "100%" }}
+            />
             <p style={{ fontSize: "12px", color: "var(--color-muted)", marginTop: "4px" }}>
               Pick an org to add more assets to it; leave empty to start fresh.
             </p>

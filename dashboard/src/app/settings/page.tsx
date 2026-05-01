@@ -23,6 +23,7 @@ import {
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/components/shared/toast";
 import { formatDate } from "@/lib/utils";
+import { Select as ThemedSelect } from "@/components/shared/select";
 
 const TABS: { id: string; label: string; icon: typeof User; adminOnly?: boolean }[] = [
   { id: "profile", label: "Profile", icon: User },
@@ -369,14 +370,13 @@ function UsersTab() {
                   </td>
                   <td className="px-4 text-[13px]" style={{ color: "var(--color-body)" }}>{u.email}</td>
                   <td className="px-4">
-                    <select
+                    <ThemedSelect
                       value={u.role}
-                      onChange={(e) => handleRoleChange(u, e.target.value)}
-                      className="h-8 px-2 text-[12px] font-semibold outline-none capitalize"
-                      style={{ borderRadius: "4px", border: "1px solid var(--color-border)", background: "var(--color-canvas)", color: "var(--color-body)" }}
-                    >
-                      {USER_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                    </select>
+                      onChange={(v) => handleRoleChange(u, v)}
+                      ariaLabel="Role"
+                      options={USER_ROLES.map((r) => ({ value: r, label: r }))}
+                      style={{ height: "32px", minWidth: 110 }}
+                    />
                   </td>
                   <td className="px-4">
                     <span
@@ -443,14 +443,13 @@ function UsersTab() {
               ))}
               <div>
                 <label className="block text-[12px] font-semibold uppercase tracking-[0.07em] mb-1.5" style={{ color: "var(--color-muted)" }}>Role</label>
-                <select
+                <ThemedSelect
                   value={newRole}
-                  onChange={(e) => setNewRole(e.target.value)}
-                  className="w-full h-10 px-3 text-[13px] outline-none capitalize"
-                  style={inputStyle}
-                >
-                  {USER_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                </select>
+                  onChange={setNewRole}
+                  ariaLabel="Role"
+                  options={USER_ROLES.map((r) => ({ value: r, label: r }))}
+                  style={{ width: "100%" }}
+                />
               </div>
               <div className="flex gap-2 pt-2">
                 <button type="button" onClick={() => setShowCreate(false)} className="flex-1 h-10 px-4 text-[13px] font-semibold transition-colors" style={btnSecondary}>Cancel</button>
@@ -723,14 +722,12 @@ function AuditTab() {
           {
             label: "Action",
             element: (
-              <select
+              <ThemedSelect
                 value={action}
-                onChange={(e) => { setAction(e.target.value); setOffset(0); }}
-                className="h-10 px-3 text-[13px] outline-none"
-                style={{ borderRadius: "4px", border: "1px solid var(--color-border)", background: "var(--color-canvas)", color: "var(--color-body)" }}
-              >
-                {AUDIT_ACTIONS.map((a) => <option key={a} value={a}>{a === "all" ? "All actions" : a.replace(/_/g, " ")}</option>)}
-              </select>
+                onChange={(v) => { setAction(v); setOffset(0); }}
+                ariaLabel="Audit action"
+                options={AUDIT_ACTIONS.map((a) => ({ value: a, label: a === "all" ? "All actions" : a.replace(/_/g, " ") }))}
+              />
             ),
           },
           {

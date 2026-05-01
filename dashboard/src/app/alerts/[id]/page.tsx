@@ -17,6 +17,7 @@ import { SeverityBadge } from "@/components/shared/severity-badge";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { categoryLabels, formatDate } from "@/lib/utils";
 import { useToast } from "@/components/shared/toast";
+import { Select as ThemedSelect } from "@/components/shared/select";
 
 const STATUS_OPTIONS = [
   "new",
@@ -449,24 +450,16 @@ export default function AlertDetailPage() {
                 <label className="text-[13px] font-semibold block mb-2" style={{ color: "var(--color-muted)" }}>
                   Corrected category <span style={{ color: "var(--color-muted)" }}>(optional)</span>
                 </label>
-                <select
+                <ThemedSelect
                   value={feedbackForm.corrected_category}
-                  onChange={(e) => setFeedbackForm((f) => ({ ...f, corrected_category: e.target.value }))}
-                  className="w-full h-10 px-3 text-[13px] outline-none transition-colors"
-                  style={{
-                    borderRadius: "4px",
-                    border: "1px solid var(--color-border)",
-                    background: "var(--color-canvas)",
-                    color: "var(--color-ink)",
-                  }}
-                >
-                  <option value="">— No change —</option>
-                  {ALERT_CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {categoryLabels[cat] || cat}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setFeedbackForm((f) => ({ ...f, corrected_category: v }))}
+                  ariaLabel="Corrected category"
+                  options={[
+                    { value: "", label: "— No change —" },
+                    ...ALERT_CATEGORIES.map((cat) => ({ value: cat, label: categoryLabels[cat] || cat })),
+                  ]}
+                  style={{ width: "100%" }}
+                />
               </div>
 
               {/* Corrected severity */}
@@ -474,24 +467,16 @@ export default function AlertDetailPage() {
                 <label className="text-[13px] font-semibold block mb-2" style={{ color: "var(--color-muted)" }}>
                   Corrected severity <span style={{ color: "var(--color-muted)" }}>(optional)</span>
                 </label>
-                <select
+                <ThemedSelect
                   value={feedbackForm.corrected_severity}
-                  onChange={(e) => setFeedbackForm((f) => ({ ...f, corrected_severity: e.target.value }))}
-                  className="w-full h-10 px-3 text-[13px] outline-none transition-colors"
-                  style={{
-                    borderRadius: "4px",
-                    border: "1px solid var(--color-border)",
-                    background: "var(--color-canvas)",
-                    color: "var(--color-ink)",
-                  }}
-                >
-                  <option value="">— No change —</option>
-                  {ALERT_SEVERITIES.map((sev) => (
-                    <option key={sev} value={sev} className="capitalize">
-                      {sev.charAt(0).toUpperCase() + sev.slice(1)}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(v) => setFeedbackForm((f) => ({ ...f, corrected_severity: v }))}
+                  ariaLabel="Corrected severity"
+                  options={[
+                    { value: "", label: "— No change —" },
+                    ...ALERT_SEVERITIES.map((sev) => ({ value: sev, label: sev.charAt(0).toUpperCase() + sev.slice(1) })),
+                  ]}
+                  style={{ width: "100%" }}
+                />
               </div>
 
               {/* Feedback notes */}

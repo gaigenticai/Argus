@@ -20,6 +20,7 @@ import {
   Shield,
   Radio,
 } from "lucide-react";
+import { Select } from "@/components/shared/select";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
 
@@ -184,24 +185,20 @@ export default function ActivityPage() {
             />
           </div>
 
-          <div className="relative">
-            <select
+          <div>
+            <Select
               value={agentFilter}
-              onChange={(e) => setAgentFilter(e.target.value)}
-              className="appearance-none h-10 pl-3 pr-8 text-[13px] outline-none cursor-pointer"
-              style={{
-                borderRadius: "4px",
-                border: "1px solid var(--color-border)",
-                background: "var(--color-canvas)",
-                color: "var(--color-body)",
-              }}
-            >
-              <option value="all">All agents</option>
-              {agentTypes.map((t) => (
-                <option key={t} value={t}>{AGENT_CONFIG[t]?.label || t}</option>
-              ))}
-            </select>
-            <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" style={{ color: "var(--color-muted)" }} />
+              onChange={setAgentFilter}
+              ariaLabel="Agent filter"
+              options={[
+                { value: "all", label: "All agents" },
+                ...agentTypes.map((t) => ({
+                  value: t,
+                  label: AGENT_CONFIG[t]?.label || t,
+                })),
+              ]}
+            />
+
           </div>
 
           <button

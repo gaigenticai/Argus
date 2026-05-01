@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { api, type Org, type OrgAsset } from "@/lib/api";
 import { useToast } from "@/components/shared/toast";
+import { Select } from "@/components/shared/select";
 
 interface SubdomainResult {
   subdomain: string;
@@ -122,21 +123,12 @@ export default function SurfacePage() {
 
       {/* Org selector + scan buttons */}
       <div className="flex gap-3 items-center flex-wrap">
-        <select
+        <Select
           value={selectedOrg}
-          onChange={(e) => setSelectedOrg(e.target.value)}
-          className="h-10 px-3 text-[13px] outline-none transition-colors cursor-pointer"
-          style={{
-            borderRadius: "4px",
-            border: "1px solid var(--color-border)",
-            background: "var(--color-canvas)",
-            color: "var(--color-body)",
-          }}
-        >
-          {orgs.map((o) => (
-            <option key={o.id} value={o.id}>{o.name}</option>
-          ))}
-        </select>
+          onChange={setSelectedOrg}
+          ariaLabel="Organization"
+          options={orgs.map((o) => ({ value: o.id, label: o.name }))}
+        />
         <button
           onClick={handleScanSubdomains}
           disabled={scanning || !selectedOrg}

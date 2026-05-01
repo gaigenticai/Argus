@@ -15,6 +15,7 @@ import { api, type IOCItem, type IOCStats, type BulkSearchResult } from "@/lib/a
 import { useToast } from "@/components/shared/toast";
 import { formatDate } from "@/lib/utils";
 import Link from "next/link";
+import { Select } from "@/components/shared/select";
 
 const IOC_TYPES = [
   "all", "ipv4", "ipv6", "domain", "url", "email", "md5", "sha1", "sha256",
@@ -345,18 +346,15 @@ export default function IOCsPage() {
       <div className="flex gap-3 flex-wrap items-end">
         <div className="flex items-center gap-2">
           <Filter className="w-4 h-4" style={{ color: "var(--color-muted)" }} />
-          <select
+          <Select
             value={typeFilter}
-            onChange={(e) => { setTypeFilter(e.target.value); setOffset(0); }}
-            className={selectCls}
-            style={selectStyle}
-          >
-            {IOC_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t === "all" ? "All types" : t.toUpperCase()}
-              </option>
-            ))}
-          </select>
+            onChange={(v) => { setTypeFilter(v); setOffset(0); }}
+            ariaLabel="IOC type"
+            options={IOC_TYPES.map((t) => ({
+              value: t,
+              label: t === "all" ? "All types" : t.toUpperCase(),
+            }))}
+          />
         </div>
         <div>
           <label

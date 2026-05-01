@@ -33,6 +33,7 @@ import {
   Th,
 } from "@/components/shared/page-primitives";
 import { formatDate, timeAgo } from "@/lib/utils";
+import { Select } from "@/components/shared/select";
 
 // ---------------------------------------------------------------------------
 //  Tab types
@@ -401,23 +402,18 @@ function TechniquesTab({
           />
         </div>
 
-        <div className="relative">
-          <select
-            value={tacticFilter}
-            onChange={(e) => setTacticFilter(e.target.value)}
-            aria-label="Filter by tactic"
-            className="h-10 pl-3 pr-8 text-[13px] font-semibold outline-none appearance-none"
-            style={{ borderRadius: "4px", border: "1px solid var(--color-border)", background: "var(--color-canvas)", color: "var(--color-ink)" }}
-          >
-            <option value="">All tactics</option>
-            {tactics.map((t) => (
-              <option key={t.external_id} value={t.shortname || t.external_id}>
-                {t.name}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="w-4 h-4 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--color-muted)" }} />
-        </div>
+        <Select
+          value={tacticFilter}
+          onChange={setTacticFilter}
+          ariaLabel="Filter by tactic"
+          options={[
+            { value: "", label: "All tactics" },
+            ...tactics.map((t) => ({
+              value: t.shortname || t.external_id,
+              label: t.name,
+            })),
+          ]}
+        />
 
         <label className="flex items-center gap-2 cursor-pointer select-none">
           <input

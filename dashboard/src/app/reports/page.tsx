@@ -5,6 +5,7 @@ import { FileText, Download, Plus, X, Calendar } from "lucide-react";
 import { api, type Org, type Report } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { useToast } from "@/components/shared/toast";
+import { Select as ThemedSelect } from "@/components/shared/select";
 
 export default function ReportsPage() {
   const [reports, setReports] = useState<Report[]>([]);
@@ -116,16 +117,13 @@ export default function ReportsPage() {
                 <label className="text-[12px] font-semibold uppercase tracking-[0.07em] block mb-1.5" style={{ color: "var(--color-muted)" }}>
                   Organization
                 </label>
-                <select
+                <ThemedSelect
                   value={orgId}
-                  onChange={(e) => setOrgId(e.target.value)}
-                  className="w-full h-10 px-3 text-[13px] outline-none"
-                  style={inputStyle}
-                >
-                  {orgs.map((o) => (
-                    <option key={o.id} value={o.id}>{o.name}</option>
-                  ))}
-                </select>
+                  onChange={setOrgId}
+                  ariaLabel="Organization"
+                  options={orgs.map((o) => ({ value: o.id, label: o.name }))}
+                  style={{ width: "100%" }}
+                />
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

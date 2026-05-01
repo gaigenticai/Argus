@@ -41,6 +41,7 @@ import {
   type StateTone,
 } from "@/components/shared/page-primitives";
 import { timeAgo } from "@/lib/utils";
+import { Select as ThemedSelect } from "@/components/shared/select";
 
 const STATES: TakedownStateValue[] = [
   "submitted",
@@ -821,38 +822,28 @@ function SubmitTakedownModal({
       <div className="p-6 space-y-5">
         <div className="grid grid-cols-2 gap-3">
           <Field label="Partner" required>
-            <select
+            <ThemedSelect
               value={partner}
-              onChange={(e) =>
-                setPartner(e.target.value as TakedownPartnerValue)
-              }
-              style={inputStyle}
-            >
-              {(Object.keys(PARTNER_LABEL) as TakedownPartnerValue[]).map(
-                (p) => (
-                  <option key={p} value={p}>
-                    {PARTNER_LABEL[p]}
-                  </option>
-                ),
-              )}
-            </select>
+              onChange={(v) => setPartner(v as TakedownPartnerValue)}
+              ariaLabel="Partner"
+              options={(Object.keys(PARTNER_LABEL) as TakedownPartnerValue[]).map((p) => ({
+                value: p,
+                label: PARTNER_LABEL[p],
+              }))}
+              style={{ width: "100%" }}
+            />
           </Field>
           <Field label="Target kind" required>
-            <select
+            <ThemedSelect
               value={targetKind}
-              onChange={(e) =>
-                setTargetKind(e.target.value as TakedownTargetKindValue)
-              }
-              style={inputStyle}
-            >
-              {(Object.keys(TARGET_LABEL) as TakedownTargetKindValue[]).map(
-                (t) => (
-                  <option key={t} value={t}>
-                    {TARGET_LABEL[t]}
-                  </option>
-                ),
-              )}
-            </select>
+              onChange={(v) => setTargetKind(v as TakedownTargetKindValue)}
+              ariaLabel="Target kind"
+              options={(Object.keys(TARGET_LABEL) as TakedownTargetKindValue[]).map((t) => ({
+                value: t,
+                label: TARGET_LABEL[t],
+              }))}
+              style={{ width: "100%" }}
+            />
           </Field>
         </div>
         <Field

@@ -29,6 +29,7 @@ import {
   Th,
 } from "@/components/shared/page-primitives";
 import { formatDate, timeAgo } from "@/lib/utils";
+import { Select as ThemedSelect } from "@/components/shared/select";
 
 const RESOURCES = [
   { key: "raw_intel", label: "Raw intel" },
@@ -520,19 +521,14 @@ function PolicyModal({
               </button>
             </div>
             {scope === "org" ? (
-              <div className="relative mt-2">
-                <select
+              <div className="mt-2">
+                <ThemedSelect
                   value={scopedOrgId}
-                  onChange={(e) => setScopedOrgId(e.target.value)}
-                  className="w-full h-10 px-3 text-[13px] appearance-none"
-                  style={inputStyle}
-                >
-                  {orgs.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={setScopedOrgId}
+                  ariaLabel="Scope organisation"
+                  options={orgs.map((o) => ({ value: o.id, label: o.name }))}
+                  style={{ width: "100%" }}
+                />
               </div>
             ) : null}
           </Field>

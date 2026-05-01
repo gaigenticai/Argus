@@ -8,6 +8,7 @@ import { SeverityBadge } from "@/components/shared/severity-badge";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { categoryLabels, formatDate } from "@/lib/utils";
 import { useToast } from "@/components/shared/toast";
+import { Select } from "@/components/shared/select";
 
 const SEVERITIES = ["all", "critical", "high", "medium", "low", "info"];
 const STATUSES = ["all", "new", "triaged", "investigating", "confirmed", "false_positive", "resolved"];
@@ -104,41 +105,25 @@ export default function AlertsPage() {
       <div className="flex gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <Filter className="w-4 h-4" style={{ color: "var(--color-muted)" }} />
-          <select
+          <Select
             value={severity}
-            onChange={(e) => setSeverity(e.target.value)}
-            className={selectCls}
-            style={{
-              borderRadius: "4px",
-              border: "1px solid var(--color-border)",
-              background: "var(--color-canvas)",
-              color: "var(--color-body)",
-            }}
-          >
-            {SEVERITIES.map((s) => (
-              <option key={s} value={s}>
-                {s === "all" ? "All severities" : s.charAt(0).toUpperCase() + s.slice(1)}
-              </option>
-            ))}
-          </select>
+            onChange={setSeverity}
+            ariaLabel="Severity filter"
+            options={SEVERITIES.map((s) => ({
+              value: s,
+              label: s === "all" ? "All severities" : s.charAt(0).toUpperCase() + s.slice(1),
+            }))}
+          />
         </div>
-        <select
+        <Select
           value={status}
-          onChange={(e) => setStatus(e.target.value)}
-          className={selectCls}
-          style={{
-            borderRadius: "4px",
-            border: "1px solid var(--color-border)",
-            background: "var(--color-canvas)",
-            color: "var(--color-body)",
-          }}
-        >
-          {STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s === "all" ? "All statuses" : s.replace("_", " ").replace(/\b\w/g, (l) => l.toUpperCase())}
-            </option>
-          ))}
-        </select>
+          onChange={setStatus}
+          ariaLabel="Status filter"
+          options={STATUSES.map((s) => ({
+            value: s,
+            label: s === "all" ? "All statuses" : s.replace("_", " ").replace(/\b\w/g, (l) => l.toUpperCase()),
+          }))}
+        />
       </div>
 
       {/* Alerts table */}

@@ -22,6 +22,7 @@ import {
   Tag as TagIcon,
   X,
 } from "lucide-react";
+import { Select } from "@/components/shared/select";
 import {
   api,
   type CaseCounts,
@@ -368,17 +369,12 @@ export default function CasesPage() {
 
         <div className="flex items-center gap-2">
           {orgs.length > 1 ? (
-            <div className="relative">
-              <select
-                value={orgId}
-                onChange={(e) => { setOrgId(e.target.value); setOffset(0); }}
-                className="h-10 pl-3 pr-9 text-[13px] font-semibold outline-none appearance-none"
-                style={{ borderRadius: "4px", border: "1px solid var(--color-border)", background: "var(--color-canvas)", color: "var(--color-ink)" }}
-              >
-                {orgs.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-              </select>
-              <ChevronDown className="w-4 h-4 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--color-muted)" }} />
-            </div>
+            <Select
+              value={orgId}
+              onChange={(v) => { setOrgId(v); setOffset(0); }}
+              ariaLabel="Organisation"
+              options={orgs.map((o) => ({ value: o.id, label: o.name }))}
+            />
           ) : null}
           <button
             onClick={() => loadCases({ signalRefresh: true })}
@@ -847,18 +843,12 @@ function SegmentedFilter<T extends string>({
   renderLabel: (v: T) => string;
 }) {
   return (
-    <div className="relative">
-      <select
-        aria-label={label}
-        value={current}
-        onChange={(e) => onChange(e.target.value as T)}
-        className="h-10 pl-3 pr-8 text-[13px] font-semibold outline-none appearance-none"
-        style={{ borderRadius: "4px", border: "1px solid var(--color-border)", background: "var(--color-canvas)", color: "var(--color-ink)" }}
-      >
-        {values.map((v) => <option key={v} value={v}>{renderLabel(v)}</option>)}
-      </select>
-      <ChevronDown className="w-4 h-4 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: "var(--color-muted)" }} />
-    </div>
+    <Select
+      ariaLabel={label}
+      value={current}
+      onChange={onChange}
+      options={values.map((v) => ({ value: v, label: renderLabel(v) }))}
+    />
   );
 }
 

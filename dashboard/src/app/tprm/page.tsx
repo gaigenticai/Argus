@@ -44,6 +44,7 @@ import {
   type StateTone,
 } from "@/components/shared/page-primitives";
 import { timeAgo } from "@/lib/utils";
+import { Select as ThemedSelect } from "@/components/shared/select";
 
 interface TprmCtx {
   orgs: Org[];
@@ -699,18 +700,13 @@ function BeginOnboardingModal({
         ) : (
           <>
             <Field label="Vendor" required>
-              <select
+              <ThemedSelect
                 value={vendorId}
-                onChange={(e) => setVendorId(e.target.value)}
-                className="w-full h-10 px-3 text-[13px]"
-                style={inputStyle}
-              >
-                {eligible.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.value}
-                  </option>
-                ))}
-              </select>
+                onChange={setVendorId}
+                ariaLabel="Vendor"
+                options={eligible.map((v) => ({ value: v.id, label: v.value }))}
+                style={{ width: "100%" }}
+              />
             </Field>
             <Field label="Notes" hint="Optional context for the workflow.">
               <textarea

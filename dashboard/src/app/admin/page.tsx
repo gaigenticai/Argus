@@ -53,6 +53,7 @@ import {
 import { useAuth } from "@/components/auth/auth-provider";
 import { useToast } from "@/components/shared/toast";
 import { formatDate } from "@/lib/utils";
+import { Select as ThemedSelect } from "@/components/shared/select";
 
 const TABS = [
   { id: "settings", label: "Configuration", icon: SettingsIcon },
@@ -224,15 +225,15 @@ function SettingsTab() {
         <div className="flex gap-2 items-end">
           <div>
             <label className="block text-[10px] font-semibold uppercase tracking-[0.07em] mb-1" style={{ color: "var(--color-muted)" }}>Category</label>
-            <select
+            <ThemedSelect
               value={filterCategory}
-              onChange={(e) => setFilterCategory(e.target.value as AppSettingCategory | "")}
-              className="h-10 px-3 text-[13px] outline-none"
-              style={inputStyle}
-            >
-              <option value="">All</option>
-              {SETTING_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+              onChange={(v) => setFilterCategory(v as AppSettingCategory | "")}
+              ariaLabel="Category"
+              options={[
+                { value: "", label: "All" },
+                ...SETTING_CATEGORIES.map((c) => ({ value: c, label: c })),
+              ]}
+            />
           </div>
           <button onClick={load} className="flex items-center gap-2 h-10 px-4 text-[13px] font-semibold transition-colors" style={btnSecondary}>
             <RefreshCw className="w-4 h-4" /> Refresh
@@ -351,14 +352,22 @@ function SettingCreateModal({ onClose, onSaved }: { onClose: () => void; onSaved
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Category">
-            <select value={category} onChange={(e) => setCategory(e.target.value as AppSettingCategory)} className="w-full h-10 px-3 text-[13px] outline-none" style={inputStyle}>
-              {SETTING_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
+            <ThemedSelect
+              value={category}
+              onChange={(v) => setCategory(v as AppSettingCategory)}
+              ariaLabel="Category"
+              options={SETTING_CATEGORIES.map((c) => ({ value: c, label: c }))}
+              style={{ width: "100%" }}
+            />
           </Field>
           <Field label="Type">
-            <select value={valueType} onChange={(e) => setValueType(e.target.value as AppSettingValueType)} className="w-full h-10 px-3 text-[13px] outline-none" style={inputStyle}>
-              {SETTING_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
+            <ThemedSelect
+              value={valueType}
+              onChange={(v) => setValueType(v as AppSettingValueType)}
+              ariaLabel="Type"
+              options={SETTING_TYPES.map((t) => ({ value: t, label: t }))}
+              style={{ width: "100%" }}
+            />
           </Field>
         </div>
         <Field label="Value">
@@ -437,10 +446,15 @@ function CrawlerTargetsTab() {
         <div className="flex gap-2 items-end">
           <div>
             <label className="block text-[10px] font-semibold uppercase tracking-[0.07em] mb-1" style={{ color: "var(--color-muted)" }}>Kind</label>
-            <select value={filterKind} onChange={(e) => setFilterKind(e.target.value as CrawlerKind | "")} className="h-10 px-3 text-[13px] outline-none" style={inputStyle}>
-              <option value="">All kinds</option>
-              {CRAWLER_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
-            </select>
+            <ThemedSelect
+              value={filterKind}
+              onChange={(v) => setFilterKind(v as CrawlerKind | "")}
+              ariaLabel="Crawler kind"
+              options={[
+                { value: "", label: "All kinds" },
+                ...CRAWLER_KINDS.map((k) => ({ value: k.value, label: k.label })),
+              ]}
+            />
           </div>
           <button onClick={load} className="flex items-center gap-2 h-10 px-4 text-[13px] font-semibold transition-colors" style={btnSecondary}><RefreshCw className="w-4 h-4" /> Refresh</button>
         </div>
@@ -539,9 +553,13 @@ function CrawlerTargetCreateModal({ onClose, onSaved }: { onClose: () => void; o
     <Modal title="New crawler target" onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
         <Field label="Kind">
-          <select value={kind} onChange={(e) => setKind(e.target.value as CrawlerKind)} className="w-full h-10 px-3 text-[13px] outline-none" style={inputStyle}>
-            {CRAWLER_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
-          </select>
+          <ThemedSelect
+            value={kind}
+            onChange={(v) => setKind(v as CrawlerKind)}
+            ariaLabel="Kind"
+            options={CRAWLER_KINDS.map((k) => ({ value: k.value, label: k.label }))}
+            style={{ width: "100%" }}
+          />
         </Field>
         <Field label="Identifier (URL / handle / room id)">
           <input type="text" required value={identifier} onChange={(e) => setIdentifier(e.target.value)} placeholder={idHint} className="w-full h-10 px-3 text-[13px] font-mono outline-none" style={inputStyle} />
@@ -791,9 +809,13 @@ function AllowlistCreateModal({ onClose, onSaved }: { onClose: () => void; onSav
     <Modal title="New allowlist entry" onClose={onClose}>
       <form onSubmit={submit} className="space-y-4">
         <Field label="Kind">
-          <select value={kind} onChange={(e) => setKind(e.target.value as AllowlistKind)} className="w-full h-10 px-3 text-[13px] outline-none" style={inputStyle}>
-            {ALLOWLIST_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
-          </select>
+          <ThemedSelect
+            value={kind}
+            onChange={(v) => setKind(v as AllowlistKind)}
+            ariaLabel="Allowlist kind"
+            options={ALLOWLIST_KINDS.map((k) => ({ value: k.value, label: k.label }))}
+            style={{ width: "100%" }}
+          />
         </Field>
         <Field label="Value">
           <input type="text" required value={value} onChange={(e) => setValue(e.target.value)} placeholder={kind === "brand_name" ? "MyBank Cards" : "subsidiary.example.com"} className="w-full h-10 px-3 text-[13px] font-mono outline-none" style={inputStyle} />
@@ -935,9 +957,13 @@ function SlaPoliciesSection({ orgId }: { orgId: string }) {
         <form onSubmit={handleSave} className="flex flex-wrap gap-4 items-end">
           <div className="flex-1 min-w-[140px]">
             <Field label="Severity">
-              <select value={severity} onChange={(e) => setSeverity(e.target.value as SlaSeverity)} className="w-full h-10 px-3 text-[13px] outline-none" style={inputStyle}>
-                {SLA_SEVERITIES.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
+              <ThemedSelect
+                value={severity}
+                onChange={(v) => setSeverity(v as SlaSeverity)}
+                ariaLabel="Severity"
+                options={SLA_SEVERITIES.map((s) => ({ value: s, label: s }))}
+                style={{ width: "100%" }}
+              />
             </Field>
           </div>
           <div className="flex-1 min-w-[160px]">
@@ -1133,9 +1159,13 @@ function SlaTicketBindingsSection({ orgId }: { orgId: string }) {
           </div>
           <div className="flex-1 min-w-[140px]">
             <Field label="System">
-              <select value={system} onChange={(e) => setSystem(e.target.value as SlaSystem)} className="w-full h-10 px-3 text-[13px] outline-none" style={inputStyle}>
-                {SLA_SYSTEMS.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
+              <ThemedSelect
+                value={system}
+                onChange={(v) => setSystem(v as SlaSystem)}
+                ariaLabel="System"
+                options={SLA_SYSTEMS.map((s) => ({ value: s, label: s }))}
+                style={{ width: "100%" }}
+              />
             </Field>
           </div>
           <div className="flex-1 min-w-[160px]">

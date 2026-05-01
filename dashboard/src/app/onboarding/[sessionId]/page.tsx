@@ -29,6 +29,7 @@ import {
   type OnboardingValidationReport,
 } from "@/lib/api";
 import { useToast } from "@/components/shared/toast";
+import { Select as ThemedSelect } from "@/components/shared/select";
 
 // --- Types --------------------------------------------------------------
 
@@ -803,16 +804,16 @@ function AssetTableStep({
             >
               <div style={{ gridColumn: "span 2" }}>
                 <label style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-muted)" }}>Type</label>
-                <select
-                  value={a.asset_type}
-                  onChange={(e) => update(idx, { asset_type: e.target.value as AssetTypeName })}
-                  disabled={readOnly}
-                  style={{ ...smallInputStyle, marginTop: "4px" }}
-                >
-                  {allowedTypes.map((t) => (
-                    <option key={t} value={t}>{t}</option>
-                  ))}
-                </select>
+                <div style={{ marginTop: "4px" }}>
+                  <ThemedSelect
+                    value={a.asset_type}
+                    onChange={(v) => update(idx, { asset_type: v as AssetTypeName })}
+                    ariaLabel="Asset type"
+                    disabled={readOnly}
+                    options={allowedTypes.map((t) => ({ value: t, label: t }))}
+                    style={{ width: "100%", height: "36px" }}
+                  />
+                </div>
               </div>
               <div style={{ gridColumn: "span 4" }}>
                 <label style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-muted)" }}>Value</label>
@@ -826,16 +827,16 @@ function AssetTableStep({
               </div>
               <div style={{ gridColumn: "span 2" }}>
                 <label style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-muted)" }}>Criticality</label>
-                <select
-                  value={a.criticality}
-                  onChange={(e) => update(idx, { criticality: e.target.value as AssetCriticalityLevel })}
-                  disabled={readOnly}
-                  style={{ ...smallInputStyle, marginTop: "4px" }}
-                >
-                  {CRITICALITIES.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
+                <div style={{ marginTop: "4px" }}>
+                  <ThemedSelect
+                    value={a.criticality}
+                    onChange={(v) => update(idx, { criticality: v as AssetCriticalityLevel })}
+                    ariaLabel="Criticality"
+                    disabled={readOnly}
+                    options={CRITICALITIES.map((c) => ({ value: c, label: c }))}
+                    style={{ width: "100%", height: "36px" }}
+                  />
+                </div>
               </div>
               <div style={{ gridColumn: "span 3" }}>
                 <label style={{ fontSize: "11px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--color-muted)" }}>Tags (comma)</label>

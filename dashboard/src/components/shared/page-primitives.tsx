@@ -538,6 +538,8 @@ export function SearchInput({
   );
 }
 
+import { Select as ThemedSelect } from "@/components/shared/select";
+
 export function Select<T extends string>({
   value,
   options,
@@ -550,30 +552,13 @@ export function Select<T extends string>({
   ariaLabel: string;
 }) {
   return (
-    <div className="relative">
-      <select
-        aria-label={ariaLabel}
-        value={value}
-        onChange={(e) => onChange(e.target.value as T)}
-        className="h-9 pl-3 pr-8 text-[13px] font-semibold outline-none appearance-none transition-colors"
-        style={{
-          background: "var(--color-canvas)",
-          border: "1px solid var(--color-border)",
-          borderRadius: "5px",
-          color: "var(--color-ink)",
-        }}
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <ChevronDown
-        className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-        style={{ color: "var(--color-muted)" }}
-      />
-    </div>
+    <ThemedSelect<T>
+      value={value}
+      onChange={onChange}
+      ariaLabel={ariaLabel}
+      options={options}
+      style={{ height: "36px", minWidth: 160 }}
+    />
   );
 }
 
@@ -597,28 +582,13 @@ export function OrgSwitcher({
 }) {
   if (orgs.length <= 1) return null;
   return (
-    <div className="relative">
-      <select
-        value={orgId}
-        onChange={(e) => onChange(e.target.value)}
-        aria-label="Organization"
-        className="h-9 pl-3 pr-9 text-[13px] font-semibold outline-none appearance-none max-w-[240px] transition-colors"
-        style={{
-          background: "var(--color-canvas)",
-          border: "1px solid var(--color-border)",
-          borderRadius: "5px",
-          color: "var(--color-ink)",
-        }}
-      >
-        {orgs.map((o) => (
-          <option key={o.id} value={o.id}>{o.name}</option>
-        ))}
-      </select>
-      <ChevronDown
-        className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none"
-        style={{ color: "var(--color-muted)" }}
-      />
-    </div>
+    <ThemedSelect
+      value={orgId}
+      onChange={onChange}
+      ariaLabel="Organization"
+      options={orgs.map((o) => ({ value: o.id, label: o.name }))}
+      style={{ height: "36px", maxWidth: 260 }}
+    />
   );
 }
 

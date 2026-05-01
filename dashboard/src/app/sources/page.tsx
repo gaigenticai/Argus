@@ -13,6 +13,7 @@ import {
 import { api, type Source, type SourceTestResult } from "@/lib/api";
 import { useToast } from "@/components/shared/toast";
 import { formatDate, timeAgo } from "@/lib/utils";
+import { Select as ThemedSelect } from "@/components/shared/select";
 
 const SOURCE_TYPES = [
   "tor_forum",
@@ -363,9 +364,13 @@ export default function SourcesPage() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-[13px] font-semibold mb-1.5" style={{ color: "var(--color-body)" }}>Type</label>
-                  <select value={formType} onChange={(e) => setFormType(e.target.value)} className={inputCls} style={inputStyle}>
-                    {SOURCE_TYPES.map((t) => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
-                  </select>
+                  <ThemedSelect
+                    value={formType}
+                    onChange={setFormType}
+                    ariaLabel="Source type"
+                    options={SOURCE_TYPES.map((t) => ({ value: t, label: t.replace(/_/g, " ") }))}
+                    style={{ width: "100%" }}
+                  />
                 </div>
                 <div>
                   <label className="block text-[13px] font-semibold mb-1.5" style={{ color: "var(--color-body)" }}>Language</label>
