@@ -140,33 +140,51 @@ async def _seed(session: AsyncSession) -> Organization:
     # --- users -------------------------------------------------------
     # Audit D-4 — generate fresh random passwords every seed run so the
     # repository never ships working credentials. Print once to stdout
-    # so the demo operator can capture them.
+    # so the demo operator can capture them. Operators who want a known
+    # credential up-front can set ARGUS_BOOTSTRAP_ADMIN_EMAIL +
+    # ARGUS_BOOTSTRAP_ADMIN_PASSWORD (and the parallel ANALYST_*) — the
+    # seed will honor those instead of generating randoms.
+    import os as _os
     import secrets as _secrets
 
-    admin_pwd = _secrets.token_urlsafe(18)
-    analyst_pwd = _secrets.token_urlsafe(18)
-    if not (await session.execute(select(User).where(User.email == "demo-admin@argus.test"))).scalar_one_or_none():
+    admin_email = _os.environ.get("ARGUS_BOOTSTRAP_ADMIN_EMAIL") or "demo-admin@argus.test"
+    analyst_email = _os.environ.get("ARGUS_BOOTSTRAP_ANALYST_EMAIL") or "demo-analyst@argus.test"
+    admin_pw_env = _os.environ.get("ARGUS_BOOTSTRAP_ADMIN_PASSWORD")
+    analyst_pw_env = _os.environ.get("ARGUS_BOOTSTRAP_ANALYST_PASSWORD")
+    admin_pwd = admin_pw_env or _secrets.token_urlsafe(18)
+    analyst_pwd = analyst_pw_env or _secrets.token_urlsafe(18)
+    admin_from_env = admin_pw_env is not None
+    analyst_from_env = analyst_pw_env is not None
+
+    if not (await session.execute(select(User).where(User.email == admin_email))).scalar_one_or_none():
         session.add(User(
-            email="demo-admin@argus.test",
-            username="demo-admin",
+            email=admin_email,
+            username=admin_email.split("@", 1)[0],
             password_hash=hash_password(admin_pwd),
             display_name="Demo Admin",
             role=UserRole.ADMIN.value,
             is_active=True,
         ))
         session.add(User(
-            email="demo-analyst@argus.test",
-            username="demo-analyst",
+            email=analyst_email,
+            username=analyst_email.split("@", 1)[0],
             password_hash=hash_password(analyst_pwd),
             display_name="Demo Analyst",
             role=UserRole.ANALYST.value,
             is_active=True,
         ))
-        print("============================================================")
-        print("DEMO USERS (random passwords — copy now, shown only once):")
-        print(f"  admin:    demo-admin@argus.test  /  {admin_pwd}")
-        print(f"  analyst:  demo-analyst@argus.test  /  {analyst_pwd}")
-        print("============================================================")
+        if admin_from_env and analyst_from_env:
+            print(f"  · demo users provisioned with passwords from ARGUS_BOOTSTRAP_*_PASSWORD env")
+        else:
+            print("============================================================")
+            print("DEMO USERS — copy passwords NOW, shown only once:")
+            tag_a = "(env)" if admin_from_env else "(generated)"
+            tag_b = "(env)" if analyst_from_env else "(generated)"
+            print(f"  admin   {tag_a}: {admin_email}  /  {admin_pwd}")
+            print(f"  analyst {tag_b}: {analyst_email}  /  {analyst_pwd}")
+            print("Set ARGUS_BOOTSTRAP_ADMIN_PASSWORD + ARGUS_BOOTSTRAP_ANALYST_PASSWORD")
+            print("in your env to suppress the auto-generated defaults.")
+            print("============================================================")
 
     # --- brand terms -------------------------------------------------
     session.add_all([
