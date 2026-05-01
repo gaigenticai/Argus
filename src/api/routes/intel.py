@@ -654,6 +654,43 @@ async def sigma_translate(
     }
 
 
+@router.get("/soar/connectors")
+async def soar_connectors(analyst: AnalystUser):
+    """List every SOAR connector + its configuration state (P3 #3.7)."""
+    from src.integrations.soar import list_available
+    return {"connectors": list_available()}
+
+
+@router.get("/soar/{name}/health")
+async def soar_health(name: str, analyst: AnalystUser):
+    from src.integrations.soar import get_connector
+
+    conn = get_connector(name)
+    if conn is None:
+        raise HTTPException(404, f"unknown SOAR connector {name!r}")
+    result = await conn.health_check()
+    return result.to_dict()
+
+
+class SoarPushEventsRequest(BaseModel):
+    events: list[dict]
+
+
+@router.post("/soar/{name}/push")
+async def soar_push(
+    name: str,
+    body: SoarPushEventsRequest,
+    analyst: AnalystUser,
+):
+    from src.integrations.soar import get_connector
+
+    conn = get_connector(name)
+    if conn is None:
+        raise HTTPException(404, f"unknown SOAR connector {name!r}")
+    result = await conn.push_events(body.events)
+    return result.to_dict()
+
+
 @router.get("/siem/connectors")
 async def siem_connectors(analyst: AnalystUser):
     """List every SIEM connector + its configuration state (P2 #2.7)."""
