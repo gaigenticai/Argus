@@ -654,6 +654,45 @@ async def sigma_translate(
     }
 
 
+@router.get("/siem/connectors")
+async def siem_connectors(analyst: AnalystUser):
+    """List every SIEM connector + its configuration state (P2 #2.7)."""
+    from src.integrations.siem import list_available
+    return {"connectors": list_available()}
+
+
+@router.get("/siem/{name}/health")
+async def siem_health(name: str, analyst: AnalystUser):
+    from src.integrations.siem import get_connector
+
+    conn = get_connector(name)
+    if conn is None:
+        raise HTTPException(404, f"unknown connector {name!r}")
+    result = await conn.health_check()
+    return result.to_dict()
+
+
+class SiemPushEventsRequest(BaseModel):
+    """Push a batch of pre-shaped events to a SIEM connector. The dict
+    shape is the connector's responsibility to translate."""
+    events: list[dict]
+
+
+@router.post("/siem/{name}/push")
+async def siem_push(
+    name: str,
+    body: SiemPushEventsRequest,
+    analyst: AnalystUser,
+):
+    from src.integrations.siem import get_connector
+
+    conn = get_connector(name)
+    if conn is None:
+        raise HTTPException(404, f"unknown connector {name!r}")
+    result = await conn.push_events(body.events)
+    return result.to_dict()
+
+
 @router.get("/opencti/availability")
 async def opencti_availability(analyst: AnalystUser):
     from src.integrations import opencti as opencti_mod
