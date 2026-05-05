@@ -89,6 +89,11 @@ class DmarcReport(Base, UUIDMixin, TimestampMixin):
 
     raw_xml_sha256: Mapped[str | None] = mapped_column(String(64))
     parsed: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    # Posture score (0-100) blended from policy strength, alignment %, RUF
+    # presence; populated by /dmarc/posture/{org_id}.
+    posture_score: Mapped[dict | None] = mapped_column(JSONB)
+    rca: Mapped[dict | None] = mapped_column(JSONB)
+    agent_summary: Mapped[dict | None] = mapped_column(JSONB)
 
     __table_args__ = (
         UniqueConstraint(

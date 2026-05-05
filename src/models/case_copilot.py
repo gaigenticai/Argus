@@ -70,6 +70,14 @@ class CaseCopilotRun(Base, UUIDMixin, TimestampMixin):
     timeline_events: Mapped[list | None] = mapped_column(JSONB)  # [{at, source, text}]
     suggested_mitre_ids: Mapped[list | None] = mapped_column(JSONB)  # ["T1190", ...]
     draft_next_steps: Mapped[list | None] = mapped_column(JSONB)  # ["Step 1...", ...]
+    # Catalogued playbooks the LLM picked from the investigation
+    # surface. Each entry: ``{"playbook_id": str, "params": {...},
+    # "rationale": str}``. ``apply_suggestions`` turns this into one
+    # ``PlaybookExecution`` per row, linked back to the case + this
+    # copilot run via the new FKs on ``playbook_executions``. Older
+    # runs (pre-v2) leave this NULL and apply_suggestions falls
+    # through to the legacy comment-only path.
+    suggested_playbooks: Mapped[list | None] = mapped_column(JSONB)
     similar_case_ids: Mapped[list | None] = mapped_column(JSONB)  # historical reference cases
     confidence: Mapped[float | None] = mapped_column(Float)
 

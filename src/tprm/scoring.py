@@ -73,7 +73,7 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def _vendor_breach_pillar(
+async def _vendor_breach_pillar_internal(
     db: AsyncSession,
     organization_id: uuid.UUID,
     vendor_asset: Asset,
@@ -170,6 +170,72 @@ async def _vendor_breach_pillar(
     }
 
 
+async def _vendor_breach_pillar(
+    db: AsyncSession,
+    organization_id: uuid.UUID,
+    vendor_asset: Asset,
+    rubric,
+) -> tuple[float, dict[str, Any]]:
+    """Composite breach pillar = internal-leak signals (existing) blended
+    with HIBP + sanctions. Sanctions hit caps the entire pillar at 25.
+
+    Weights inside the pillar:
+        internal leaks  : 0.45
+        HIBP            : 0.35
+        sanctions       : 0.20
+    """
+    internal_score, internal_evidence = await _vendor_breach_pillar_internal(
+        db, organization_id, vendor_asset, rubric,
+    )
+
+    primary_domain = (vendor_asset.details or {}).get("primary_domain") or ""
+    vendor_name = vendor_asset.value or ""
+
+    # HIBP + sanctions are best-effort; failures fall back to neutral.
+    try:
+        from src.tprm.breach_hibp import assess_vendor_breach
+        hibp_score, hibp_evidence = await assess_vendor_breach(primary_domain)
+    except Exception as e:  # noqa: BLE001
+        hibp_score, hibp_evidence = 70.0, {"error": str(e)[:200]}
+
+    try:
+        from src.tprm.sanctions import screen_vendor
+        hits = await screen_vendor(vendor_name)
+        matched = [h.source for h in hits if h.matched]
+        sanctions_score = 0.0 if matched else 100.0
+        sanctions_evidence = {
+            "matched_sources": matched,
+            "results": [
+                {
+                    "source": h.source,
+                    "matched": h.matched,
+                    "score": h.score,
+                    "matched_term": h.payload.get("matched_term"),
+                }
+                for h in hits
+            ],
+        }
+    except Exception as e:  # noqa: BLE001
+        sanctions_score, sanctions_evidence = 100.0, {"error": str(e)[:200]}
+
+    composite = (
+        internal_score * 0.45 + hibp_score * 0.35 + sanctions_score * 0.20
+    )
+    if sanctions_evidence.get("matched_sources"):
+        # Hard cap when on a sanctions list — no breach pillar score
+        # above 25 should be possible.
+        composite = min(composite, 25.0)
+    composite = max(0.0, min(100.0, composite))
+
+    return composite, {
+        "internal_leaks": internal_evidence | {"score": internal_score},
+        "hibp": hibp_evidence | {"score": hibp_score},
+        "sanctions": sanctions_evidence | {"score": sanctions_score},
+        "composite": round(composite, 2),
+        "weights": {"internal": 0.45, "hibp": 0.35, "sanctions": 0.20},
+    }
+
+
 async def compute_vendor_score(
     db: AsyncSession,
     organization_id: uuid.UUID,
@@ -216,7 +282,7 @@ async def compute_vendor_score(
     )
     sec_score = float(sec_row.score)
 
-    # 3) Operational pillar — data_access_level + contract presence.
+    # 3) Operational pillar — data_access_level + contract presence + email security.
     details = vendor.details or {}
     access = (details.get("data_access_level") or "metadata").lower()
     access_score = {
@@ -231,9 +297,26 @@ async def compute_vendor_score(
     relationship_bonus = (
         10 if relationship in ("auditor", "consultant", "saas") else 0
     )
-    op_score = min(
+    op_base = min(
         100, access_score + relationship_bonus + (5 if has_contract else 0)
     )
+    # Email security blends in at 30% — DMARC/SPF/DKIM is operational
+    # hygiene the procurement team should see.
+    primary_domain_for_email = (details.get("primary_domain") or "").strip().lower()
+    email_security_evidence: dict[str, Any] = {}
+    if primary_domain_for_email:
+        try:
+            from src.tprm.email_security import assess_email_security
+            email_score, email_security_evidence = await assess_email_security(
+                primary_domain_for_email
+            )
+        except Exception as e:  # noqa: BLE001
+            email_score = 70.0
+            email_security_evidence = {"error": str(e)[:200]}
+    else:
+        email_score = 70.0
+        email_security_evidence = {"reason": "no primary_domain"}
+    op_score = min(100.0, max(0.0, op_base * 0.7 + email_score * 0.3))
 
     # 4) Breach pillar — real computation against vendor-attributed findings.
     breach_score, breach_evidence = await _vendor_breach_pillar(
@@ -259,6 +342,9 @@ async def compute_vendor_score(
             "data_access_level": access,
             "has_contract": has_contract,
             "breach_evidence": breach_evidence,
+            "email_security_evidence": email_security_evidence,
+            "operational_base": op_base,
+            "operational_email_security_score": email_score,
         },
     )
 
@@ -296,6 +382,20 @@ async def persist_vendor_scorecard(
     )
     db.add(card)
     await db.flush()
+    # Trend snapshot — append-only, used by the FE sparkline.
+    try:
+        from src.tprm.snapshots import record_snapshot
+        await record_snapshot(
+            db,
+            organization_id=organization_id,
+            vendor_asset_id=vendor_asset_id,
+            score=result.score,
+            grade=result.grade.value,
+            pillar_scores=dict(result.pillar_scores),
+        )
+    except Exception:  # noqa: BLE001
+        # Snapshot failures must not block the primary scorecard write.
+        pass
     return card
 
 

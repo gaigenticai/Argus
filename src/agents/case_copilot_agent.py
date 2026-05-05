@@ -356,6 +356,44 @@ async def _t_suggest_mitre(
     ]
 
 
+@_tool(
+    name="circl_hashlookup",
+    description=(
+        "Free CIRCL hashlookup — given a file md5/sha1/sha256, returns "
+        "known-good (NSRL whitelist) / known-bad (CIRCL curated) / "
+        "unknown classification plus filename hints CIRCL has on file. "
+        "Use this BEFORE running an expensive sandbox detonation: if a "
+        "binary tied to the case comes back known-good, deprioritise. "
+        "Anonymous, no key needed."
+    ),
+    schema={
+        "type": "object",
+        "properties": {
+            "file_hash": {
+                "type": "string",
+                "description": "md5, sha1, or sha256 of the file (hash kind auto-detected).",
+            }
+        },
+        "required": ["file_hash"],
+    },
+)
+async def _t_circl_hashlookup(
+    session: AsyncSession, file_hash: str
+) -> dict[str, Any]:
+    from src.enrichment.circl import hashlookup
+
+    res = await hashlookup(file_hash)
+    if res is None:
+        return {"hash": file_hash, "known": None, "evidence": "lookup unavailable"}
+    return {
+        "hash": res.hash,
+        "hash_kind": res.hash_kind,
+        "known": res.known,
+        "source": res.source,
+        "filename_hint": res.filename_hint,
+    }
+
+
 # ----------------------------------------------------------------------
 #  Report dataclasses
 # ----------------------------------------------------------------------
@@ -379,6 +417,10 @@ class CopilotReport:
     timeline_events: list[dict[str, Any]] = field(default_factory=list)
     suggested_mitre_ids: list[str] = field(default_factory=list)
     draft_next_steps: list[str] = field(default_factory=list)
+    # New in v2 — list of {playbook_id, params, rationale}. ``apply``
+    # creates one PlaybookExecution per entry, linked to the case +
+    # this run via FKs on playbook_executions.
+    suggested_playbooks: list[dict[str, Any]] = field(default_factory=list)
     similar_case_ids: list[str] = field(default_factory=list)
     trace: list[TraceStep] = field(default_factory=list)
 
@@ -389,17 +431,25 @@ class CopilotReport:
 
 
 SYSTEM_PROMPT = """You are an Argus Case Copilot — a senior IR \
-analyst's wing-person, working as autonomous software. The case has \
-JUST been opened and the human analyst has not yet had a chance to \
-work it. Your job is to read the room and hand them a starter pack:
+analyst's wing-person, working as autonomous software.
 
-  1. A short summary of why this case matters
-  2. A draft timeline of relevant events (chronological)
-  3. MITRE Enterprise techniques worth attaching
-  4. 3-5 concrete next-step checkpoints
+When you finalise, you MUST emit ALL of:
+  - summary: 2-3 sentences orienting the analyst
+  - timeline_events: chronological events relevant to the case
+  - suggested_mitre_ids: MITRE Enterprise technique IDs (e.g.
+    T1190, T1566.001) worth attaching to the case
+  - draft_next_steps: short narrative bullets the analyst reads
+  - suggested_playbooks: STRUCTURED, EXECUTABLE versions of those
+    bullets, each picking a playbook_id from AVAILABLE INVESTIGATION
+    PLAYBOOKS in the user message. Without suggested_playbooks the
+    analyst has to copy-paste each step manually — defeating the
+    purpose of the Copilot.
 
-You never edit the case yourself — the analyst clicks "Apply" if your \
-suggestions are good.
+Skipping any of these fields makes the case briefing incomplete.
+``suggested_mitre_ids`` and ``suggested_playbooks`` are different
+artifacts — MITRE pills are attached to the case for downstream
+threat-actor / SOC reporting; playbooks are queued for execution.
+Both must be present.
 
 Each turn, emit ONE JSON object.
 
@@ -419,10 +469,48 @@ Finalise (do this last, after gathering enough context):
     {"at": "ISO datetime or null", "source": "alert|raw_intel|finding", "text": "..."}
   ],
   "suggested_mitre_ids": ["T1190", "T1566.001", ...],
-  "draft_next_steps": ["short imperative bullets"],
+  "draft_next_steps": ["short imperative bullets — narrative for analyst"],
+  "suggested_playbooks": [          /* REQUIRED FIELD — see worked example below */
+    {
+      "playbook_id": "<MUST be one of the ids in AVAILABLE INVESTIGATION PLAYBOOKS>",
+      "params": { ... per the playbook's input_schema ... },
+      "rationale": "<1 sentence: why THIS playbook for THIS case>"
+    }
+  ],
   "similar_case_ids": ["uuid", ...],
   "confidence": 0.0..1.0
 }
+
+Worked example — for a SuspectDomain case on `evil-bank.com`:
+
+  "draft_next_steps": [
+    "Pull WHOIS / registrar for evil-bank.com",
+    "Pivot through cert-transparency for sibling hostnames",
+    "Probe the root URL to see if phishing page is live",
+    "If live, file takedown with the registrar"
+  ],
+  "suggested_playbooks": [
+    {"playbook_id": "whois_lookup",
+     "params": {"domain": "evil-bank.com"},
+     "rationale": "Establish registrar + creation date — fresh registrations escalate takedown urgency."},
+    {"playbook_id": "cert_transparency_pivot",
+     "params": {"domain": "evil-bank.com"},
+     "rationale": "Surface mail./login./api. siblings the attacker may have provisioned."},
+    {"playbook_id": "live_probe_capture",
+     "params": {"url": "https://evil-bank.com"},
+     "rationale": "Capture content fingerprint to confirm whether the page is live phishing or staged/parked."},
+    {"playbook_id": "submit_takedown_for_suspect",
+     "params": {"suspect_domain_id": "<uuid from finding>"},
+     "rationale": "Once confirmed live, file the takedown so the registrar pulls the domain."}
+  ]
+
+Rules for suggested_playbooks:
+  - REQUIRED FIELD. Even if empty, emit `"suggested_playbooks": []`.
+  - Each playbook_id MUST appear in AVAILABLE INVESTIGATION PLAYBOOKS.
+  - Each params object MUST satisfy that playbook's input_schema.
+  - Order from cheapest+most-informative first to costly-or-irreversible last.
+  - The list should usually mirror draft_next_steps 1:1 — every narrative
+    step that maps to a catalog playbook becomes a structured entry.
 
 Default to a maximum of 5 tool calls per case. Quality over completeness.
 Output only JSON. No prose.
@@ -455,12 +543,29 @@ class CaseCopilotAgent:
         # chars to defeat embedded ``\n###SYSTEM`` prompt-injection.
         case_clean = _safe_strip(case_id)
         org_clean = _safe_strip(organization_id)
+
+        # Inject the investigation-scoped playbook catalog so the
+        # LLM picks playbook_ids that actually exist. ``applicable_when``
+        # filters out playbooks whose preconditions aren't met (e.g.
+        # siem_pivot drops out when no Wazuh is configured).
+        from src.core.exec_playbooks import all_playbooks
+
+        catalog_block = "\n".join(
+            f"- {pb.id}: {pb.title}"
+            f" (input_schema: {json.dumps(pb.input_schema)})"
+            f"\n    {pb.description}"
+            for pb in all_playbooks()
+            if pb.scope == "investigation"
+        ) or "(no investigation playbooks available in this deployment)"
+
         history: list[dict[str, str]] = [
             {
                 "role": "user",
                 "content": (
                     "Begin case-copilot assistance.\n"
-                    f"<<<DATA>>>{json.dumps({'case_id': case_clean, 'organization_id': org_clean})}<<<END>>>"
+                    f"<<<DATA>>>{json.dumps({'case_id': case_clean, 'organization_id': org_clean})}<<<END>>>\n\n"
+                    "## AVAILABLE INVESTIGATION PLAYBOOKS  (suggested_playbooks[].playbook_id MUST be one of these)\n"
+                    f"{catalog_block}"
                 ),
             }
         ]
@@ -503,6 +608,62 @@ class CaseCopilotAgent:
                         tool_result=None,
                     )
                 )
+                # Defensive playbook_id filter — drop entries that
+                # reference an unknown / hallucinated playbook OR a
+                # playbook that's registered but not currently
+                # applicable (e.g. siem_pivot when Wazuh isn't
+                # configured). Without the applicability check, the
+                # model can pick a playbook from training-data
+                # memory that's filtered out of the catalog block —
+                # we then queue it and the operator sees a "no SIEM
+                # configured" failure they didn't ask for.
+                from src.core.exec_playbooks import applicable_catalog
+
+                # Build a fake snapshot — investigation playbooks'
+                # applicable_when predicates either ignore the snap
+                # entirely (most do) or read very lightweight fields.
+                # Using None/{} keeps this cheap; the framework
+                # handles predicates that crash on missing fields.
+                valid_pb_ids = {
+                    pb.id for pb in applicable_catalog(
+                        type("Snap", (), {})(),  # empty stub
+                        scope="investigation",
+                    )
+                }
+                raw_plays = decision.get("suggested_playbooks") or []
+                # Diagnostic — when the LLM ignores the field entirely
+                # (raw_plays is empty), log the keys it DID emit so
+                # we can iterate the prompt rather than guess.
+                logger.info(
+                    "case_copilot finalise: emitted_keys=%s "
+                    "raw_playbook_count=%d valid_pb_ids=%s",
+                    sorted(decision.keys()),
+                    len(raw_plays) if isinstance(raw_plays, list) else 0,
+                    sorted(valid_pb_ids),
+                )
+                if isinstance(raw_plays, list) and raw_plays:
+                    logger.info(
+                        "case_copilot finalise: first_playbook_entry=%r",
+                        raw_plays[0],
+                    )
+
+                clean_plays: list[dict[str, Any]] = []
+                for entry in raw_plays:
+                    if not isinstance(entry, dict):
+                        continue
+                    pid = (entry.get("playbook_id") or "").strip()
+                    if pid not in valid_pb_ids:
+                        logger.info(
+                            "case_copilot dropping entry with playbook_id=%r (not in catalog)",
+                            pid,
+                        )
+                        continue
+                    clean_plays.append({
+                        "playbook_id": pid,
+                        "params": entry.get("params") or {},
+                        "rationale": str(entry.get("rationale") or "")[:1000],
+                    })
+
                 return CopilotReport(
                     case_id=case_id,
                     iterations=i,
@@ -511,6 +672,7 @@ class CaseCopilotAgent:
                     timeline_events=list(decision.get("timeline_events") or []),
                     suggested_mitre_ids=list(decision.get("suggested_mitre_ids") or []),
                     draft_next_steps=list(decision.get("draft_next_steps") or []),
+                    suggested_playbooks=clean_plays,
                     similar_case_ids=list(decision.get("similar_case_ids") or []),
                     trace=trace,
                 )
@@ -661,6 +823,7 @@ async def run_and_persist(
         run.timeline_events = report.timeline_events
         run.suggested_mitre_ids = report.suggested_mitre_ids
         run.draft_next_steps = report.draft_next_steps
+        run.suggested_playbooks = report.suggested_playbooks
         run.similar_case_ids = report.similar_case_ids
         run.confidence = report.confidence
         run.iterations = report.iterations
@@ -699,17 +862,112 @@ async def run_and_persist(
 # ----------------------------------------------------------------------
 
 
+async def _execute_first_step(
+    *,
+    session: AsyncSession,
+    execution: Any,  # PlaybookExecution — duck-typed to avoid an import cycle
+    playbook: Any,   # exec_playbooks.Playbook
+    user_id: uuid.UUID | None,
+) -> None:
+    """Run step 0 of a freshly-queued investigation playbook.
+
+    Mirrors :func:`src.api.routes.playbooks._run_step_and_update_status`
+    but inlined here so apply_suggestions doesn't need to import the
+    routes module. Persists the StepResult on the execution row and
+    flips status to ``completed`` (single-step) / ``step_complete``
+    (multi-step) / ``failed`` based on the result.
+
+    Looks up the org because the playbook's execute signature requires
+    ``Organization``.
+    """
+    from src.models.threat import Organization
+    from src.models.playbooks import PlaybookStatus
+
+    org = await session.get(Organization, execution.organization_id)
+    if org is None:  # pragma: no cover — defensive, FK should prevent this
+        return
+
+    step = playbook.step_at(0)
+    now_iso = datetime.now(timezone.utc)
+    if execution.started_at is None:
+        execution.started_at = now_iso
+
+    try:
+        result = await step.execute(
+            session, org, execution.params or {}, [],
+            await session.get(_user_model(), user_id) if user_id else None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(
+            "case_copilot apply: step 0 of %s crashed",
+            execution.playbook_id,
+        )
+        from src.core.exec_playbooks import StepResult as _SR
+        result = _SR(
+            ok=False,
+            summary="Step execution crashed during Apply.",
+            error=f"{type(exc).__name__}: {exc}",
+        )
+
+    execution.step_results = [
+        *(execution.step_results or []),
+        {
+            "step": 0,
+            "step_id": step.step_id,
+            "ok": result.ok,
+            "summary": result.summary,
+            "items": result.items,
+            "error": result.error,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        },
+    ]
+    if not result.ok:
+        execution.status = PlaybookStatus.FAILED.value
+        execution.failed_at = datetime.now(timezone.utc)
+        execution.error_message = result.error or result.summary
+        return
+    is_last = playbook.total_steps - 1 <= 0
+    if is_last:
+        execution.status = PlaybookStatus.COMPLETED.value
+        execution.completed_at = datetime.now(timezone.utc)
+    else:
+        execution.status = PlaybookStatus.STEP_COMPLETE.value
+
+
+def _user_model() -> Any:
+    """Lazy import shim — circular-import safe accessor for User."""
+    from src.models.auth import User
+    return User
+
+
 async def apply_suggestions(
     session: AsyncSession,
     *,
     run_id: uuid.UUID,
     user_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
-    """Move the run's MITRE technique IDs into ``attack_technique_attachments``
-    and append the draft next steps as a single CaseComment. The
-    timeline events stay on the run for inspection — converting them
-    to actual case events would require a polymorphic event store the
-    schema doesn't have yet.
+    """Apply a completed Copilot run's suggestions to the case.
+
+    Three side-effects, all idempotent:
+
+    1. **MITRE attachments** — every suggested_mitre_id we recognise
+       lands in ``attack_technique_attachments`` linked to the case.
+    2. **Draft next-steps comment** — bundled into a single
+       ``CaseComment`` so the operator can scan the narrative in the
+       case timeline.
+    3. **Suggested playbooks → PlaybookExecution rows** — each entry
+       in ``run.suggested_playbooks`` is materialised as a real
+       execution row, linked to the case + this run, in
+       ``pending_approval`` for ``requires_approval=True`` playbooks
+       or ``in_progress`` (then auto-completes step 0) for the rest.
+       That puts the actual *action* surface in the case detail view
+       so the analyst clicks Open / Continue from inside the case
+       rather than being told to do it manually elsewhere.
+
+    Idempotency: ``run.applied_at`` is the guard. Re-clicks return
+    early. Within the playbook-creation loop, idempotency_key is
+    ``copilot:{run_id}:{playbook_id}:{idx}`` so two parallel applies
+    converge to one row.
     """
     from src.models.case_copilot import CaseCopilotRun, CopilotStatus
     from src.models.cases import CaseComment
@@ -730,6 +988,7 @@ async def apply_suggestions(
             "applied_at": run.applied_at.isoformat(),
             "mitre_attached": 0,
             "comment_added": False,
+            "playbooks_queued": 0,
         }
 
     # MITRE attachments — only attach techniques we know about. Skip
@@ -792,12 +1051,111 @@ async def apply_suggestions(
         )
         comment_added = True
 
+    # Suggested playbooks → PlaybookExecution rows linked to the case.
+    # We import lazily because the playbooks framework + models import
+    # plenty themselves and we want apply_suggestions to remain usable
+    # in environments that haven't loaded the case_copilot_agent path.
+    playbooks_queued = 0
+    skipped_playbooks: list[dict[str, Any]] = []
+    if run.suggested_playbooks:
+        from src.core.exec_playbooks import (
+            PlaybookNotFound, get_playbook,
+        )
+        from src.models.playbooks import (
+            PlaybookExecution, PlaybookStatus, PlaybookTrigger,
+        )
+
+        for idx, entry in enumerate(run.suggested_playbooks or []):
+            if not isinstance(entry, dict):
+                continue
+            pid = (entry.get("playbook_id") or "").strip()
+            if not pid:
+                continue
+            try:
+                pb = get_playbook(pid)
+            except PlaybookNotFound:
+                # Playbook was removed between when the LLM picked it
+                # and when the operator clicked Apply. Drop silently
+                # rather than failing the whole apply.
+                skipped_playbooks.append({
+                    "playbook_id": pid, "reason": "no longer in catalog",
+                })
+                continue
+            if pb.scope != "investigation":
+                skipped_playbooks.append({
+                    "playbook_id": pid, "reason": "wrong scope",
+                })
+                continue
+
+            # Stable idempotency key — re-clicks (or two admins racing
+            # the apply button) converge to one row per (run, playbook,
+            # index).
+            idem_key = f"copilot:{run.id}:{pid}:{idx}"
+
+            existing = (
+                await session.execute(
+                    select(PlaybookExecution).where(
+                        PlaybookExecution.organization_id == run.organization_id,
+                        PlaybookExecution.idempotency_key == idem_key,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing is not None:
+                continue
+
+            # Pre-populate _case_id on params so the playbook's
+            # execute() function can post the result as a CaseComment.
+            params = dict(entry.get("params") or {})
+            params["_case_id"] = str(run.case_id)
+
+            initial_status = (
+                PlaybookStatus.PENDING_APPROVAL.value
+                if pb.requires_approval
+                else PlaybookStatus.IN_PROGRESS.value
+            )
+            execution = PlaybookExecution(
+                organization_id=run.organization_id,
+                playbook_id=pid,
+                status=initial_status,
+                params=params,
+                current_step_index=0,
+                total_steps=pb.total_steps,
+                step_results=[],
+                requested_by_user_id=user_id,
+                idempotency_key=idem_key,
+                triggered_from=PlaybookTrigger.CASE_COPILOT.value,
+                briefing_action_index=None,
+                case_id=run.case_id,
+                copilot_run_id=run.id,
+            )
+            session.add(execution)
+            await session.flush()
+            playbooks_queued += 1
+
+            # Auto-fire step 0 for non-approval playbooks. Reasoning:
+            # the analyst already reviewed the suggestions before
+            # clicking Apply, so a second click-to-execute would just
+            # be friction. The result lands in step_results immediately
+            # and the operator sees "WHOIS done, here's the registrar"
+            # in the case timeline. Approval-required playbooks (e.g.
+            # submit_takedown) stay in pending_approval until the admin
+            # explicitly approves.
+            if not pb.requires_approval:
+                await _execute_first_step(
+                    session=session,
+                    execution=execution,
+                    playbook=pb,
+                    user_id=user_id,
+                )
+
     run.applied_at = datetime.now(timezone.utc)
     run.applied_by_user_id = user_id
     await session.commit()
     return {
         "already_applied": False,
         "applied_at": run.applied_at.isoformat(),
+        "playbooks_queued": playbooks_queued,
+        "playbooks_skipped": skipped_playbooks,
         "mitre_attached": attached,
         "comment_added": comment_added,
     }

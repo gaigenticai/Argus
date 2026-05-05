@@ -9,12 +9,12 @@ from datetime import datetime, timezone, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, func, desc, extract, case, and_
+from sqlalchemy import select, func, desc, extract, case, and_, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import AnalystUser, CurrentUser
 from src.models.intel import TriageFeedback
-from src.models.threat import Alert
+from src.models.threat import Alert, ThreatCategory, ThreatSeverity
 from src.storage.database import get_session
 
 router = APIRouter(prefix="/feedback", tags=["Auth & Identity"])
@@ -25,8 +25,13 @@ router = APIRouter(prefix="/feedback", tags=["Auth & Identity"])
 
 class FeedbackCreate(BaseModel):
     alert_id: uuid.UUID
-    corrected_category: str | None = None
-    corrected_severity: str | None = None
+    # Typed against the live enums so the dashboard can never submit a
+    # category like "malware" or "vulnerability" that doesn't exist in
+    # the model — those silently corrupt ML training data and the
+    # confusion-matrix stats. Pydantic rejects unknown values with 422
+    # before they reach the DB. ``None`` means "no correction".
+    corrected_category: ThreatCategory | None = None
+    corrected_severity: ThreatSeverity | None = None
     is_true_positive: bool
     feedback_notes: str | None = None
 
@@ -126,8 +131,15 @@ async def submit_feedback(
         original_category=alert.category,
         original_severity=alert.severity,
         original_confidence=alert.confidence,
-        corrected_category=body.corrected_category,
-        corrected_severity=body.corrected_severity,
+        # Persist the wire string (.value), not the enum repr — the
+        # column is a plain str so storing the enum object would write
+        # "ThreatCategory.EXPLOIT" in some SQLAlchemy code paths.
+        corrected_category=(
+            body.corrected_category.value if body.corrected_category else None
+        ),
+        corrected_severity=(
+            body.corrected_severity.value if body.corrected_severity else None
+        ),
         is_true_positive=body.is_true_positive,
         feedback_notes=body.feedback_notes,
     )
@@ -243,11 +255,24 @@ async def feedback_stats(
         for row in confusion_rows
     ]
 
-    # Weekly accuracy trend (last 12 weeks)
+    # Weekly accuracy trend (last 12 weeks). Bind the date_trunc
+    # expression to a single Python object and reuse it everywhere —
+    # if we re-call ``func.date_trunc("week", ...)`` in select / group
+    # / order separately, asyncpg parameterises each "week" literal as
+    # a distinct $N placeholder, and Postgres then sees three
+    # structurally-different expressions and refuses the GROUP BY with
+    # ``column ... must appear in the GROUP BY clause``.
     twelve_weeks_ago = datetime.now(timezone.utc) - timedelta(weeks=12)
+    # literal_column inlines the 'week' as a SQL literal instead of a
+    # bound parameter, so the expression renders identically wherever
+    # we reference it (select / group / order) and Postgres can match
+    # them for GROUP BY purposes.
+    week_start_expr = func.date_trunc(
+        literal_column("'week'"), TriageFeedback.created_at
+    )
     weekly_q = (
         select(
-            func.date_trunc("week", TriageFeedback.created_at).label("week_start"),
+            week_start_expr.label("week_start"),
             func.count().label("total"),
             func.sum(
                 case(
@@ -257,8 +282,8 @@ async def feedback_stats(
             ).label("tp"),
         )
         .where(TriageFeedback.created_at >= twelve_weeks_ago)
-        .group_by(func.date_trunc("week", TriageFeedback.created_at))
-        .order_by(func.date_trunc("week", TriageFeedback.created_at))
+        .group_by(week_start_expr)
+        .order_by(week_start_expr)
     )
     weekly_rows = (await db.execute(weekly_q)).all()
     weekly_trend = [

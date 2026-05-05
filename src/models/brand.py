@@ -159,9 +159,48 @@ class SuspectDomain(Base, UUIDMixin, TimestampMixin):
     )
 
 
+class BrandSubsidiaryAllowlist(Base, UUIDMixin, TimestampMixin):
+    """Per-org allowlist of legitimate subsidiary / partner / asset
+    domains that should never be treated as suspect.
+
+    Replaces the legacy in-code subsidiary list the agent's
+    ``check_subsidiary_allowlist`` tool used to consult. The agent
+    reads this table at run time so operators can edit the list from
+    the dashboard without redeploying. Patterns support a leading
+    ``*.`` wildcard (matches any subdomain depth) — kept simple to
+    avoid regex injection / catastrophic backtracking.
+    """
+
+    __tablename__ = "brand_subsidiary_allowlist"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Either an exact domain (``corp.example.com``) or a glob with one
+    # leading ``*.`` (``*.example.com`` matches any subdomain depth).
+    pattern: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Why this domain is allowlisted. Free text, surfaced in the audit
+    # trail when a suspect is auto-dismissed against this entry.
+    reason: Mapped[str | None] = mapped_column(Text)
+    # Operator who added the entry. Null = system-seeded.
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+    __table_args__ = (
+        # No (org, pattern) unique constraint — operators sometimes
+        # want multiple entries with different reasons (e.g. M&A
+        # period). De-dup is the dashboard's concern.
+        Index("ix_brand_allowlist_org", "organization_id"),
+    )
+
+
 __all__ = [
     "BrandTerm",
     "BrandTermKind",
+    "BrandSubsidiaryAllowlist",
     "SuspectDomain",
     "SuspectDomainSource",
     "SuspectDomainState",

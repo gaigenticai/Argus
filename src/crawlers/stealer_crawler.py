@@ -58,7 +58,7 @@ class StealerLogCrawler(BaseCrawler):
     Marketplace targets are configured per-deployment via ``marketplace_configs``.
     """
 
-    name = "stealer_log_crawler"
+    name = "stealer_marketplace"
     source_type = SourceType.STEALER_LOG
 
     def __init__(

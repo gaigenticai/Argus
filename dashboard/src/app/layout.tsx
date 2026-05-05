@@ -6,7 +6,7 @@ import { LocaleProvider } from "@/components/locale-provider";
 import { AppShell } from "@/components/layout/app-shell";
 
 export const metadata: Metadata = {
-  title: "Argus — Threat Intelligence",
+  title: "Marsad — Threat Intelligence",
   description: "Agentic Dark Web Monitoring & Threat Intelligence Platform",
 };
 

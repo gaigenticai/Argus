@@ -7,11 +7,12 @@ to generate correlated alerts with severity assessment and recommended actions.
 from __future__ import annotations
 
 
+import asyncio
 import logging
 import uuid as _uuid
 from datetime import datetime, timezone, timedelta
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +24,13 @@ from src.config.settings import settings
 from src.core.activity import ActivityType, emit as activity_emit
 from src.models.feeds import ThreatFeedEntry
 from src.models.intel import IOC, IOCType, TriageRun
-from src.models.threat import Alert, AlertStatus, Organization
+from src.models.threat import (
+    Alert,
+    AlertStatus,
+    Organization,
+    ThreatCategory,
+    ThreatSeverity,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -293,59 +300,360 @@ class FeedTriageService:
             return 0
 
         # Get all organizations for matching
+        # Domain-verification gate (off by default; on for production
+        # ``ARGUS_REQUIRE_DOMAIN_VERIFICATION=true`` deployments).
+        # Skipping here keeps an unverified org from getting LLM-
+        # generated alerts wired up that the operator hasn't proven
+        # they own the asset for. The org row still exists so the
+        # operator can verify and re-run.
+        from src.core.domain_verification import is_domain_verified
         orgs_result = await self.db.execute(select(Organization))
-        organizations = orgs_result.scalars().all()
+        all_orgs = list(orgs_result.scalars().all())
+        organizations = []
+        skipped_unverified = 0
+        for o in all_orgs:
+            primary_domain = (o.domains or [None])[0]
+            if primary_domain and not is_domain_verified(o.settings, primary_domain):
+                skipped_unverified += 1
+                continue
+            organizations.append(o)
+        if skipped_unverified:
+            logger.info(
+                "[feed-triage] skipped %d org(s) with unverified primary domain "
+                "(ARGUS_REQUIRE_DOMAIN_VERIFICATION is on)",
+                skipped_unverified,
+            )
 
         # Group entries by layer for batch analysis
         by_layer: dict[str, list[ThreatFeedEntry]] = {}
         for entry in entries:
             by_layer.setdefault(entry.layer, []).append(entry)
 
-        alert_count = 0
+        if not organizations:
+            # No orgs configured — log but skip alert creation (alerts require org context)
+            logger.info(
+                f"[feed-triage] {sum(len(v) for v in by_layer.values())} high-severity entries found "
+                f"but no organizations configured — skipping alert generation. "
+                f"Create an organization to enable LLM-powered triage."
+            )
+            return 0
 
-        for layer, layer_entries in by_layer.items():
-            # Build a summary of the batch for LLM
-            batch_summary = self._build_batch_summary(layer, layer_entries)
-            category = LAYER_TO_CATEGORY.get(layer, "dark_web_mention")
+        # ---------------------------------------------------------------
+        # Per-org term pre-filter (LLM cost guard).
+        #
+        # Without this we issue ``layers × orgs`` LLM calls regardless
+        # of whether any entry in the batch is even plausibly relevant
+        # to the org. The LLM dutifully returns ``is_threat: false`` and
+        # we burn tokens for no signal.
+        #
+        # Match terms per org = tech_stack vendors/products
+        #                     + brand keywords
+        #                     + verified domains
+        #                     + org name
+        # All lowercased; min length 3 to avoid pathological matches
+        # (e.g. ".NET" → "internet"). An entry "matches" an org if any
+        # of those terms appears as a substring in its description,
+        # label, or value.
+        #
+        # This is intentionally cheap — substring scan, no LLM, no
+        # NLP — because the LLM is the only expensive call in this
+        # path and the goal is to gate it. False positives at this
+        # stage are fine; the LLM still adjudicates ``is_threat``.
+        # False negatives are the risk: a CVE that affects you but
+        # whose advisory text uses an unexpected name slips through.
+        # Mitigate by encouraging operators to enrich Tech Stack.
+        # ---------------------------------------------------------------
+        def _org_terms(o: Organization) -> list[str]:
+            terms: list[str] = []
+            if o.name:
+                terms.append(o.name)
+            for d in (o.domains or []):
+                if d:
+                    terms.append(d)
+            for k in (o.keywords or []):
+                if k:
+                    terms.append(k)
+            ts = o.tech_stack or {}
+            if isinstance(ts, dict):
+                for vals in ts.values():
+                    if isinstance(vals, list):
+                        for v in vals:
+                            if isinstance(v, str) and v.strip():
+                                terms.append(v.strip())
+            # Dedup case-insensitively, drop terms <3 chars.
+            seen: set[str] = set()
+            out: list[str] = []
+            for t in terms:
+                lk = t.lower()
+                if len(lk) < 3 or lk in seen:
+                    continue
+                seen.add(lk)
+                out.append(t)
+            return out
 
-            if organizations:
-                # Triage against each org
-                for org in organizations:
-                    org_profile = await self._build_org_profile(org)
-                    triage_result = await self.triage.analyze(
-                        raw_content=batch_summary,
-                        source_type=f"threat_feed_{layer}",
-                        source_name=f"Feed Aggregator ({layer})",
-                        org_profile=org_profile,
+        def _entry_matches(entry: ThreatFeedEntry, terms_lower: list[str]) -> bool:
+            haystack = " ".join(
+                filter(None, [entry.description, entry.label, entry.value])
+            ).lower()
+            if not haystack:
+                return False
+            return any(t in haystack for t in terms_lower)
+
+        org_terms_lower: dict = {
+            o.id: [t.lower() for t in _org_terms(o)] for o in organizations
+        }
+
+        # Pre-build the work plan sequentially so the rest can run in
+        # parallel. ``_build_system_prompt`` and ``_build_org_profile``
+        # both read from ``self.db`` / ``self.triage._db`` and the
+        # SQLAlchemy AsyncSession is not concurrency-safe — one
+        # session = one in-flight statement. So we serialise the DB
+        # reads here, then fan out the LLM calls (which only touch
+        # network) under a semaphore.
+        system_prompt = await self.triage._build_system_prompt()
+        org_profiles: dict = {}
+        for org in organizations:
+            org_profiles[org.id] = await self._build_org_profile(org)
+
+        # ``max_concurrent_calls`` is the platform-wide knob (default
+        # 4). Higher values overwhelm slower providers and starve
+        # other agents that share the same bridge worker; lower kills
+        # throughput. Respect it.
+        sem = asyncio.Semaphore(
+            max(1, int(getattr(settings.llm, "max_concurrent_calls", 4)))
+        )
+
+        async def _run_one(layer: str, batch_summary: str, org) -> tuple[str, object, dict | None]:
+            org_profile = org_profiles[org.id]
+            user_prompt = self.triage._build_prompt(
+                batch_summary,
+                f"threat_feed_{layer}",
+                f"Feed Aggregator ({layer})",
+                org_profile,
+            )
+            org_name = org_profile.get("name", "Unknown")
+            await activity_emit(
+                ActivityType.TRIAGE_START,
+                "triage_agent",
+                f"Analyzing intel from Feed Aggregator ({layer}) against {org_name}",
+                {"source_type": f"threat_feed_{layer}", "org": org_name},
+            )
+            async with sem:
+                try:
+                    await activity_emit(
+                        ActivityType.TRIAGE_LLM_CALL,
+                        "triage_agent",
+                        f"Calling {self.triage.provider}/{self.triage.model} for threat classification",
+                        {"provider": self.triage.provider, "model": self.triage.model, "org": org_name},
                     )
+                    response = await self.triage._call_llm(system_prompt, user_prompt)
+                    parsed = self.triage._parse_json_response(response)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"[feed-triage] LLM call failed for {org_name}/{layer}: {e}")
+                    return layer, org, None
+            if not parsed or not parsed.get("is_threat", False):
+                return layer, org, None
+            parsed["category"] = self.triage._validate_enum(
+                parsed.get("category"), ThreatCategory, ThreatCategory.DARK_WEB_MENTION
+            )
+            parsed["severity"] = self.triage._validate_enum(
+                parsed.get("severity"), ThreatSeverity, ThreatSeverity.LOW
+            )
+            parsed["confidence"] = max(0.0, min(1.0, float(parsed.get("confidence", 0.5))))
+            return layer, org, parsed
 
-                    if triage_result:
-                        alert = Alert(
-                            organization_id=org.id,
-                            category=triage_result.get("category", category),
-                            severity=triage_result.get("severity", "medium"),
-                            status=AlertStatus.NEW.value,
-                            title=triage_result.get("title", f"Feed Alert: {layer}"),
-                            summary=triage_result.get("summary", ""),
-                            confidence=triage_result.get("confidence", 0.7),
-                            agent_reasoning=triage_result.get("reasoning"),
-                            recommended_actions=triage_result.get("recommended_actions"),
-                            matched_entities=triage_result.get("matched_entities"),
-                        )
-                        self.db.add(alert)
-                        alert_count += 1
-            else:
-                # No orgs configured — log but skip alert creation (alerts require org context)
-                logger.info(
-                    f"[feed-triage] {len(layer_entries)} high-severity {layer} entries found "
-                    f"but no organizations configured — skipping alert generation. "
-                    f"Create an organization to enable LLM-powered triage."
+        # Build per-(layer, org) batches AFTER pre-filtering so the
+        # task list reflects the post-filter cardinality and the IOC
+        # linking step (below) only links indicators the LLM actually
+        # reasoned about.
+        tasks = []
+        per_org_batches: dict[tuple[str, _uuid.UUID], list[ThreatFeedEntry]] = {}
+        skipped_empty = 0
+        total_pairs = 0
+        for layer, layer_entries in by_layer.items():
+            for org in organizations:
+                total_pairs += 1
+                terms_lower = org_terms_lower.get(org.id, [])
+                if not terms_lower:
+                    # Org has no declared identity at all — every
+                    # entry would trivially fail. Skip rather than
+                    # waste the LLM call.
+                    skipped_empty += 1
+                    continue
+                matching = [e for e in layer_entries if _entry_matches(e, terms_lower)]
+                if not matching:
+                    skipped_empty += 1
+                    continue
+                per_org_batches[(layer, org.id)] = matching
+                tasks.append(
+                    _run_one(
+                        layer,
+                        self._build_batch_summary(layer, matching),
+                        org,
+                    )
                 )
+        logger.info(
+            "[feed-triage] Pre-filter: %d/%d (layer × org) pairs matched "
+            "the orgs' tech_stack/keywords; skipped %d empty pairs. "
+            "Dispatching %d LLM calls (was %d before pre-filter, "
+            "concurrency=%d).",
+            len(tasks), total_pairs, skipped_empty,
+            len(tasks), total_pairs, sem._value,
+        )
+        if not tasks:
+            logger.info(
+                "[feed-triage] No (layer, org) batches survived pre-filter — "
+                "no LLM calls dispatched. Either the org's tech_stack is "
+                "empty or no high-severity entries mention it."
+            )
+            return 0
+        results = await asyncio.gather(*tasks, return_exceptions=False)
+
+        alert_count = 0
+        deduped_into_existing = 0
+        ioc_links = 0
+        # Same-day dedup horizon. Triage runs hourly + on-demand; in
+        # practice 5 successive runs in an hour all classified the
+        # same exploited_cve batch as a threat and produced 5
+        # near-identical alerts. The operator drowns in duplicates.
+        # Window: 24h is wide enough to merge across a normal
+        # workday's runs but narrow enough that genuinely new
+        # exposure (e.g. a CVE landing tomorrow) re-fires.
+        dedup_horizon = datetime.now(timezone.utc) - timedelta(hours=24)
+        closed_statuses = [
+            AlertStatus.RESOLVED.value,
+            AlertStatus.FALSE_POSITIVE.value,
+        ]
+        for layer, org, triage_result in results:
+            if not triage_result:
+                continue
+            category = triage_result.get("category", LAYER_TO_CATEGORY.get(layer, "dark_web_mention"))
+
+            # Dedup: if there is already an OPEN alert for this org +
+            # category within the dedup horizon, attach the batch's
+            # IOCs to it instead of creating a new row. Operator sees
+            # one alert whose evidence grows, not 5 alerts that say
+            # the same thing.
+            existing_q = await self.db.execute(
+                select(Alert)
+                .where(
+                    Alert.organization_id == org.id,
+                    Alert.category == category,
+                    Alert.created_at >= dedup_horizon,
+                    Alert.status.notin_(closed_statuses),
+                )
+                .order_by(Alert.created_at.desc())
+                .limit(1)
+            )
+            alert = existing_q.scalar_one_or_none()
+            is_new = alert is None
+
+            if is_new:
+                alert = Alert(
+                    organization_id=org.id,
+                    category=category,
+                    severity=triage_result.get("severity", "medium"),
+                    status=AlertStatus.NEW.value,
+                    title=triage_result.get("title", f"Feed Alert: {layer}"),
+                    summary=triage_result.get("summary", ""),
+                    confidence=triage_result.get("confidence", 0.7),
+                    agent_reasoning=triage_result.get("reasoning"),
+                    recommended_actions=triage_result.get("recommended_actions"),
+                    matched_entities=triage_result.get("matched_entities"),
+                )
+                self.db.add(alert)
+                await self.db.flush()  # populate alert.id for the IOC link below
+                alert_count += 1
+            else:
+                # Existing alert: bump it so the operator knows the
+                # evidence list grew. Don't overwrite the original
+                # title/severity/reasoning — those were set when the
+                # alert first fired and are part of its identity.
+                alert.updated_at = datetime.now(timezone.utc)
+                deduped_into_existing += 1
+
+            # Carry the batch's indicators with the alert.
+            #
+            # The dashboard's "Tracked IOCs" tile counts IOCs whose
+            # ``source_alert_id`` points to an alert in the org. The
+            # bulk IOC-promotion path (``_create_iocs_from_feeds``)
+            # is FIFO over a 500-row window dominated by honeypot /
+            # IP-reputation entries, so CVE / advisory entries — the
+            # ones that actually trigger alerts — almost never get
+            # promoted there. Result: alerts fire but the tile reads
+            # zero indefinitely.
+            #
+            # Fix: when an alert fires, upsert IOCs for the EXACT
+            # entries the LLM reasoned about, then link them. This
+            # also matches the right mental model — an alert's IOCs
+            # ARE its evidence; create them with it.
+            #
+            # First-claim-wins on ``source_alert_id`` so we never
+            # overwrite existing provenance. The IOC row itself is
+            # idempotent via ``uq_ioc_type_value``.
+            batch_entries = per_org_batches.get((layer, org.id), [])
+            now_link = datetime.now(timezone.utc)
+            inserted_with_alert = 0
+            for entry in batch_entries:
+                ioc_type = ENTRY_TYPE_TO_IOC.get(entry.entry_type)
+                if not ioc_type or not entry.value:
+                    continue
+                stmt = pg_insert(IOC).values(
+                    id=_uuid.uuid4(),
+                    created_at=now_link,
+                    updated_at=now_link,
+                    ioc_type=ioc_type,
+                    value=entry.value,
+                    confidence=entry.confidence,
+                    first_seen=entry.first_seen or now_link,
+                    last_seen=now_link,
+                    sighting_count=1,
+                    tags=[entry.feed_name, entry.layer, "alert_evidence"],
+                    context={
+                        "feed": entry.feed_name,
+                        "layer": entry.layer,
+                        "severity": entry.severity,
+                        "label": entry.label,
+                    },
+                    source_alert_id=alert.id,
+                ).on_conflict_do_update(
+                    constraint="uq_ioc_type_value",
+                    set_={
+                        "sighting_count": IOC.sighting_count + 1,
+                        "last_seen": now_link,
+                        "confidence": func.greatest(IOC.confidence, entry.confidence),
+                    },
+                ).returning(IOC.created_at)
+                row = (await self.db.execute(stmt)).one()
+                if (now_link - row.created_at).total_seconds() < 2:
+                    inserted_with_alert += 1
+
+            # Now claim every IOC for the batch's values that is
+            # still unowned. ``ON CONFLICT DO UPDATE`` above does not
+            # set ``source_alert_id`` on the conflicting row (postgres
+            # excluded() handling) — the explicit UPDATE below is what
+            # lets pre-existing IOCs (created earlier by the bulk
+            # path) get linked to a freshly-fired alert.
+            entry_values = [e.value for e in batch_entries if e.value]
+            if entry_values:
+                upd = await self.db.execute(
+                    update(IOC)
+                    .where(
+                        IOC.value.in_(entry_values),
+                        IOC.source_alert_id.is_(None),
+                    )
+                    .values(source_alert_id=alert.id)
+                )
+                ioc_links += (upd.rowcount or 0) + inserted_with_alert
 
         if alert_count > 0:
             await self.db.flush()
 
-        logger.info(f"[feed-triage] Generated {alert_count} alerts from {len(entries)} high-severity entries")
+        logger.info(
+            f"[feed-triage] Generated {alert_count} new alerts "
+            f"(plus {deduped_into_existing} re-fires merged into existing open alerts) "
+            f"from {len(entries)} high-severity entries; {ioc_links} IOCs linked."
+        )
         return alert_count
 
     def _build_batch_summary(self, layer: str, entries: list[ThreatFeedEntry]) -> str:
@@ -465,9 +773,27 @@ class FeedTriageService:
                 level = infocon
                 break
 
-        # Count active entries per layer
+        # Count active entries per layer.
+        #
+        # ``c2_infrastructure`` (TLS hashes / JA3 fingerprints from
+        # AbuseCH SSLBL) is included alongside ``botnet_c2`` (C2
+        # endpoint IPs from Feodo / GreyNoise) because the dashboard
+        # surfaces a single "C2 Indicators" tile — operators care
+        # about total C2 detection coverage, not the implementation
+        # split between IP feeds and TLS-artifact feeds. Showing
+        # ``botnet_c2`` alone produced "1 C2 server" while a 9.7k-row
+        # SSL feed of C2 detection sigs sat ignored.
         layer_counts = {}
-        for layer_name in ["ransomware", "botnet_c2", "phishing", "exploited_cve", "tor_exit", "malware", "ip_reputation"]:
+        for layer_name in [
+            "ransomware",
+            "botnet_c2",
+            "c2_infrastructure",
+            "phishing",
+            "exploited_cve",
+            "tor_exit",
+            "malware",
+            "ip_reputation",
+        ]:
             result = await self.db.execute(
                 select(func.count()).select_from(ThreatFeedEntry).where(
                     ThreatFeedEntry.layer == layer_name,
@@ -483,7 +809,11 @@ class FeedTriageService:
         values = {
             "infocon_level": level,
             "active_ransomware_groups": layer_counts.get("ransomware", 0),
-            "active_c2_servers": layer_counts.get("botnet_c2", 0),
+            # C2 indicators = endpoint IPs + TLS detection sigs.
+            "active_c2_servers": (
+                layer_counts.get("botnet_c2", 0)
+                + layer_counts.get("c2_infrastructure", 0)
+            ),
             "active_phishing_campaigns": layer_counts.get("phishing", 0),
             "exploited_cves_count": layer_counts.get("exploited_cve", 0),
             "tor_exit_nodes_count": layer_counts.get("tor_exit", 0),

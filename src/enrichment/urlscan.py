@@ -43,7 +43,12 @@ _BREAKER = "intel:urlscan"
 
 
 def _api_key() -> str:
-    return (os.environ.get("ARGUS_URLSCAN_API_KEY") or "").strip()
+    # Resolve via the integration-keys cache so operators can rotate
+    # via Settings → Integrations without restarting the API.
+    from src.core import integration_keys
+    return (
+        integration_keys.get("urlscan", env_fallback="ARGUS_URLSCAN_API_KEY") or ""
+    ).strip()
 
 
 def is_configured() -> bool:

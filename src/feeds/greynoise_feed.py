@@ -20,7 +20,12 @@ from src.feeds.base import BaseFeed, FeedEntry
 
 logger = logging.getLogger(__name__)
 
-GREYNOISE_BASE = "https://api.greynoise.io/v3"
+# GreyNoise retired the ``/v3/noise/gnql`` endpoint in 2025; GNQL search
+# moved to ``/v2/experimental/gnql`` (community + enterprise) which is
+# their documented canonical search surface. Single-IP enrichment lives
+# at ``/v3/community/{ip}`` (free) or ``/v3/ip/{ip}`` (paid).
+GREYNOISE_BASE = "https://api.greynoise.io"
+GREYNOISE_GNQL_PATH = "/v2/experimental/gnql"
 
 # Classification → severity mapping
 _CLASSIFICATION_SEVERITY: dict[str, str] = {
@@ -55,13 +60,24 @@ class GreyNoiseFeed(BaseFeed):
     default_interval_seconds = 3600  # 1 hour
 
     def _headers(self) -> dict[str, str]:
+        from src.core import integration_keys
+        key = integration_keys.get(
+            "greynoise", env_fallback="ARGUS_FEED_GREYNOISE_API_KEY",
+        ) or settings.feeds.greynoise_api_key or ""
         return {
-            "key": settings.feeds.greynoise_api_key or "",
+            "key": key,
             "Accept": "application/json",
         }
 
     async def poll(self) -> AsyncIterator[FeedEntry]:
-        api_key = settings.feeds.greynoise_api_key
+        from src.core import integration_keys
+        from src.models.admin import FeedHealthStatus
+        api_key = (
+            integration_keys.get(
+                "greynoise", env_fallback="ARGUS_FEED_GREYNOISE_API_KEY",
+            )
+            or settings.feeds.greynoise_api_key
+        )
         if not api_key:
             self.last_unconfigured_reason = (
                 "ARGUS_FEED_GREYNOISE_API_KEY is not set; GreyNoise will not "
@@ -115,10 +131,44 @@ class GreyNoiseFeed(BaseFeed):
                 params["scroll"] = scroll_token
 
             data = await self._fetch_json(
-                f"{GREYNOISE_BASE}/noise/gnql",
+                f"{GREYNOISE_BASE}{GREYNOISE_GNQL_PATH}",
                 headers=self._headers(),
                 params=params,
             )
+
+            # GNQL bulk search requires a paid tier. Community-tier
+            # keys 401 here. Surface as ``unconfigured`` rather than
+            # ``network_error`` so operators see a clean "you're on
+            # the free tier; upgrade or use the community per-IP
+            # endpoint" instead of an opaque failure.
+            from src.models.admin import FeedHealthStatus
+            if (
+                self.last_failure_classification
+                == FeedHealthStatus.AUTH_ERROR.value
+            ):
+                # The bulk GNQL endpoint is Enterprise-only — but
+                # since 2026-Q2 Argus also wires the Community-tier
+                # endpoint as per-IP IOC enrichment at
+                # ``/api/v1/intel/enrich/greynoise/{ip}``, so the
+                # operator's free key is NOT wasted. Surface that in
+                # the detail message so the Settings → Services drawer
+                # reads "your key works for enrichment, just not bulk
+                # ingest" instead of the misleading "useless key" it
+                # used to show.
+                self.last_unconfigured_reason = (
+                    "Bulk GNQL feed requires GreyNoise Enterprise "
+                    "(401 from /v2/experimental/gnql). Your Community "
+                    "key IS being used for per-IP enrichment at "
+                    "/api/v1/intel/enrich/greynoise/{ip} — IOC detail "
+                    "panels and ingest-time scoring already call it. "
+                    "Upgrade to Enterprise only if you want bulk "
+                    "scanner-IP ingestion in addition."
+                )
+                # Clear the failure so the scheduler reports
+                # ``unconfigured`` instead of ``broken``.
+                self.last_failure_reason = None
+                self.last_failure_classification = None
+                break
 
             if not data or not isinstance(data, dict):
                 break

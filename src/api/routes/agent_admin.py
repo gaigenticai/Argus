@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,10 +42,17 @@ router = APIRouter(prefix="/agents", tags=["Agents"])
 # ---- Schemas --------------------------------------------------------
 
 
+class LLMSnapshot(BaseModel):
+    provider: str
+    model: str
+    label: str
+
+
 class PostureResponse(BaseModel):
     human_in_loop_required: bool
     features: dict[str, bool]
     env_vars: dict[str, str]
+    llm: LLMSnapshot
 
 
 class AgentSettingsResponse(BaseModel):
@@ -58,6 +65,12 @@ class AgentSettingsResponse(BaseModel):
     auto_promote_critical: bool
     auto_takedown_high_confidence: bool
     threat_hunt_interval_seconds: int | None
+    # Plan-then-act gates (T57 / T82) and Brand Defender threshold
+    # (T77). Surfaced here so the dashboard can render them in
+    # Settings → Agents alongside the existing kill-switches.
+    investigation_plan_approval: bool = False
+    brand_defence_min_similarity: float = 0.80
+    brand_defence_plan_approval: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -71,6 +84,13 @@ class AgentSettingsPatch(BaseModel):
     auto_promote_critical: bool | None = None
     auto_takedown_high_confidence: bool | None = None
     threat_hunt_interval_seconds: int | None = None
+    investigation_plan_approval: bool | None = None
+    # 0.5–0.99 — outside that range the slider is meaningless (≥1 never
+    # auto-queues, <0.5 floods the dashboard with random domains).
+    brand_defence_min_similarity: float | None = Field(
+        default=None, ge=0.5, le=0.99,
+    )
+    brand_defence_plan_approval: bool | None = None
 
 
 AgentKind = Literal[
@@ -112,6 +132,7 @@ async def get_posture(
         human_in_loop_required=bool(snap["human_in_loop_required"]),
         features={k: bool(v) for k, v in snap["features"].items()},
         env_vars={k: str(v) for k, v in snap["env_vars"].items()},
+        llm=LLMSnapshot(**snap["llm"]),
     )
 
 

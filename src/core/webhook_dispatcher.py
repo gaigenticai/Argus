@@ -6,6 +6,8 @@ import hashlib
 import hmac
 import json
 import logging
+
+logger = logging.getLogger(__name__)
 from datetime import datetime, timezone, timedelta
 
 import aiohttp
@@ -14,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.url_safety import UnsafeUrlError, assert_safe_url
 from src.models.intel import (
-    CrawlerSource,
     WebhookDelivery,
     WebhookDeliveryStatus,
     WebhookEndpoint,
@@ -278,96 +279,24 @@ async def dispatch_alert(alert: Alert, db: AsyncSession) -> list[WebhookDelivery
         deliveries.append(delivery)
 
     await db.flush()
+
+    # Auto-fan-out to every configured outbound integration (SIEM,
+    # SOAR, Shuffle). Best-effort and isolated from the webhook
+    # delivery loop above — a broken integration cannot block the
+    # ``WebhookDelivery`` rows or the upstream alert pipeline.
+    try:
+        from src.core.auto_fanout import fanout_alert as _fanout
+        outcomes = await _fanout(alert)
+        delivered = sum(1 for v in outcomes.values() if v == "ok")
+        if delivered:
+            logger.info(
+                "[fanout] alert %s pushed to %d outbound integration(s)",
+                alert.id, delivered,
+            )
+    except Exception:  # noqa: BLE001
+        logger.exception("[fanout] auto fanout pass failed")
+
     return deliveries
-
-
-async def dispatch_health_alert(
-    source: CrawlerSource,
-    db: AsyncSession,
-    reason: str | None = None,
-) -> None:
-    """Dispatch a health-degraded system alert for a crawler source to all enabled webhooks.
-
-    Unlike ``dispatch_alert``, this bypasses severity filtering because health
-    alerts are infrastructure-level events that every integration should receive.
-    """
-    now = datetime.now(timezone.utc)
-
-    payload = {
-        "event": "source.health_degraded",
-        "source": "argus",
-        "timestamp": now.isoformat(),
-        "crawler_source": {
-            "id": str(source.id),
-            "name": source.name,
-            "url": source.url,
-            "source_type": source.source_type,
-            "health_status": source.health_status,
-            "consecutive_failures": source.consecutive_failures,
-            "last_success_at": (
-                source.last_success_at.isoformat() if source.last_success_at else None
-            ),
-            "last_structure_hash": source.last_structure_hash,
-        },
-        "reason": reason or "Health status degraded",
-    }
-
-    # Query ALL enabled endpoints — no severity filter for system alerts
-    query = select(WebhookEndpoint).where(WebhookEndpoint.enabled == True)  # noqa: E712
-    result = await db.execute(query)
-    endpoints = result.scalars().all()
-
-    if not endpoints:
-        logger_wh.info(
-            "No enabled webhook endpoints — skipping health alert for source %s",
-            source.name,
-        )
-        return
-
-    for endpoint in endpoints:
-        success, status_code, response_body = await _send_http(
-            endpoint.url,
-            payload,
-            endpoint.secret,
-            endpoint.headers,
-        )
-
-        delivery = WebhookDelivery(
-            endpoint_id=endpoint.id,
-            alert_id=None,
-            payload=payload,
-            status_code=status_code,
-            response_body=response_body,
-            attempt_count=1,
-        )
-
-        if success:
-            delivery.status = WebhookDeliveryStatus.DELIVERED.value
-            delivery.delivered_at = now
-            delivery.next_retry_at = None
-            endpoint.last_delivery_at = now
-            endpoint.failure_count = max(0, endpoint.failure_count - 1)
-            logger_wh.info(
-                "Health alert delivered to %s (%s) for source %s",
-                endpoint.name,
-                endpoint.url,
-                source.name,
-            )
-        else:
-            delivery.status = WebhookDeliveryStatus.RETRYING.value
-            delivery.next_retry_at = now + timedelta(minutes=RETRY_BACKOFF.get(1, 1))
-            endpoint.failure_count += 1
-            logger_wh.warning(
-                "Health alert delivery FAILED to %s (%s) for source %s — status=%s",
-                endpoint.name,
-                endpoint.url,
-                source.name,
-                status_code,
-            )
-
-        db.add(delivery)
-
-    await db.flush()
 
 
 async def process_retries(db: AsyncSession) -> list[WebhookDelivery]:

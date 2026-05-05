@@ -38,7 +38,10 @@ class IntelxProvider(BreachProvider):
     label = "IntelligenceX"
 
     def __init__(self):
-        self._key = (os.environ.get("ARGUS_INTELX_API_KEY") or "").strip()
+        from src.core import integration_keys
+        self._key = (
+            integration_keys.get("intelx", env_fallback="ARGUS_INTELX_API_KEY") or ""
+        ).strip()
         self._base = (os.environ.get("ARGUS_INTELX_BASE_URL") or _DEFAULT_BASE) \
             .strip().rstrip("/")
 

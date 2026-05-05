@@ -193,9 +193,11 @@ services:
   #
   # This service lives in the "seed" profile. start.sh activates the profile
   # on first boot and records ARGUS_SEEDED=1 in .env so subsequent ./start.sh
-  # runs skip this container entirely. Skipping it also satisfies the
-  # argus-api depends_on — compose ignores dependencies on inactive-profile
-  # services. Run ``./start.sh wipe`` to reset volumes + the flag.
+  # runs skip this container entirely. The argus-api depends_on entry below
+  # is marked ``required: false`` so compose tolerates the inactive profile
+  # on those subsequent runs (Docker Compose v2.20+ enforces strict
+  # validation of depends_on). Run ``./start.sh wipe`` to reset volumes +
+  # the flag.
   argus-seed:
     profiles: ["seed"]
     build: .
@@ -280,9 +282,15 @@ services:
         condition: service_healthy
       # Wait for the one-shot seed to finish before serving traffic so a
       # cold-start operator never hits empty dashboards before the seed
-      # row is in place. Seed is a no-op (fast exit) on subsequent boots.
+      # row is in place. ``required: false`` keeps this tolerant of
+      # subsequent boots where ``start.sh`` deactivates the "seed"
+      # profile entirely (ARGUS_SEEDED=1 in .env) — Docker Compose
+      # v2.20+ now strictly validates depends_on and rejects references
+      # to services whose profile isn't active unless the dependency is
+      # marked optional.
       argus-seed:
         condition: service_completed_successfully
+        required: false
 
   # EASM discovery + SLA evaluation worker (Audit B2 + F1).
   # Without this service, queued DiscoveryJobs sit forever and SLA

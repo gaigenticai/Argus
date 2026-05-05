@@ -30,6 +30,12 @@ from .velociraptor import (
     list_clients as velociraptor_list_clients,
     schedule_collection as velociraptor_schedule_collection,
 )
+# Re-exported here per the docstring above so case_copilot has one
+# import surface; the implementation lives in src/enrichment/circl.py.
+from src.enrichment.circl import (
+    HashlookupResult,
+    hashlookup as circl_hashlookup,
+)
 
 
 __all__ = [
@@ -40,4 +46,6 @@ __all__ = [
     "velociraptor_configured",
     "velociraptor_list_clients",
     "velociraptor_schedule_collection",
+    "HashlookupResult",
+    "circl_hashlookup",
 ]

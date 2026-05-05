@@ -70,6 +70,13 @@ function isoDayEnd(date: string): string {
   return new Date(`${date}T23:59:59.999Z`).toISOString();
 }
 
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
 export default function CompliancePage() {
   const [frameworks, setFrameworks] = useState<ComplianceFrameworkSummary[]>([]);
   const [exports, setExports] = useState<ComplianceExportResponse[]>([]);
@@ -346,7 +353,12 @@ export default function CompliancePage() {
                 >
                   Created
                 </th>
-                <th className="text-right px-4 py-2"></th>
+                <th
+                  className="text-right px-4 py-2 text-[11px] uppercase tracking-[0.07em] font-semibold"
+                  style={{ color: "var(--color-muted)" }}
+                >
+                  File
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -403,20 +415,52 @@ export default function CompliancePage() {
                       {formatDate(ex.created_at)}
                     </td>
                     <td className="px-4 py-2.5 text-right">
-                      {ex.status === "completed" && (
-                        <button
-                          onClick={() => handleDownload(ex.id)}
-                          className="inline-flex items-center gap-1.5 h-7 px-2.5 text-[11px] font-semibold transition-colors"
-                          style={{
-                            borderRadius: "4px",
-                            border: "1px solid var(--color-border)",
-                            background: "var(--color-canvas)",
-                            color: "var(--color-ink)",
-                          }}
+                      {ex.status === "completed" ? (
+                        <div className="inline-flex items-center gap-2 justify-end">
+                          {typeof ex.byte_size === "number" && ex.byte_size > 0 && (
+                            <span
+                              className="text-[11px] tabular-nums"
+                              style={{ color: "var(--color-muted)" }}
+                            >
+                              {formatBytes(ex.byte_size)}
+                            </span>
+                          )}
+                          <button
+                            onClick={() => handleDownload(ex.id)}
+                            className="inline-flex items-center gap-1.5 h-8 px-3 text-[12px] font-semibold transition-colors hover:opacity-90"
+                            style={{
+                              borderRadius: "4px",
+                              border: "1px solid var(--color-accent, #E04E1B)",
+                              background: "var(--color-accent, #E04E1B)",
+                              color: "#FFFFFF",
+                            }}
+                            title="Download evidence pack"
+                          >
+                            <Download className="w-3.5 h-3.5" />
+                            Download
+                          </button>
+                        </div>
+                      ) : ex.status === "pending" || ex.status === "running" ? (
+                        <span
+                          className="text-[11px] italic"
+                          style={{ color: "var(--color-muted)" }}
                         >
-                          <Download className="w-3.5 h-3.5" />
-                          Download
-                        </button>
+                          generating…
+                        </span>
+                      ) : ex.status === "failed" ? (
+                        <span
+                          className="text-[11px]"
+                          style={{ color: "#7A2920" }}
+                        >
+                          unavailable
+                        </span>
+                      ) : (
+                        <span
+                          className="text-[11px]"
+                          style={{ color: "var(--color-muted)" }}
+                        >
+                          —
+                        </span>
                       )}
                     </td>
                   </tr>
@@ -434,7 +478,7 @@ export default function CompliancePage() {
           style={{ background: "rgba(32,21,21,0.5)" }}
         >
           <div
-            className="p-6 w-full max-w-md"
+            className="p-6 w-full max-w-2xl"
             style={{
               background: "var(--color-canvas)",
               borderRadius: "8px",

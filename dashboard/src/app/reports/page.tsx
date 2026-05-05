@@ -6,6 +6,7 @@ import { api, type Org, type Report } from "@/lib/api";
 import { formatDate } from "@/lib/utils";
 import { useToast } from "@/components/shared/toast";
 import { Select as ThemedSelect } from "@/components/shared/select";
+import { CoverageGate } from "@/components/shared/coverage-gate";
 
 export default function ReportsPage() {
   const [reports, setReports] = useState<Report[]>([]);
@@ -45,7 +46,7 @@ export default function ReportsPage() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `argus-report-${dateFrom}-${dateTo}.pdf`;
+        a.download = `marsad-report-${dateFrom}-${dateTo}.pdf`;
         a.click();
         URL.revokeObjectURL(url);
         toast("success", "Report generated and downloaded");
@@ -69,6 +70,7 @@ export default function ReportsPage() {
   };
 
   return (
+    <CoverageGate pageSlug="reports" pageLabel="Reports">
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
@@ -270,5 +272,6 @@ export default function ReportsPage() {
         </div>
       )}
     </div>
+      </CoverageGate>
   );
 }

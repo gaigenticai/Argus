@@ -76,6 +76,14 @@ class BaseFeed(ABC):
 
             headers = randomize_headers()
             headers["Accept"] = "application/json, text/plain, */*"
+            # Pin Accept-Encoding away from ``zstd``. Several upstreams
+            # (AlienVault OTX, AbuseIPDB, others on Cloudflare/Akamai
+            # CDNs) negotiated zstandard with aiohttp 3.10+ when the
+            # client didn't override; aiohttp doesn't ship a zstd
+            # decoder, so the response would arrive un-parseable.
+            # Asking for gzip+deflate keeps every downstream feed
+            # parsing cleanly without per-feed header gymnastics.
+            headers["Accept-Encoding"] = "gzip, deflate"
             self._session = aiohttp.ClientSession(
                 timeout=aiohttp.ClientTimeout(total=60),
                 headers=headers,
@@ -168,7 +176,16 @@ class BaseFeed(ABC):
                     ctx = session.get(url, **kwargs)
                 async with ctx as resp:
                     if resp.status == 200:
-                        return await resp.json()
+                        # ``content_type=None`` disables aiohttp's
+                        # built-in mimetype assertion. DShield's
+                        # ``isc.sans.edu/api/...?json`` returns
+                        # ``text/html``, GitHub raw URLs return
+                        # ``text/plain``, etc. — but they're all valid
+                        # JSON. Trusting status=200 + parse error is
+                        # the right default; we'd rather get a
+                        # ``ValueError`` to handle below than reject a
+                        # legit payload because of a server header bug.
+                        return await resp.json(content_type=None)
                     logger.warning("[%s] %s returned %d", self.name, url, resp.status)
                     self.last_failure_reason = f"{url}: HTTP {resp.status}"
                     self.last_failure_classification = _classify(resp.status)

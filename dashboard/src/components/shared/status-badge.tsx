@@ -6,6 +6,7 @@ export function StatusBadge({ status }: { status: string }) {
 
   const style: Record<string, { bg: string; color: string; border: string }> = {
     new:         { bg: "rgba(255,79,0,0.08)", color: "var(--color-accent)", border: "rgba(255,79,0,0.2)" },
+    needs_review: { bg: "rgba(255,171,0,0.10)", color: "#B76E00", border: "rgba(255,171,0,0.3)" },
     open:        { bg: "rgba(59,130,246,0.07)", color: "#006c9c", border: "rgba(59,130,246,0.2)" },
     in_progress: { bg: "rgba(245,158,11,0.08)", color: "#b76e00", border: "rgba(245,158,11,0.25)" },
     resolved:    { bg: "rgba(34,197,94,0.07)", color: "#118d57", border: "rgba(34,197,94,0.2)" },

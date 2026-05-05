@@ -1,16 +1,34 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ChevronLeft,
   Copy,
+  Mail,
+  Radar,
   ScrollText,
+  ShieldAlert,
+  Sparkles,
   Wand2,
 } from "lucide-react";
 import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
   api,
+  type DmarcDnsCheckResponse,
+  type DmarcForensicResponse,
+  type DmarcMailboxConfigResponse,
+  type DmarcPostureEntry,
   type DmarcRecordResponse,
   type DmarcReportResponse,
+  type DmarcTrendPoint,
   type DmarcWizardResponse,
   type Org,
 } from "@/lib/api";
@@ -30,6 +48,7 @@ import {
   type StateTone,
 } from "@/components/shared/page-primitives";
 import { formatDate, timeAgo } from "@/lib/utils";
+import { CoverageGate } from "@/components/shared/coverage-gate";
 
 const POLICY_TONE: Record<string, StateTone> = {
   none: "muted",
@@ -50,6 +69,8 @@ const inputStyle: React.CSSProperties = {
   outline: "none",
 };
 
+type DmarcTab = "reports" | "forensic" | "dns" | "mailbox";
+
 export default function DmarcPage() {
   const { toast } = useToast();
   const [orgs, setOrgs] = useState<Org[]>([]);
@@ -59,6 +80,8 @@ export default function DmarcPage() {
   const [domainFilter, setDomainFilter] = useState("");
   const [selected, setSelected] = useState<DmarcReportResponse | null>(null);
   const [showWizard, setShowWizard] = useState(false);
+  const [tab, setTab] = useState<DmarcTab>("reports");
+  const [posture, setPosture] = useState<DmarcPostureEntry[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -114,7 +137,31 @@ export default function DmarcPage() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    if (!orgId) return;
+    let alive = true;
+    (async () => {
+      try {
+        const p = await api.dmarc.posture(orgId);
+        if (alive) setPosture(p);
+      } catch {
+        // posture is best-effort; do not toast
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [orgId]);
+
+  const domains = useMemo(() => {
+    const s = new Set<string>();
+    reports.forEach((r) => r.domain && s.add(r.domain));
+    posture.forEach((p) => p.domain && s.add(p.domain));
+    return Array.from(s).sort();
+  }, [reports, posture]);
+
   return (
+    <CoverageGate pageSlug="dmarc" pageLabel="DMARC">
     <div className="space-y-6">
       <PageHeader
         eyebrow={{ icon: ScrollText, label: "Governance" }}
@@ -140,9 +187,22 @@ export default function DmarcPage() {
         <ReportDetail
           report={selected}
           onBack={() => setSelected(null)}
+          orgId={orgId}
         />
       ) : (
         <>
+          <PostureStrip posture={posture} />
+          <TabsBar tab={tab} setTab={setTab} />
+          {tab === "dns" && (
+            <DnsHealthPanel domains={domains} />
+          )}
+          {tab === "forensic" && (
+            <ForensicPanel orgId={orgId} domainFilter={domainFilter} setDomainFilter={setDomainFilter} />
+          )}
+          {tab === "mailbox" && (
+            <MailboxPanel orgId={orgId} />
+          )}
+          {tab === "reports" && (<>
           <div className="flex items-center gap-2">
             <input
               value={domainFilter}
@@ -238,11 +298,438 @@ export default function DmarcPage() {
               </div>
             )}
           </Section>
+          </>)}
         </>
       )}
 
       {showWizard && (
         <WizardModal onClose={() => setShowWizard(false)} />
+      )}
+    </div>
+      </CoverageGate>
+  );
+}
+
+// ─────────────────────────────────────────────────────────── Tabs
+
+function TabsBar({ tab, setTab }: { tab: DmarcTab; setTab: (t: DmarcTab) => void }) {
+  const items: Array<{ id: DmarcTab; label: string; icon: typeof Mail }> = [
+    { id: "reports", label: "Aggregate reports", icon: ScrollText },
+    { id: "forensic", label: "Forensic (RUF)", icon: ShieldAlert },
+    { id: "dns", label: "DNS health", icon: Radar },
+    { id: "mailbox", label: "Mailbox config", icon: Mail },
+  ];
+  return (
+    <div className="flex items-center gap-1" style={{ borderBottom: "1px solid var(--color-border)" }}>
+      {items.map((it) => {
+        const active = it.id === tab;
+        const Icon = it.icon;
+        return (
+          <button
+            key={it.id}
+            onClick={() => setTab(it.id)}
+            className="inline-flex items-center gap-1.5 h-9 px-3 text-[12.5px] font-bold transition-colors"
+            style={{
+              borderBottom: active ? "2px solid var(--color-accent)" : "2px solid transparent",
+              color: active ? "var(--color-ink)" : "var(--color-muted)",
+              background: "transparent",
+            }}
+          >
+            <Icon className="w-3.5 h-3.5" />
+            {it.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function PostureStrip({ posture }: { posture: DmarcPostureEntry[] }) {
+  if (!posture.length) return null;
+  return (
+    <div className="flex flex-wrap gap-3">
+      {posture.slice(0, 6).map((p) => {
+        const tone =
+          p.score >= 80 ? "#007B55" : p.score >= 50 ? "#B76E00" : "#B71D18";
+        return (
+          <div
+            key={p.domain}
+            className="flex items-center gap-3 px-4 py-3 min-w-[220px]"
+            style={{ borderRadius: 5, border: "1px solid var(--color-border)", background: "var(--color-canvas)" }}
+          >
+            <div className="text-[28px] font-extrabold tabular-nums leading-none" style={{ color: tone }}>
+              {p.score}
+            </div>
+            <div className="space-y-0.5">
+              <div className="font-mono text-[12px] font-bold" style={{ color: "var(--color-ink)" }}>{p.domain}</div>
+              <div className="text-[10.5px]" style={{ color: "var(--color-muted)" }}>
+                {String(p.components?.alignment_30d_pct ?? "0")}% pass · RUF {String(p.components?.ruf_count_30d ?? 0)}
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────── DNS Health
+
+function DnsHealthPanel({ domains }: { domains: string[] }) {
+  const { toast } = useToast();
+  const [domain, setDomain] = useState("");
+  const [data, setData] = useState<DmarcDnsCheckResponse | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    if (!domain && domains.length) setDomain(domains[0]);
+  }, [domains, domain]);
+
+  const run = async () => {
+    if (!domain.trim()) return;
+    setBusy(true);
+    try {
+      const r = await api.dmarc.dnsCheck(domain.trim());
+      setData(r);
+    } catch (e) {
+      toast("error", e instanceof Error ? e.message : "DNS check failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <input
+          value={domain}
+          onChange={(e) => setDomain(e.target.value)}
+          placeholder="example.com"
+          className="h-10 px-3 w-[300px] text-[13px] font-mono"
+          style={{ borderRadius: 4, border: "1px solid var(--color-border)", background: "var(--color-canvas)", color: "var(--color-ink)" }}
+        />
+        <button
+          onClick={run}
+          disabled={busy || !domain.trim()}
+          className="h-10 px-4 text-[13px] font-bold"
+          style={{ borderRadius: 4, border: "1px solid var(--color-accent)", background: "var(--color-accent)", color: "var(--color-on-dark)" }}
+        >
+          {busy ? "Checking…" : "Check DNS"}
+        </button>
+      </div>
+
+      {data && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            <StatePill label={data.record_present ? "DMARC ✓" : "DMARC ✗"} tone={data.record_present ? "success" : "error-strong"} />
+            <StatePill label={data.bimi_present ? "BIMI ✓" : "BIMI ✗"} tone={data.bimi_present ? "success" : "muted"} />
+            <StatePill label={data.mta_sts_present ? "MTA-STS ✓" : "MTA-STS ✗"} tone={data.mta_sts_present ? "success" : "muted"} />
+            <StatePill label={data.tls_rpt_present ? "TLS-RPT ✓" : "TLS-RPT ✗"} tone={data.tls_rpt_present ? "success" : "muted"} />
+          </div>
+          {data.raw_record && (
+            <Section>
+              <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
+                <h3 className="text-[13px] font-bold" style={{ color: "var(--color-ink)" }}>Raw record</h3>
+              </div>
+              <pre className="px-4 py-3 text-[12px] font-mono whitespace-pre-wrap break-all" style={{ color: "var(--color-ink)" }}>
+                {data.raw_record}
+              </pre>
+            </Section>
+          )}
+          <Section>
+            <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
+              <h3 className="text-[13px] font-bold" style={{ color: "var(--color-ink)" }}>Parsed tags</h3>
+            </div>
+            <div className="p-4 grid grid-cols-2 md:grid-cols-3 gap-2">
+              {Object.entries(data.parsed_tags).map(([k, v]) => (
+                <div key={k} className="flex items-center gap-2 text-[12.5px] font-mono">
+                  <span style={{ color: "var(--color-muted)" }}>{k}=</span>
+                  <span style={{ color: "var(--color-ink)" }}>{v}</span>
+                </div>
+              ))}
+            </div>
+          </Section>
+          {data.warnings.length > 0 && (
+            <Section>
+              <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
+                <h3 className="text-[13px] font-bold" style={{ color: "#B71D18" }}>Warnings</h3>
+              </div>
+              <ul className="px-4 py-3 space-y-1 text-[12.5px]" style={{ color: "var(--color-body)" }}>
+                {data.warnings.map((w, i) => <li key={i}>• {w}</li>)}
+              </ul>
+            </Section>
+          )}
+          {data.recommendations.length > 0 && (
+            <Section>
+              <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
+                <h3 className="text-[13px] font-bold" style={{ color: "var(--color-ink)" }}>Recommendations</h3>
+              </div>
+              <ul className="px-4 py-3 space-y-1 text-[12.5px]" style={{ color: "var(--color-body)" }}>
+                {data.recommendations.map((r, i) => <li key={i}>• {r}</li>)}
+              </ul>
+            </Section>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────── Forensic
+
+function ForensicPanel({
+  orgId,
+  domainFilter,
+  setDomainFilter,
+}: {
+  orgId: string;
+  domainFilter: string;
+  setDomainFilter: (s: string) => void;
+}) {
+  const { toast } = useToast();
+  const [rows, setRows] = useState<DmarcForensicResponse[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<DmarcForensicResponse | null>(null);
+
+  useEffect(() => {
+    if (!orgId) return;
+    let alive = true;
+    (async () => {
+      setLoading(true);
+      try {
+        const r = await api.dmarc.listForensic({ organization_id: orgId, domain: domainFilter || undefined, limit: 200 });
+        if (alive) setRows(r);
+      } catch (e) {
+        toast("error", e instanceof Error ? e.message : "Failed to load forensic reports");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, [orgId, domainFilter, toast]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <input
+          value={domainFilter}
+          onChange={(e) => setDomainFilter(e.target.value)}
+          placeholder="Filter by domain…"
+          className="h-10 px-3 w-[260px] text-[12.5px] font-mono"
+          style={{ borderRadius: 4, border: "1px solid var(--color-border)", background: "var(--color-canvas)", color: "var(--color-ink)" }}
+        />
+      </div>
+      <Section>
+        {loading ? (
+          <SkeletonRows rows={6} columns={5} />
+        ) : rows.length === 0 ? (
+          <Empty
+            icon={ShieldAlert}
+            title="No forensic reports yet"
+            description="RUF reports land here when a configured mailbox receives them, or via direct upload (POST /dmarc/reports/forensic)."
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr style={{ background: "var(--color-surface)", borderBottom: "1px solid var(--color-border)" }}>
+                  <Th align="left" className="pl-4">Domain</Th>
+                  <Th align="left">Source IP</Th>
+                  <Th align="left">From</Th>
+                  <Th align="left" className="w-[120px]">Auth</Th>
+                  <Th align="right" className="pr-4 w-[120px]">Received</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr
+                    key={r.id}
+                    onClick={() => setSelected(r)}
+                    className="h-12 cursor-pointer"
+                    style={{ borderBottom: "1px solid var(--color-border)" }}
+                  >
+                    <td className="pl-4 font-mono text-[12.5px]" style={{ color: "var(--color-ink)" }}>{r.domain}</td>
+                    <td className="px-3 font-mono text-[12px]" style={{ color: "var(--color-body)" }}>{r.source_ip || "—"}</td>
+                    <td className="px-3 font-mono text-[11.5px]" style={{ color: "var(--color-body)" }}>{r.original_mail_from || "—"}</td>
+                    <td className="px-3"><StatePill label={r.auth_failure || "?"} tone="error-strong" /></td>
+                    <td className="pr-4 text-right font-mono text-[11px]" style={{ color: "var(--color-muted)" }}>{timeAgo(r.received_at)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
+      {selected && <ForensicDrawer row={selected} onClose={() => setSelected(null)} />}
+    </div>
+  );
+}
+
+function ForensicDrawer({ row, onClose }: { row: DmarcForensicResponse; onClose: () => void }) {
+  const lookalike = (row.agent_summary as any)?.lookalike;
+  return (
+    <ModalShell title={`Forensic — ${row.domain}`} onClose={onClose} width={760}>
+      <div className="p-6 space-y-4 text-[12.5px]">
+        <KV k="source_ip" v={row.source_ip} />
+        <KV k="auth_failure" v={row.auth_failure} />
+        <KV k="delivery_result" v={row.delivery_result} />
+        <KV k="original_mail_from" v={row.original_mail_from} />
+        <KV k="original_rcpt_to" v={row.original_rcpt_to} />
+        <KV k="dkim_domain" v={row.dkim_domain} />
+        <KV k="dkim_selector" v={row.dkim_selector} />
+        <KV k="spf_domain" v={row.spf_domain} />
+        {lookalike && (
+          <Section>
+            <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
+              <h3 className="text-[13px] font-bold" style={{ color: "var(--color-ink)" }}>Lookalike verdict</h3>
+            </div>
+            <div className="p-4 space-y-2 text-[12.5px]">
+              <div><b>Severity:</b> {lookalike.severity}</div>
+              <div><b>Matched:</b> {(lookalike.matched || []).join(", ") || "—"}</div>
+              <div>{lookalike.rationale}</div>
+              <button className="h-9 px-3 mt-2 text-[12.5px] font-bold" style={{ borderRadius: 4, border: "1px solid var(--color-accent)", background: "var(--color-accent)", color: "var(--color-on-dark)" }}>
+                Draft takedown
+              </button>
+            </div>
+          </Section>
+        )}
+        {row.raw_headers && (
+          <Section>
+            <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
+              <h3 className="text-[13px] font-bold" style={{ color: "var(--color-ink)" }}>Original headers</h3>
+            </div>
+            <pre className="px-4 py-3 text-[11.5px] font-mono whitespace-pre-wrap break-all" style={{ color: "var(--color-ink)" }}>{row.raw_headers}</pre>
+          </Section>
+        )}
+      </div>
+    </ModalShell>
+  );
+}
+
+function KV({ k, v }: { k: string; v: string | null | undefined }) {
+  return (
+    <div className="flex items-baseline gap-3">
+      <span className="font-mono text-[11px] uppercase tracking-[0.08em] w-[160px]" style={{ color: "var(--color-muted)" }}>{k}</span>
+      <span className="font-mono text-[12.5px]" style={{ color: "var(--color-ink)" }}>{v || "—"}</span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────── Mailbox config
+
+function MailboxPanel({ orgId }: { orgId: string }) {
+  const { toast } = useToast();
+  const [rows, setRows] = useState<DmarcMailboxConfigResponse[]>([]);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ host: "", port: 993, username: "", password: "", folder: "INBOX", enabled: true });
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  const reload = useCallback(async () => {
+    if (!orgId) return;
+    setLoading(true);
+    try {
+      const r = await api.dmarc.listMailboxConfigs(orgId);
+      setRows(r);
+    } catch (e) {
+      toast("error", e instanceof Error ? e.message : "Failed to load mailbox configs (admin only?)");
+    } finally {
+      setLoading(false);
+    }
+  }, [orgId, toast]);
+
+  useEffect(() => { reload(); }, [reload]);
+
+  const save = async () => {
+    if (!form.host || !form.username || !form.password) {
+      toast("error", "host, username, password required");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.dmarc.upsertMailboxConfig({ organization_id: orgId, ...form });
+      toast("success", "Mailbox config saved (password encrypted at rest)");
+      setShowForm(false);
+      setForm({ host: "", port: 993, username: "", password: "", folder: "INBOX", enabled: true });
+      reload();
+    } catch (e) {
+      toast("error", e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (id: string) => {
+    try {
+      await api.dmarc.deleteMailboxConfig(id);
+      toast("success", "Deleted");
+      reload();
+    } catch (e) {
+      toast("error", e instanceof Error ? e.message : "Delete failed");
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div className="text-[12.5px]" style={{ color: "var(--color-muted)" }}>
+          IMAP mailbox the worker polls hourly for RUA/RUF attachments. Password is Fernet-encrypted server-side.
+        </div>
+        <button
+          onClick={() => setShowForm(true)}
+          className="h-10 px-4 text-[13px] font-bold"
+          style={{ borderRadius: 4, border: "1px solid var(--color-accent)", background: "var(--color-accent)", color: "var(--color-on-dark)" }}
+        >
+          + Add mailbox
+        </button>
+      </div>
+      <Section>
+        {loading ? (
+          <SkeletonRows rows={3} columns={5} />
+        ) : rows.length === 0 ? (
+          <Empty icon={Mail} title="No mailbox configured" description="Add an IMAPS endpoint and the worker will start draining DMARC reports on its next tick." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr style={{ background: "var(--color-surface)", borderBottom: "1px solid var(--color-border)" }}>
+                  <Th align="left" className="pl-4">Host</Th>
+                  <Th align="left">Username</Th>
+                  <Th align="left">Folder</Th>
+                  <Th align="left">Status</Th>
+                  <Th align="right" className="pr-4">Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.id} className="h-12" style={{ borderBottom: "1px solid var(--color-border)" }}>
+                    <td className="pl-4 font-mono text-[12.5px]">{r.host}:{r.port}</td>
+                    <td className="px-3 font-mono text-[12px]">{r.username}</td>
+                    <td className="px-3 font-mono text-[12px]">{r.folder}</td>
+                    <td className="px-3">
+                      {r.last_error ? <StatePill label={`error: ${r.last_error.slice(0, 40)}`} tone="error-strong" /> : <StatePill label={r.enabled ? "enabled" : "paused"} tone={r.enabled ? "success" : "muted"} />}
+                    </td>
+                    <td className="pr-4 text-right">
+                      <button onClick={() => remove(r.id)} className="text-[12px] font-bold" style={{ color: "#B71D18" }}>Delete</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
+      {showForm && (
+        <ModalShell title="Configure IMAP mailbox" onClose={() => setShowForm(false)} width={520}>
+          <div className="p-6 space-y-4">
+            <Field label="IMAP host" required><input value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} className="w-full h-10 px-3 text-[13px] font-mono" style={inputStyle} placeholder="imap.gmail.com" /></Field>
+            <Field label="Port"><input value={form.port} type="number" onChange={(e) => setForm({ ...form, port: Number(e.target.value) || 993 })} className="w-full h-10 px-3 text-[13px] font-mono" style={inputStyle} /></Field>
+            <Field label="Username" required><input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} className="w-full h-10 px-3 text-[13px] font-mono" style={inputStyle} /></Field>
+            <Field label="Password" required hint="Encrypted server-side via Fernet."><input value={form.password} type="password" onChange={(e) => setForm({ ...form, password: e.target.value })} className="w-full h-10 px-3 text-[13px] font-mono" style={inputStyle} /></Field>
+            <Field label="Folder"><input value={form.folder} onChange={(e) => setForm({ ...form, folder: e.target.value })} className="w-full h-10 px-3 text-[13px] font-mono" style={inputStyle} /></Field>
+          </div>
+          <ModalFooter onCancel={() => setShowForm(false)} onSubmit={save} submitLabel={busy ? "Saving…" : "Save"} disabled={busy} />
+        </ModalShell>
       )}
     </div>
   );
@@ -279,13 +766,18 @@ function PassFailBar({
 function ReportDetail({
   report,
   onBack,
+  orgId,
 }: {
   report: DmarcReportResponse;
   onBack: () => void;
+  orgId: string;
 }) {
   const { toast } = useToast();
   const [records, setRecords] = useState<DmarcRecordResponse[]>([]);
   const [loading, setLoading] = useState(true);
+  const [trend, setTrend] = useState<DmarcTrendPoint[]>([]);
+  const [planning, setPlanning] = useState(false);
+  const [planMd, setPlanMd] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -300,8 +792,32 @@ function ReportDetail({
       } finally {
         setLoading(false);
       }
+      try {
+        const t = await api.dmarc.trends(report.domain, { organization_id: orgId, days: 30 });
+        setTrend(t);
+      } catch {
+        // optional
+      }
     })();
-  }, [report.id, toast]);
+  }, [report.id, report.domain, orgId, toast]);
+
+  const runPlan = async () => {
+    setPlanning(true);
+    try {
+      const r = await api.dmarc.planRollout({ organization_id: orgId, domain: report.domain });
+      if (r.markdown) {
+        setPlanMd(r.markdown);
+      } else {
+        toast("info", `Rollout plan queued (task ${r.task_id.slice(0, 8)} status=${r.status}). Refresh in a few seconds.`);
+      }
+    } catch (e) {
+      toast("error", e instanceof Error ? e.message : "Plan-rollout failed");
+    } finally {
+      setPlanning(false);
+    }
+  };
+
+  const rcaEntries = report.rca ? Object.entries(report.rca) : [];
 
   return (
     <div className="space-y-5">
@@ -331,6 +847,18 @@ function ReportDetail({
         </span>
       </div>
 
+      <div className="flex items-center gap-2">
+        <button
+          onClick={runPlan}
+          disabled={planning}
+          className="inline-flex items-center gap-2 h-9 px-3 text-[12.5px] font-bold"
+          style={{ borderRadius: 4, border: "1px solid var(--color-accent)", background: "var(--color-accent)", color: "var(--color-on-dark)" }}
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          {planning ? "Generating…" : "Plan rollout (Bridge)"}
+        </button>
+      </div>
+
       <div style={{ borderRadius: "5px", border: "1px solid var(--color-border)", background: "var(--color-canvas)" }}>
         <div className="grid grid-cols-2 md:grid-cols-5">
           <Stat label="Total" value={report.total_messages} />
@@ -340,6 +868,50 @@ function ReportDetail({
           <Stat label="Rejected" value={report.reject_count} tone="error" />
         </div>
       </div>
+
+      {trend.length > 1 && (
+        <Section>
+          <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
+            <h3 className="text-[13px] font-bold" style={{ color: "var(--color-ink)" }}>30-day pass-%</h3>
+          </div>
+          <div style={{ height: 220 }} className="px-4 py-3">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={trend} margin={{ top: 8, right: 16, bottom: 8, left: 8 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--color-border)" />
+                <XAxis dataKey="day" stroke="var(--color-muted)" fontSize={11} />
+                <YAxis domain={[0, 100]} stroke="var(--color-muted)" fontSize={11} />
+                <Tooltip />
+                <Line type="monotone" dataKey="pass_pct" stroke="#007B55" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </Section>
+      )}
+
+      {rcaEntries.length > 0 && (
+        <Section>
+          <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
+            <h3 className="text-[13px] font-bold" style={{ color: "var(--color-ink)" }}>Bridge RCA</h3>
+            <p className="text-[11.5px] mt-0.5" style={{ color: "var(--color-muted)" }}>
+              LLM-classified root causes for misaligned source IPs.
+            </p>
+          </div>
+          <div className="p-4 space-y-3">
+            {rcaEntries.map(([ip, entry]: [string, any]) => (
+              <div key={ip} className="text-[12.5px]">
+                <div className="font-mono font-bold" style={{ color: "var(--color-ink)" }}>{ip} <span style={{ color: "var(--color-muted)" }}>· {entry.cause}</span></div>
+                <div style={{ color: "var(--color-body)" }}>{entry.recommendation}</div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {planMd && (
+        <ModalShell title={`Rollout plan — ${report.domain}`} onClose={() => setPlanMd(null)} width={760}>
+          <div className="p-6 text-[13px] whitespace-pre-wrap font-mono" style={{ color: "var(--color-ink)" }}>{planMd}</div>
+        </ModalShell>
+      )}
 
       <Section>
         <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--color-border)" }}>

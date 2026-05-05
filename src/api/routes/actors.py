@@ -39,6 +39,14 @@ class ActorResponse(BaseModel):
     last_seen: datetime
     total_sightings: int
     profile_data: dict | None
+    # MITRE / enrichment fields
+    mitre_group_id: str | None = None
+    country_codes: list[str] = []
+    sectors_targeted: list[str] = []
+    regions_targeted: list[str] = []
+    malware_families: list[str] = []
+    references: list[dict] = []
+    confidence: float = 0.7
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -311,7 +319,13 @@ async def list_actors(
     platform: str | None = None,
     language: str | None = None,
     search: str | None = None,
-    limit: int = Query(50, le=200),
+    sector: str | None = None,
+    region: str | None = None,
+    country: str | None = None,
+    technique: str | None = None,
+    confidence_min: float | None = None,
+    has_mitre_id: bool | None = None,
+    limit: int = Query(50, le=500),
     offset: int = 0,
     db: AsyncSession = Depends(get_session),
 ):
@@ -329,7 +343,87 @@ async def list_actors(
         query = query.where(
             ThreatActor.primary_alias.ilike(pattern)
         )
+    if sector:
+        query = query.where(ThreatActor.sectors_targeted.any(sector))
+    if region:
+        query = query.where(ThreatActor.regions_targeted.any(region))
+    if country:
+        query = query.where(ThreatActor.country_codes.any(country.upper()))
+    if technique:
+        query = query.where(ThreatActor.known_ttps.any(technique))
+    if confidence_min is not None:
+        query = query.where(ThreatActor.confidence >= confidence_min)
+    if has_mitre_id is True:
+        query = query.where(ThreatActor.mitre_group_id.isnot(None))
+    elif has_mitre_id is False:
+        query = query.where(ThreatActor.mitre_group_id.is_(None))
 
     query = query.offset(offset).limit(limit)
     result = await db.execute(query)
     return result.scalars().all()
+
+
+# --- STIX 2.1 export ---------------------------------------------------
+
+
+@router.get("/{actor_id}/stix")
+async def export_actor_stix(
+    actor_id: uuid.UUID,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """Return a STIX 2.1 Bundle representing this actor."""
+    actor = await db.get(ThreatActor, actor_id)
+    if not actor:
+        raise HTTPException(404, "Actor not found")
+
+    actor_uuid = f"threat-actor--{actor.id}"
+    obj = {
+        "type": "threat-actor",
+        "spec_version": "2.1",
+        "id": actor_uuid,
+        "name": actor.primary_alias,
+        "aliases": actor.aliases or [],
+        "description": actor.description,
+        "labels": list(set(actor.sectors_targeted or []))[:10],
+        "roles": ["malware-author"],
+        "sophistication": "advanced" if (actor.confidence or 0) >= 0.8 else "intermediate",
+        "first_seen": actor.first_seen.isoformat() if actor.first_seen else None,
+        "last_seen": actor.last_seen.isoformat() if actor.last_seen else None,
+        "external_references": [
+            {"source_name": "argus", "external_id": str(actor.id)},
+            *([{
+                "source_name": "mitre-attack",
+                "external_id": actor.mitre_group_id,
+                "url": f"https://attack.mitre.org/groups/{actor.mitre_group_id}/",
+            }] if actor.mitre_group_id else []),
+            *(actor.references or []),
+        ],
+        "x_argus_country_codes": actor.country_codes or [],
+        "x_argus_sectors_targeted": actor.sectors_targeted or [],
+        "x_argus_regions_targeted": actor.regions_targeted or [],
+        "x_argus_malware_families": actor.malware_families or [],
+        "x_argus_confidence": actor.confidence,
+        "x_argus_risk_score": actor.risk_score,
+    }
+    bundle = {
+        "type": "bundle",
+        "id": f"bundle--{actor.id}",
+        "objects": [obj],
+    }
+    return bundle
+
+
+# --- Auto-import from MITRE Groups ------------------------------------
+
+
+@router.post("/import-from-mitre")
+async def import_from_mitre(
+    admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """Idempotently seed/refresh actors from MITRE ATT&CK Groups."""
+    from src.mitre.sync import upsert_actors_from_groups
+
+    written = await upsert_actors_from_groups(db)
+    return {"written": written}

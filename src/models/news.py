@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean,
@@ -33,6 +33,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -83,14 +84,32 @@ class NewsFeed(Base, UUIDMixin, TimestampMixin):
         DateTime(timezone=True)
     )
     last_status: Mapped[str | None] = mapped_column(String(40))
+    last_status_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(Text)
     tags: Mapped[list] = mapped_column(ARRAY(String), default=list, nullable=False)
+    # Pipeline metadata
+    category: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="news"
+    )  # news | intel | advisories
+    credibility_score: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=50
+    )  # 0-100
+    language: Mapped[str] = mapped_column(String(10), nullable=False, default="en")
+    description: Mapped[str | None] = mapped_column(Text)
+    fetch_interval_seconds: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=14400
+    )
+    health_score: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    consecutive_failures: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
 
     __table_args__ = (
         UniqueConstraint(
             "organization_id", "url", name="uq_news_feed_org_url"
         ),
         Index("ix_news_feed_enabled", "enabled"),
+        Index("ix_news_feed_category", "category"),
     )
 
 
@@ -114,9 +133,60 @@ class NewsArticle(Base, UUIDMixin, TimestampMixin):
     tags: Mapped[list] = mapped_column(ARRAY(String), default=list, nullable=False)
     raw: Mapped[dict | None] = mapped_column(JSONB)
 
+    # Pipeline outputs
+    body_text: Mapped[str | None] = mapped_column(Text)
+    body_text_hash: Mapped[str | None] = mapped_column(String(64))
+    summary_generated: Mapped[str | None] = mapped_column(Text)
+    summary_source: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="feed"
+    )  # feed | extraction | llm
+    language: Mapped[str] = mapped_column(String(10), nullable=False, default="en")
+    body_translated: Mapped[str | None] = mapped_column(Text)
+    summary_translated: Mapped[str | None] = mapped_column(Text)
+    iocs_extracted: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    actors_extracted: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    techniques_extracted: Mapped[list] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
+
     __table_args__ = (
         Index("ix_news_articles_published", "published_at"),
         Index("ix_news_articles_cves", "cve_ids", postgresql_using="gin"),
+        Index(
+            "ix_news_articles_techniques",
+            "techniques_extracted",
+            postgresql_using="gin",
+        ),
+    )
+
+
+class NewsArticleIoc(Base, UUIDMixin):
+    """Junction table linking articles to canonical IOC rows.
+
+    Created when the article entity-extractor finds an IP/domain/hash and
+    the global /iocs upsert succeeds. Lets the article detail panel
+    surface "Indicators in this article" and lets /iocs surface "Seen in
+    these articles".
+    """
+
+    __tablename__ = "news_article_iocs"
+
+    article_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("news_articles.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    ioc_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("iocs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+    __table_args__ = (
+        UniqueConstraint("article_id", "ioc_id", name="uq_article_ioc"),
     )
 
 
@@ -204,11 +274,107 @@ class Advisory(Base, UUIDMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
 
+    # Pipeline / ingestion-source metadata
+    source: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="manual"
+    )  # manual | cisa_kev | msrc | ghsa | redhat | adobe | cisco | oracle | vmware | ...
+    external_id: Mapped[str | None] = mapped_column(String(100))
+    cvss3_score: Mapped[float | None] = mapped_column(Float)
+    epss_score: Mapped[float | None] = mapped_column(Float)
+    is_kev: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    affected_products: Mapped[list] = mapped_column(
+        JSONB, default=list, nullable=False
+    )
+    remediation_steps: Mapped[list] = mapped_column(
+        JSONB, default=list, nullable=False
+    )
+    triage_state: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="new"
+    )  # new | acknowledged | in_remediation | resolved | dismissed
+    assigned_to_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+
     __table_args__ = (
         UniqueConstraint(
             "organization_id", "slug", name="uq_advisory_org_slug"
         ),
+        UniqueConstraint(
+            "source", "external_id", name="uq_advisory_source_external_id"
+        ),
         Index("ix_advisory_state", "state", "severity"),
+        Index("ix_advisory_source", "source"),
+        Index("ix_advisory_kev", "is_kev"),
+        Index("ix_advisory_triage", "triage_state"),
+    )
+
+
+class AdvisorySubscription(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "advisory_subscriptions"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    severity_threshold: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="high"
+    )
+    kev_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sources: Mapped[list] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
+    keyword_filters: Mapped[list] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    __table_args__ = (
+        Index(
+            "ix_advisory_sub_org_active", "organization_id", "active"
+        ),
+    )
+
+
+class AdvisoryComment(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "advisory_comments"
+
+    advisory_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("advisories.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    author_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (Index("ix_advisory_comments_advisory", "advisory_id"),)
+
+
+class AdvisoryIocLink(Base, UUIDMixin):
+    __tablename__ = "advisory_ioc_links"
+
+    advisory_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("advisories.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    ioc_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("iocs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc)
+    )
+
+    __table_args__ = (
+        UniqueConstraint("advisory_id", "ioc_id", name="uq_advisory_ioc"),
     )
 
 
@@ -218,6 +384,10 @@ __all__ = [
     "AdvisorySeverity",
     "NewsFeed",
     "NewsArticle",
+    "NewsArticleIoc",
     "ArticleRelevance",
     "Advisory",
+    "AdvisorySubscription",
+    "AdvisoryComment",
+    "AdvisoryIocLink",
 ]

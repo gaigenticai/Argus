@@ -357,7 +357,13 @@ class ThreatHunterAgent:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def hunt(self, *, organization_id: str) -> HuntReport:
+    async def hunt(
+        self,
+        *,
+        organization_id: str,
+        template_hypothesis: str | None = None,
+        template_techniques: list[str] | None = None,
+    ) -> HuntReport:
         from src.agents.triage_agent import (
             LLMNotConfigured,
             LLMTransportError,
@@ -370,14 +376,24 @@ class ThreatHunterAgent:
         triage = TriageAgent()
         call_llm = triage._call_llm
 
+        kickoff = (
+            f"Begin weekly threat hunt. Organization id: {organization_id}."
+        )
+        if template_hypothesis:
+            kickoff += (
+                "\n\nThe analyst picked a hunt template — anchor your "
+                "investigation on the following hypothesis instead of "
+                "auto-picking an actor:\n"
+                f"HYPOTHESIS: {template_hypothesis}"
+            )
+        if template_techniques:
+            kickoff += (
+                "\n\nBias your search toward these MITRE techniques: "
+                + ", ".join(template_techniques)
+            )
+
         history: list[dict[str, str]] = [
-            {
-                "role": "user",
-                "content": (
-                    f"Begin weekly threat hunt. Organization id: "
-                    f"{organization_id}."
-                ),
-            }
+            {"role": "user", "content": kickoff}
         ]
         trace: list[TraceStep] = []
         catalogue = json.dumps(
@@ -531,7 +547,7 @@ async def run_and_persist(
 ) -> uuid.UUID:
     from src.agents.triage_agent import LLMNotConfigured, LLMTransportError
     from src.llm.providers import BridgeProvider
-    from src.models.threat_hunts import HuntStatus, ThreatHuntRun
+    from src.models.threat_hunts import HuntStatus, HuntTemplate, ThreatHuntRun
 
     if run_id is None:
         run = ThreatHuntRun(
@@ -552,10 +568,27 @@ async def run_and_persist(
         run.started_at = datetime.now(timezone.utc)
     await session.commit()
 
+    # Pull template steering hints (set by /threat-hunts/templates UI).
+    tpl_hypothesis = None
+    tpl_techniques: list[str] | None = None
+    if run.template_id:
+        tpl = (
+            await session.execute(
+                select(HuntTemplate).where(HuntTemplate.id == run.template_id)
+            )
+        ).scalar_one_or_none()
+        if tpl is not None:
+            tpl_hypothesis = tpl.hypothesis
+            tpl_techniques = list(tpl.mitre_technique_ids or [])
+
     started = time.monotonic()
     agent = ThreatHunterAgent(session)
     try:
-        report = await agent.hunt(organization_id=str(organization_id))
+        report = await agent.hunt(
+            organization_id=str(organization_id),
+            template_hypothesis=tpl_hypothesis,
+            template_techniques=tpl_techniques,
+        )
         try:
             model_id = getattr(BridgeProvider._singleton, "last_model_id", None)
         except Exception:  # noqa: BLE001

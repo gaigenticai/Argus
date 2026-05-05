@@ -7,12 +7,20 @@ import {
   Image as ImageIcon,
   Lock,
   RotateCcw,
+  ShieldCheck,
+  ShieldAlert,
+  Sparkles,
   Trash2,
   Upload,
+  X,
 } from "lucide-react";
 import {
   api,
+  type EvidenceAuditChainEntry,
+  type EvidenceAuditChainVerify,
   type EvidenceBlobResponse,
+  type EvidenceCoCNarrative,
+  type EvidenceSimilarResponse,
   type Org,
 } from "@/lib/api";
 import { useToast } from "@/components/shared/toast";
@@ -32,6 +40,7 @@ import {
 } from "@/components/shared/page-primitives";
 import { timeAgo } from "@/lib/utils";
 
+import { SourcesStrip } from "@/components/shared/sources-strip";
 const KIND_OPTIONS = [
   { value: "all", label: "Any kind" },
   { value: "screenshot", label: "Screenshot" },
@@ -68,6 +77,11 @@ export default function EvidencePage() {
     useState<EvidenceBlobResponse | null>(null);
   const [deleteTarget, setDeleteTarget] =
     useState<EvidenceBlobResponse | null>(null);
+  const [drawerTarget, setDrawerTarget] =
+    useState<EvidenceBlobResponse | null>(null);
+  const [chainStatus, setChainStatus] =
+    useState<EvidenceAuditChainVerify | null>(null);
+  const [chainBusy, setChainBusy] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -169,6 +183,25 @@ export default function EvidencePage() {
     }
   };
 
+  const verifyChain = useCallback(async () => {
+    if (!orgId) return;
+    setChainBusy(true);
+    try {
+      const r = await api.evidence.verifyChain(orgId);
+      setChainStatus(r);
+      toast(
+        r.valid ? "success" : "error",
+        r.valid
+          ? `Audit chain verified — ${r.total_rows} rows, head ${(r.head_chain_hash || "").slice(0, 12)}…`
+          : `Audit chain BROKEN at sequence ${r.broken_at_sequence}. Treat as a security incident.`,
+      );
+    } catch (e) {
+      toast("error", e instanceof Error ? e.message : "Verify failed");
+    } finally {
+      setChainBusy(false);
+    }
+  }, [orgId, toast]);
+
   const remove = async (b: EvidenceBlobResponse, reason: string) => {
     try {
       await api.evidence.delete(b.id, reason);
@@ -191,6 +224,7 @@ export default function EvidencePage() {
         actions={
           <>
             <OrgSwitcher orgs={orgs} orgId={orgId} onChange={setOrgId} />
+      <SourcesStrip pageKey="evidence" />
             <RefreshButton onClick={load} refreshing={loading} />
             <button
               onClick={() => setShowUpload(true)}
@@ -220,7 +254,7 @@ export default function EvidencePage() {
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search by sha256 or filename…"
+          placeholder="Search hash, filename, OCR text…"
           className="h-10 px-3 w-[260px] text-[12.5px] font-mono"
           style={inputStyle}
         />
@@ -239,6 +273,34 @@ export default function EvidencePage() {
           }
         >
           {showDeleted ? "Including deleted" : "Active only"}
+        </button>
+        <button
+          onClick={verifyChain}
+          disabled={chainBusy || !orgId}
+          className="h-10 px-3 text-[12px] font-bold transition-colors inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+          style={
+            chainStatus == null
+              ? { borderRadius: "4px", border: "1px solid var(--color-border)", background: "var(--color-canvas)", color: "var(--color-body)" }
+              : chainStatus.valid
+                ? { borderRadius: "4px", border: "1px solid #36B37E", background: "#36B37E", color: "var(--color-on-dark)" }
+                : { borderRadius: "4px", border: "1px solid #B71D18", background: "#B71D18", color: "var(--color-on-dark)" }
+          }
+          title="Verify the Merkle audit chain for this organization"
+        >
+          {chainStatus == null ? (
+            <ShieldCheck className="w-3.5 h-3.5" />
+          ) : chainStatus.valid ? (
+            <ShieldCheck className="w-3.5 h-3.5" />
+          ) : (
+            <ShieldAlert className="w-3.5 h-3.5" />
+          )}
+          {chainBusy
+            ? "Verifying…"
+            : chainStatus == null
+              ? "Verify chain integrity"
+              : chainStatus.valid
+                ? `Chain OK (${chainStatus.total_rows})`
+                : `BROKEN @ seq ${chainStatus.broken_at_sequence}`}
         </button>
       </div>
 
@@ -283,7 +345,7 @@ export default function EvidencePage() {
                 {rows.map((b) => (
                   <tr
                     key={b.id}
-                    className="h-12 transition-colors"
+                    className="h-12 transition-colors cursor-pointer"
                     style={{
                       borderBottom: "1px solid var(--color-border)",
                       opacity: b.is_deleted ? 0.7 : 1,
@@ -291,6 +353,7 @@ export default function EvidencePage() {
                     }}
                     onMouseEnter={e => { if (!b.is_deleted) e.currentTarget.style.background = "var(--color-surface)"; }}
                     onMouseLeave={e => { if (!b.is_deleted) e.currentTarget.style.background = "transparent"; }}
+                    onClick={() => setDrawerTarget(b)}
                   >
                     <td className="pl-4">
                       <div className="text-[13px] font-semibold line-clamp-1 max-w-[320px]" style={{ color: "var(--color-ink)" }}>
@@ -325,7 +388,10 @@ export default function EvidencePage() {
                     <td className="px-3 font-mono text-[11.5px] tabular-nums" style={{ color: "var(--color-muted)" }}>
                       {timeAgo(b.captured_at)}
                     </td>
-                    <td className="pr-4">
+                    <td
+                      className="pr-4"
+                      onClick={(e) => e.stopPropagation()}
+                    >
                       <div className="flex items-center justify-end gap-1">
                         <button
                           onClick={() => download(b)}
@@ -404,6 +470,12 @@ export default function EvidencePage() {
           target={deleteTarget}
           onClose={() => setDeleteTarget(null)}
           onSubmit={(reason) => remove(deleteTarget, reason)}
+        />
+      )}
+      {drawerTarget && (
+        <DetailDrawer
+          target={drawerTarget}
+          onClose={() => setDrawerTarget(null)}
         />
       )}
     </div>
@@ -513,7 +585,7 @@ function UploadModal({
             rows={2}
             className="w-full px-3 py-2 text-[13px] resize-none"
             style={inputStyle}
-            placeholder="Captured from probe of argus-fake-login.com on 2026-04-29."
+            placeholder="Captured from probe of marsad-fake-login.com on 2026-04-29."
           />
         </Field>
       </div>
@@ -639,3 +711,254 @@ function DeleteModal({
     </ModalShell>
   );
 }
+
+function DetailDrawer({
+  target,
+  onClose,
+}: {
+  target: EvidenceBlobResponse;
+  onClose: () => void;
+}) {
+  const { toast } = useToast();
+  const [chain, setChain] = useState<EvidenceAuditChainEntry[] | null>(null);
+  const [similar, setSimilar] = useState<EvidenceSimilarResponse | null>(null);
+  const [coc, setCoc] = useState<EvidenceCoCNarrative | null>(null);
+  const [cocBusy, setCocBusy] = useState(false);
+  const [chainBusy, setChainBusy] = useState(true);
+  const [similarBusy, setSimilarBusy] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        setChainBusy(true);
+        const c = await api.evidence.auditChain(target.id);
+        if (alive) setChain(c);
+      } catch (e) {
+        if (alive) toast("error", e instanceof Error ? e.message : "Audit chain failed");
+      } finally {
+        if (alive) setChainBusy(false);
+      }
+    })();
+    (async () => {
+      try {
+        setSimilarBusy(true);
+        const s = await api.evidence.similar(target.id);
+        if (alive) setSimilar(s);
+      } catch (e) {
+        if (alive) toast("error", e instanceof Error ? e.message : "Similar lookup failed");
+      } finally {
+        if (alive) setSimilarBusy(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [target.id, toast]);
+
+  const generateCoc = async () => {
+    setCocBusy(true);
+    try {
+      const r = await api.evidence.narrateCoc(target.id, true);
+      setCoc(r);
+      toast("success", "Chain-of-custody narrative generated");
+    } catch (e) {
+      toast("error", e instanceof Error ? e.message : "COC narrate failed");
+    } finally {
+      setCocBusy(false);
+    }
+  };
+
+  const summary =
+    target.agent_summary || null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex justify-end"
+      style={{ background: "rgba(0,0,0,0.35)" }}
+      onClick={onClose}
+    >
+      <div
+        className="h-full w-full max-w-[640px] overflow-y-auto"
+        style={{ background: "var(--color-canvas)", borderLeft: "1px solid var(--color-border)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="sticky top-0 z-10 flex items-center justify-between px-5 py-3"
+          style={{ background: "var(--color-surface)", borderBottom: "1px solid var(--color-border)" }}
+        >
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: "var(--color-muted)" }}>
+              Evidence detail
+            </div>
+            <div className="text-[14px] font-bold" style={{ color: "var(--color-ink)" }}>
+              {target.original_filename || "(unnamed)"}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5"
+            style={{ borderRadius: "4px", color: "var(--color-muted)" }}
+            aria-label="Close"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-6">
+          <Section>
+            <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
+              <div className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: "var(--color-muted)" }}>
+                Hashes
+              </div>
+            </div>
+            <div className="px-4 py-3 space-y-1.5 font-mono text-[11.5px]" style={{ color: "var(--color-body)" }}>
+              <div><span style={{ color: "var(--color-muted)" }}>sha256:</span> {target.sha256}</div>
+              <div><span style={{ color: "var(--color-muted)" }}>md5:   </span> {target.md5 || "—"}</div>
+              <div><span style={{ color: "var(--color-muted)" }}>sha1:  </span> {target.sha1 || "—"}</div>
+              <div><span style={{ color: "var(--color-muted)" }}>size:  </span> {target.size_bytes} bytes</div>
+              <div><span style={{ color: "var(--color-muted)" }}>kind:  </span> {target.kind}</div>
+              <div><span style={{ color: "var(--color-muted)" }}>mime:  </span> {target.content_type}</div>
+            </div>
+          </Section>
+
+          <Section>
+            <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid var(--color-border)" }}>
+              <div className="text-[11px] font-bold uppercase tracking-[0.12em] inline-flex items-center gap-2" style={{ color: "var(--color-muted)" }}>
+                <Sparkles className="w-3.5 h-3.5" /> Agent summary
+              </div>
+              <span className="text-[10.5px] font-mono" style={{ color: "var(--color-muted)" }}>
+                {summary && typeof summary["model_id"] === "string" ? summary["model_id"] : ""}
+              </span>
+            </div>
+            <div className="px-4 py-3 text-[12.5px]" style={{ color: "var(--color-body)" }}>
+              {!summary ? (
+                <span style={{ color: "var(--color-muted)" }} className="italic">
+                  Summariser has not run yet — try refreshing in a few seconds.
+                </span>
+              ) : summary["parse_failed"] ? (
+                <pre className="whitespace-pre-wrap text-[11.5px] font-mono">{String(summary["raw"] || "")}</pre>
+              ) : (
+                <div className="space-y-2">
+                  {Array.isArray(summary["summary_bullets"]) && (
+                    <ul className="list-disc pl-5 space-y-0.5">
+                      {(summary["summary_bullets"] as string[]).map((b, i) => (
+                        <li key={i}>{b}</li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="text-[11px] font-mono" style={{ color: "var(--color-muted)" }}>
+                    classification: {String(summary["classification"] || "—")} ·
+                    confidence: {String(summary["confidence"] ?? "—")}
+                  </div>
+                  {Array.isArray(summary["pii_categories"]) && (summary["pii_categories"] as string[]).length > 0 && (
+                    <div className="text-[11px] font-mono" style={{ color: "var(--color-muted)" }}>
+                      PII: {(summary["pii_categories"] as string[]).join(", ")}
+                    </div>
+                  )}
+                  {Array.isArray(summary["linked_ioc_ids"]) && (
+                    <div className="text-[11px] font-mono" style={{ color: "var(--color-muted)" }}>
+                      Linked IOCs: {(summary["linked_ioc_ids"] as string[]).length}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </Section>
+
+          <Section>
+            <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
+              <div className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: "var(--color-muted)" }}>
+                Audit chain ({chain?.length ?? 0})
+              </div>
+            </div>
+            <div className="px-4 py-3 text-[11.5px] font-mono space-y-2" style={{ color: "var(--color-body)" }}>
+              {chainBusy ? "Loading…" : !chain || chain.length === 0 ? (
+                <span style={{ color: "var(--color-muted)" }} className="italic">No audit-chain rows yet.</span>
+              ) : (
+                chain.map((row) => (
+                  <div key={row.sequence} className="border-l pl-3" style={{ borderColor: "var(--color-border)" }}>
+                    <div>
+                      <span style={{ color: "var(--color-muted)" }}>seq {row.sequence}</span> ·{" "}
+                      <span className="font-bold">{row.action}</span>
+                    </div>
+                    <div style={{ color: "var(--color-muted)" }}>
+                      {new Date(row.created_at).toISOString()}
+                    </div>
+                    <div style={{ color: "var(--color-muted)" }}>
+                      chain={row.chain_hash.slice(0, 16)}… prev={row.prev_chain_hash ? row.prev_chain_hash.slice(0, 12) + "…" : "(genesis)"}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </Section>
+
+          <Section>
+            <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
+              <div className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: "var(--color-muted)" }}>
+                Similar artefacts
+              </div>
+            </div>
+            <div className="px-4 py-3 text-[12px]" style={{ color: "var(--color-body)" }}>
+              {similarBusy ? "Loading…" : !similar || similar.neighbours.length === 0 ? (
+                <span style={{ color: "var(--color-muted)" }} className="italic">
+                  No similar artefacts found ({similar?.method || "—"}).
+                </span>
+              ) : (
+                <div className="space-y-2">
+                  <div className="text-[10.5px] font-bold uppercase tracking-[0.12em]" style={{ color: "var(--color-muted)" }}>
+                    method: {similar.method}
+                  </div>
+                  {similar.neighbours.map((h) => (
+                    <div
+                      key={h.id}
+                      className="px-2 py-1.5 font-mono text-[11px]"
+                      style={{ borderRadius: "4px", background: "var(--color-surface)" }}
+                    >
+                      <div>{h.original_filename || "(unnamed)"} · {h.size_bytes}B</div>
+                      <div style={{ color: "var(--color-muted)" }}>
+                        sha256={h.sha256.slice(0, 16)}… distance={h.distance ?? "n/a"}
+                      </div>
+                    </div>
+                  ))}
+                  {similar.summary && (
+                    <p className="text-[12px] mt-2" style={{ color: "var(--color-body)" }}>
+                      {similar.summary}
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+          </Section>
+
+          <Section>
+            <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid var(--color-border)" }}>
+              <div className="text-[11px] font-bold uppercase tracking-[0.12em]" style={{ color: "var(--color-muted)" }}>
+                Chain-of-custody narrative
+              </div>
+              <button
+                onClick={generateCoc}
+                disabled={cocBusy}
+                className="h-7 px-2 text-[11px] font-bold disabled:opacity-50"
+                style={{ borderRadius: "4px", border: "1px solid var(--color-accent)", background: "var(--color-accent)", color: "var(--color-on-dark)" }}
+              >
+                {cocBusy ? "Generating…" : coc ? "Regenerate" : "Generate"}
+              </button>
+            </div>
+            <div className="px-4 py-3 text-[12px]" style={{ color: "var(--color-body)" }}>
+              {!coc ? (
+                <span style={{ color: "var(--color-muted)" }} className="italic">
+                  Click Generate to render a court-ready Markdown narrative.
+                </span>
+              ) : (
+                <pre className="whitespace-pre-wrap font-mono text-[11.5px]">{coc.narrative}</pre>
+              )}
+            </div>
+          </Section>
+        </div>
+      </div>
+    </div>
+  );
+}
+

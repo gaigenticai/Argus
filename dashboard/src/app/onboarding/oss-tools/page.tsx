@@ -155,7 +155,7 @@ export default function OssOnboardingPage() {
     setSubmitting(true);
     try {
       await api.ossSkip();
-      toast("info", "OSS onboarding skipped — you can install later from /connectors.");
+      toast("info", "OSS onboarding skipped — you can install later from Settings → Services.");
       setDone(true);
       router.replace("/");
     } catch (err) {
@@ -187,9 +187,9 @@ export default function OssOnboardingPage() {
   return (
     <div className="max-w-5xl mx-auto py-10 space-y-6">
       <PageHeader
-        eyebrow={{ icon: Package, label: "Welcome to Argus" }}
+        eyebrow={{ icon: Package, label: "Welcome to Marsad" }}
         title="Install your open-source security stack"
-        description="Argus runs end-to-end on its own — but you can co-host these well-known OSS tools alongside the platform. Each one wires into the matching Argus connector automatically. Pick what you need; you can always install the rest later."
+        description="Marsad runs end-to-end on its own — but you can co-host these well-known OSS tools alongside the platform. Each one wires into the matching Marsad connector automatically. Pick what you need; you can always install the rest later."
       />
 
       {preflight && !preflight.ready && (

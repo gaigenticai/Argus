@@ -153,6 +153,12 @@ class CardLeakageFinding(Base, UUIDMixin, TimestampMixin):
         DateTime(timezone=True), nullable=False
     )
     raw: Mapped[dict | None] = mapped_column(JSONB)
+    # Bridge agentic outputs
+    classification: Mapped[dict | None] = mapped_column(JSONB)
+    correlated_findings: Mapped[dict | None] = mapped_column(JSONB)
+    breach_correlations: Mapped[dict | None] = mapped_column(JSONB)
+    agent_summary: Mapped[dict | None] = mapped_column(JSONB)
+    takedown_draft: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         UniqueConstraint(
@@ -242,6 +248,12 @@ class DlpFinding(Base, UUIDMixin, TimestampMixin):
         DateTime(timezone=True), nullable=False
     )
     raw: Mapped[dict | None] = mapped_column(JSONB)
+    # Bridge agentic outputs
+    classification: Mapped[dict | None] = mapped_column(JSONB)
+    correlated_findings: Mapped[dict | None] = mapped_column(JSONB)
+    breach_correlations: Mapped[dict | None] = mapped_column(JSONB)
+    agent_summary: Mapped[dict | None] = mapped_column(JSONB)
+    takedown_draft: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         Index("ix_dlp_findings_org_state", "organization_id", "state"),

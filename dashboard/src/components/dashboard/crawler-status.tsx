@@ -1,8 +1,23 @@
 "use client";
 
-import { Bot, Play, CheckCircle, Clock } from "lucide-react";
+import { Bot, Play, CheckCircle, Clock, AlertTriangle, CircleSlash } from "lucide-react";
 import { type Crawler } from "@/lib/api";
 import { timeAgo } from "@/lib/utils";
+
+// Map a crawler.last_status to (icon, color, label) so the
+// dashboard widget tells the truth instead of just "Never run".
+// Source values come from feed_health.status —
+// ok / unconfigured / network_error / auth_error / rate_limited /
+// parse_error / disabled.
+const STATUS_PRESENTATION: Record<string, { color: string; icon: typeof CheckCircle; label?: string }> = {
+  ok:             { color: "#22C55E", icon: CheckCircle },
+  unconfigured:   { color: "#919EAB", icon: CircleSlash, label: "Unconfigured" },
+  network_error:  { color: "#FF5630", icon: AlertTriangle, label: "Network error" },
+  auth_error:     { color: "#FF8B00", icon: AlertTriangle, label: "Auth error" },
+  rate_limited:   { color: "#FF8B00", icon: AlertTriangle, label: "Rate limited" },
+  parse_error:    { color: "#FF5630", icon: AlertTriangle, label: "Parse error" },
+  disabled:       { color: "#919EAB", icon: CircleSlash, label: "Disabled" },
+};
 
 interface CrawlerStatusProps {
   crawlers: Crawler[];
@@ -32,17 +47,37 @@ export function CrawlerStatus({ crawlers, onTrigger }: CrawlerStatusProps) {
           <div className="flex-1 min-w-0">
             <p className="text-[13px] font-semibold" style={{ color: "var(--color-body)" }}>{crawler.name}</p>
             <div className="flex items-center gap-2">
-              {crawler.last_run ? (
-                <span className="flex items-center gap-1 text-[11px]" style={{ color: "#22C55E" }}>
-                  <CheckCircle className="w-3 h-3" />
-                  {timeAgo(crawler.last_run)}
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 text-[11px]" style={{ color: "var(--color-muted)" }}>
-                  <Clock className="w-3 h-3" />
-                  Never run
-                </span>
-              )}
+              {(() => {
+                const pres = crawler.last_status ? STATUS_PRESENTATION[crawler.last_status] : undefined;
+                const Icon = pres?.icon ?? Clock;
+                if (!crawler.last_run && !crawler.last_status) {
+                  return (
+                    <span className="flex items-center gap-1 text-[11px]" style={{ color: "var(--color-muted)" }}>
+                      <Clock className="w-3 h-3" />
+                      Never run
+                    </span>
+                  );
+                }
+                const color = pres?.color ?? "var(--color-muted)";
+                const labelText = crawler.last_status === "ok"
+                  ? (crawler.last_run ? timeAgo(crawler.last_run) : "ok")
+                  : (pres?.label ?? crawler.last_status ?? "Unknown");
+                return (
+                  <span
+                    className="flex items-center gap-1 text-[11px]"
+                    style={{ color }}
+                    title={crawler.last_detail ?? undefined}
+                  >
+                    <Icon className="w-3 h-3" />
+                    {labelText}
+                    {crawler.last_status === "ok" && crawler.last_rows_ingested > 0 && (
+                      <span style={{ color: "var(--color-muted)" }}>
+                        {" "}· {crawler.last_rows_ingested.toLocaleString()} rows
+                      </span>
+                    )}
+                  </span>
+                );
+              })()}
               <span className="text-[10px]" style={{ color: "var(--color-border)" }}>|</span>
               <span className="text-[11px]" style={{ color: "var(--color-muted)" }}>
                 Every {Math.round(crawler.interval_seconds / 60)}m
@@ -50,7 +85,7 @@ export function CrawlerStatus({ crawlers, onTrigger }: CrawlerStatusProps) {
             </div>
           </div>
           <button
-            onClick={() => onTrigger(crawler.crawler_name)}
+            onClick={() => onTrigger(crawler.name)}
             className="p-1.5 transition-colors"
             style={{ borderRadius: "4px" }}
             onMouseEnter={e => {

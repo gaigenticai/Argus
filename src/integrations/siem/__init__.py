@@ -1,12 +1,14 @@
 """SIEM push connectors (P2 #2.7).
 
-Four connectors mirroring Argus alerts / IOCs into the customer's
+Six connectors mirroring Argus alerts / IOCs into the customer's
 existing SIEM:
 
   splunk_hec    Splunk HTTP Event Collector — JSON event stream
   sentinel      Microsoft Sentinel Logs Ingestion API
   elastic       Elastic bulk-index API (ECS-shaped events)
   qradar        IBM QRadar Reference Set bulk-add + AQL helper
+  wazuh_siem    Wazuh Indexer (OpenSearch) bulk-index — OSS, free
+  graylog       Graylog GELF push (HTTP) — Graylog Open / Enterprise
 
 Each connector:
   - reads its config from env vars (operator-set)
@@ -31,15 +33,19 @@ from .splunk_hec import SplunkHecConnector
 from .sentinel import SentinelConnector
 from .elastic import ElasticConnector
 from .qradar import QRadarConnector
+from .wazuh_siem import WazuhSiemConnector
+from .graylog import GraylogConnector
 
 # Connector registry — operators reference connectors by name in API
-# routes; we keep the mapping centralised so adding the 5th SIEM is
+# routes; we keep the mapping centralised so adding the next SIEM is
 # one entry away.
 CONNECTORS: dict[str, type[SiemConnector]] = {
     "splunk_hec": SplunkHecConnector,
     "sentinel":   SentinelConnector,
     "elastic":    ElasticConnector,
     "qradar":     QRadarConnector,
+    "wazuh_siem": WazuhSiemConnector,
+    "graylog":    GraylogConnector,
 }
 
 
@@ -71,6 +77,8 @@ __all__ = [
     "SentinelConnector",
     "ElasticConnector",
     "QRadarConnector",
+    "WazuhSiemConnector",
+    "GraylogConnector",
     "CONNECTORS",
     "get_connector",
     "list_available",

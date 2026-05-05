@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 import logging
+import os
 from typing import AsyncIterator
 
 from src.config.settings import settings
@@ -58,8 +59,18 @@ class IPReputationFeed(BaseFeed):
             yield entry
         async for entry in self._poll_firehol():
             yield entry
-        async for entry in self._poll_abuseipdb():
-            yield entry
+        # NOTE: The AbuseIPDB ``/blacklist`` endpoint caps at 5
+        # requests per day on the free tier, making it useless as a
+        # scheduled bulk feed. We've moved the integration to
+        # per-IP enrichment via ``/check`` (1,000/day free) — see
+        # ``src/enrichment/abuseipdb.py`` and the
+        # ``GET /api/v1/intel/enrich/abuseipdb/{ip}`` route. The
+        # bulk ``_poll_abuseipdb`` method is kept for operators
+        # with a paid subscription who want it back; flip
+        # ``ARGUS_FEED_ABUSEIPDB_BULK=true`` to re-enable.
+        if (os.environ.get("ARGUS_FEED_ABUSEIPDB_BULK") or "").strip().lower() in ("1", "true"):
+            async for entry in self._poll_abuseipdb():
+                yield entry
 
     # ── IPsum ────────────────────────────────────────────────────────────────
 
@@ -200,6 +211,11 @@ class IPReputationFeed(BaseFeed):
             headers={
                 "Key": api_key,
                 "Accept": "application/json",
+                # AbuseIPDB's CDN started serving zstandard-compressed
+                # responses by default; aiohttp doesn't ship a zstd
+                # decoder. Pin to gzip+deflate so we get an encoding the
+                # standard library can handle.
+                "Accept-Encoding": "gzip, deflate",
             },
             params={"confidenceMinimum": "90", "limit": "10000"},
         )

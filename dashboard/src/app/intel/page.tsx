@@ -27,6 +27,8 @@ import {
 } from "@/components/shared/page-primitives";
 import { formatDate, timeAgo } from "@/lib/utils";
 
+import { SourcesStrip } from "@/components/shared/sources-strip";
+import { CoverageGate } from "@/components/shared/coverage-gate";
 export default function IntelPage() {
   const { toast } = useToast();
   const [cves, setCves] = useState<CveResponse[]>([]);
@@ -116,6 +118,7 @@ export default function IntelPage() {
   };
 
   return (
+    <CoverageGate pageSlug="intel" pageLabel="CVE / KEV">
     <div className="space-y-6">
       <PageHeader
         eyebrow={{ icon: Eye, label: "Intelligence" }}
@@ -132,6 +135,7 @@ export default function IntelPage() {
               <RefreshCw
                 className={`w-3.5 h-3.5 ${syncing === "nvd" ? "animate-spin" : ""}`}
               />
+      <SourcesStrip pageKey="intel" />
               Sync NVD
             </button>
             <button
@@ -190,6 +194,8 @@ export default function IntelPage() {
           />
         </div>
       </div>
+
+      <CtiArticlesPanel />
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-2">
@@ -379,7 +385,121 @@ export default function IntelPage() {
         </p>
       </div>
     </div>
+      </CoverageGate>
   );
+}
+
+
+function CtiArticlesPanel() {
+  const [articles, setArticles] = useState<{
+    id: string;
+    title: string;
+    url: string;
+    summary: string | null;
+    cve_ids: string[];
+    techniques_extracted?: string[];
+    iocs_extracted?: { type: string; value: string }[];
+    published_at: string | null;
+    fetched_at: string;
+  }[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api.news
+      .listArticles({ limit: 25 })
+      .then((rows) => {
+        if (cancelled) return;
+        setArticles(
+          rows.map((r) => ({
+            id: r.id,
+            title: r.title,
+            url: r.url,
+            summary: r.summary ?? null,
+            cve_ids: r.cve_ids || [],
+            techniques_extracted: (r as { techniques_extracted?: string[] }).techniques_extracted,
+            iocs_extracted: (r as { iocs_extracted?: { type: string; value: string }[] }).iocs_extracted,
+            published_at: r.published_at,
+            fetched_at: r.fetched_at,
+          })),
+        );
+      })
+      .catch(() => undefined)
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <div
+      style={{
+        borderRadius: 5,
+        border: "1px solid var(--color-border)",
+        background: "var(--color-canvas)",
+        padding: "16px",
+      }}
+    >
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-[13px] font-bold uppercase tracking-wide" style={{ color: "var(--color-ink)" }}>
+          Live CTI articles
+        </h3>
+        <p className="text-[11px]" style={{ color: "var(--color-muted)" }}>
+          {loading ? "Loading…" : `${articles.length} from unified RSS pipeline`}
+        </p>
+      </div>
+      <ul className="space-y-2">
+        {articles.slice(0, 12).map((a) => (
+          <li
+            key={a.id}
+            className="p-2"
+            style={{ borderRadius: 4, border: "1px solid var(--color-surface-muted)" }}
+          >
+            <a
+              href={a.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-[13px] font-semibold inline-block"
+              style={{ color: "var(--color-ink)" }}
+            >
+              {a.title}
+            </a>
+            {a.summary && (
+              <p className="text-[11px] mt-0.5 line-clamp-2" style={{ color: "var(--color-body)" }}>
+                {a.summary}
+              </p>
+            )}
+            <div className="flex gap-1 flex-wrap mt-1">
+              {a.cve_ids.slice(0, 3).map((c) => (
+                <span
+                  key={c}
+                  className="inline-flex h-[16px] px-1 text-[10px] font-mono"
+                  style={{ borderRadius: 3, background: "rgba(255,86,48,0.05)", color: "#B71D18" }}
+                >
+                  {c}
+                </span>
+              ))}
+              {(a.techniques_extracted || []).slice(0, 4).map((t) => (
+                <span
+                  key={t}
+                  className="inline-flex h-[16px] px-1 text-[10px] font-mono"
+                  style={{ borderRadius: 3, background: "rgba(0,124,90,0.10)", color: "#1B5E20" }}
+                >
+                  {t}
+                </span>
+              ))}
+              {(a.iocs_extracted || []).length > 0 && (
+                <span
+                  className="inline-flex h-[16px] px-1 text-[10px] font-bold"
+                  style={{ borderRadius: 3, background: "var(--color-surface-muted)", color: "var(--color-body)" }}
+                >
+                  {a.iocs_extracted!.length} IOCs
+                </span>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>);
 }
 
 function Stat({

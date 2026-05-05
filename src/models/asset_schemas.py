@@ -373,8 +373,82 @@ def canonicalize_asset_value(asset_type: AssetType, value: str) -> str:
     raise ValueError(f"Unknown asset_type {asset_type}")
 
 
-def validate_asset_details(asset_type: AssetType, details: dict | None) -> dict:
+def _derive_details_from_value(
+    asset_type: AssetType, value: str | None
+) -> dict:
+    """Synthesize the minimum `details` payload for an asset type when
+    the operator only supplied the canonical ``value`` field.
+
+    The onboarding wizard treats ``value`` as the primary input and
+    keeps ``details`` behind an "Advanced (JSON)" accordion. Without
+    this fallback, picking ``executive`` and typing a name produced a
+    pydantic ``full_name Field required`` error at completion — the
+    schema demands a structured detail field that the UI never
+    surfaced. The mapping mirrors ``canonicalize_asset_value``: types
+    whose value already encodes a structured payload (social_handle =
+    ``platform:handle``, code_repository = ``provider:org/repo``,
+    cloud_account = ``provider:account_id``) parse it back; types
+    where value is plain text (executive, brand, mobile_app, vendor)
+    copy it into the schema's required string field.
+
+    Returns a partial dict to be merged INTO the operator-supplied
+    details — operator values always win.
+    """
+    if not value:
+        return {}
+    v = value.strip()
+    if not v:
+        return {}
+    if asset_type == AssetType.EXECUTIVE:
+        return {"full_name": v}
+    if asset_type == AssetType.BRAND:
+        return {"name": v}
+    if asset_type == AssetType.MOBILE_APP:
+        # value canonicalizes to a bundle_id; app_name (the required
+        # field) defaults to the same string until the operator
+        # supplies a friendlier label via Advanced JSON.
+        return {"app_name": v, "bundle_id": v}
+    if asset_type == AssetType.VENDOR:
+        return {"legal_name": v}
+    if asset_type == AssetType.SOCIAL_HANDLE and ":" in v:
+        platform, handle = v.split(":", 1)
+        return {
+            "platform": platform.lower().strip(),
+            "handle": handle.strip().lstrip("@"),
+        }
+    if asset_type == AssetType.CODE_REPOSITORY and ":" in v:
+        provider, rest = v.split(":", 1)
+        if "/" in rest:
+            org_or_user, repo_name = rest.split("/", 1)
+            return {
+                "provider": provider.lower().strip(),
+                "org_or_user": org_or_user.strip(),
+                "repo_name": repo_name.strip() or None,
+            }
+        return {
+            "provider": provider.lower().strip(),
+            "org_or_user": rest.strip(),
+        }
+    if asset_type == AssetType.CLOUD_ACCOUNT and ":" in v:
+        provider, account_id = v.split(":", 1)
+        return {
+            "provider": provider.lower().strip(),
+            "account_id": account_id.strip(),
+        }
+    return {}
+
+
+def validate_asset_details(
+    asset_type: AssetType,
+    details: dict | None,
+    value: str | None = None,
+) -> dict:
     """Validate `details` JSONB against the schema for `asset_type`.
+
+    When ``value`` is supplied, missing required fields are
+    auto-filled from it via ``_derive_details_from_value`` — see that
+    helper for the per-type mapping. Operator-supplied keys always
+    win over the derivation.
 
     Returns the canonical (parsed + re-serialized) dict. Raises
     pydantic.ValidationError on failure.
@@ -382,7 +456,12 @@ def validate_asset_details(asset_type: AssetType, details: dict | None) -> dict:
     schema = ASSET_DETAIL_SCHEMAS.get(asset_type)
     if schema is None:
         raise ValueError(f"No detail schema registered for {asset_type}")
-    parsed = schema.model_validate(details or {})
+    merged: dict = {}
+    derived = _derive_details_from_value(asset_type, value)
+    merged.update(derived)
+    if details:
+        merged.update(details)
+    parsed = schema.model_validate(merged)
     return parsed.model_dump(mode="json", exclude_none=False)
 
 

@@ -40,11 +40,28 @@ import src.models.tprm  # noqa: F401
 import src.models.news  # noqa: F401
 import src.models.sla  # noqa: F401
 import src.models.takedown  # noqa: F401
+import src.models.playbooks  # noqa: F401
 
 config = context.config
 
-# Override sqlalchemy.url from project settings (async URL for asyncpg)
-config.set_main_option("sqlalchemy.url", settings.db.url)
+# Resolve sqlalchemy.url with caller-precedence:
+#
+#   1. If a caller (e.g. tests/conftest.py) already populated the
+#      Config's sqlalchemy.url with a real URL, respect it. This is
+#      what lets the test harness point alembic at ``argus_test``
+#      instead of the dev ``argus`` database.
+#   2. Otherwise — and ALWAYS for the alembic CLI — fall back to the
+#      project's settings.db.url, which builds the URL from
+#      ARGUS_DB_HOST / _PORT / _USER / _PASSWORD / _NAME or honours
+#      the DATABASE_URL override.
+#
+# The placeholder string in alembic.ini ("driver://user:pass@localhost
+# /dbname") is also treated as 'unset' so a fresh checkout's CLI
+# invocation behaves identically to today.
+_PLACEHOLDER_URL = "driver://user:pass@localhost/dbname"
+_caller_url = (config.get_main_option("sqlalchemy.url") or "").strip()
+if not _caller_url or _caller_url == _PLACEHOLDER_URL:
+    config.set_main_option("sqlalchemy.url", settings.db.url)
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

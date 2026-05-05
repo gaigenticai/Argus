@@ -50,6 +50,11 @@ logger = logging.getLogger(__name__)
 _BWRAP_BINARY: str | None = None
 _BWRAP_LOOKUP_DONE = False
 _BWRAP_WARNING_LOGGED = False
+# Some hosts (and most Docker defaults) ship bwrap but block the
+# user-namespace syscalls it needs. We discover that on the FIRST
+# real call (a probe is too noisy at import time) and remember it
+# so subsequent calls fall back to direct execution silently.
+_BWRAP_USERNS_BROKEN = False
 
 
 def _detect_bwrap() -> str | None:
@@ -180,18 +185,30 @@ async def run_sandboxed(
         )
 
     bwrap = _detect_bwrap()
-    if bwrap is None:
-        global _BWRAP_WARNING_LOGGED
+    global _BWRAP_WARNING_LOGGED, _BWRAP_USERNS_BROKEN
+
+    use_bwrap = bwrap is not None and not _BWRAP_USERNS_BROKEN
+    if not use_bwrap:
         if not _BWRAP_WARNING_LOGGED:
-            logger.warning(
-                "sandbox: bwrap not installed on this host. "
-                "Subprocess isolation is degraded — install "
-                "`bubblewrap` to enforce read-only bind mounts and "
-                "namespaced PID/IPC/UTS. Falling back to direct "
-                "subprocess execution.",
-            )
+            if bwrap is None:
+                logger.warning(
+                    "sandbox: bwrap not installed on this host. "
+                    "Subprocess isolation is degraded — install "
+                    "`bubblewrap` to enforce read-only bind mounts and "
+                    "namespaced PID/IPC/UTS. Falling back to direct "
+                    "subprocess execution.",
+                )
+            else:
+                logger.warning(
+                    "sandbox: bwrap is installed but user namespaces "
+                    "are blocked on this host (typically Docker default "
+                    "seccomp + missing CAP_SYS_ADMIN). Subprocess "
+                    "isolation is degraded — falling back to direct "
+                    "execution. Allow user namespaces in your container "
+                    "runtime to restore the sandbox.",
+                )
             _BWRAP_WARNING_LOGGED = True
-        argv = list(cmd)
+        argv = [real_path, *cmd[1:]]
     else:
         # bwrap needs an absolute path or the binary in the bound /usr;
         # passing the resolved path avoids ambiguity.
@@ -218,7 +235,49 @@ async def run_sandboxed(
             # The kill handshake can race with normal exit.
             pass
         raise
-    return proc.returncode or 0, out, err
+
+    rc = proc.returncode or 0
+
+    # If bwrap fired but the kernel rejected the namespace setup
+    # (Docker default seccomp denies CLONE_NEWUSER for non-root),
+    # bwrap exits non-zero and prints the marker string below. That
+    # is a host capability problem, not a tool failure — switch to
+    # direct execution for THIS call and remember the breakage so
+    # we don't pay the penalty on every subsequent call.
+    if use_bwrap and rc != 0:
+        marker = b"No permissions to create new namespace"
+        if marker in (err or b"") or marker in (out or b""):
+            _BWRAP_USERNS_BROKEN = True
+            if not _BWRAP_WARNING_LOGGED:
+                logger.warning(
+                    "sandbox: bwrap rejected user-namespace clone "
+                    "(host kernel/seccomp does not permit it). All "
+                    "subsequent sandboxed calls will run direct.",
+                )
+                _BWRAP_WARNING_LOGGED = True
+            # Re-run direct so the caller actually gets the tool's
+            # output instead of bwrap's error message.
+            direct = await asyncio.create_subprocess_exec(
+                real_path, *cmd[1:],
+                stdin=asyncio.subprocess.PIPE if stdin is not None else None,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                out, err = await asyncio.wait_for(
+                    direct.communicate(input=stdin),
+                    timeout=policy.timeout_seconds,
+                )
+            except asyncio.TimeoutError:
+                direct.kill()
+                try:
+                    await direct.communicate()
+                except Exception:  # noqa: BLE001
+                    pass
+                raise
+            rc = direct.returncode or 0
+
+    return rc, out, err
 
 
 __all__ = [

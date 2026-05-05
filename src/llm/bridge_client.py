@@ -44,7 +44,7 @@ from src.config.settings import settings
 
 log = logging.getLogger(__name__)
 
-DEFAULT_TIMEOUT_S = 120
+DEFAULT_TIMEOUT_S = 240
 
 # Adversarial audit D-21 — hard cap on bridge response size. A
 # misbehaving (or compromised) bridge worker could otherwise blast a
@@ -78,14 +78,46 @@ class BridgeLLM:
         # per-call provenance must read this immediately after
         # ``await bridge.call(...)`` and stage it locally.
         self.last_model_id: Optional[str] = None
+        # Per-call token usage when the worker emits it. The host
+        # ``claude`` CLI's stream-json output carries
+        # ``usage.input_tokens`` / ``usage.output_tokens`` which the
+        # bridge worker can copy into the response envelope as
+        # ``usage_in`` / ``usage_out``. Decay to None when missing so
+        # the dashboard distinguishes "not surfaced" from "zero".
+        self.last_input_tokens: Optional[int] = None
+        self.last_output_tokens: Optional[int] = None
 
     async def connect(self) -> None:
+        # 3s was too tight under load — when the API container's
+        # asyncio thread pool is saturated by many concurrent calls
+        # (FeedHealth poll, organization lookups, alert stats, etc.),
+        # the bridge client's first ``getaddrinfo`` for ``redis`` can
+        # take longer than 3s to even reach the resolver, and the
+        # socket-connect deadline fires before the connect attempt
+        # actually starts. The ping itself is fast once the socket
+        # is open. 15s gives plenty of headroom without making a
+        # genuinely-down redis appear hung.
         self._redis = redis.from_url(
             self._redis_url,
             decode_responses=True,
-            socket_connect_timeout=3,
+            socket_connect_timeout=15,
+            socket_timeout=15,
+            retry_on_timeout=True,
         )
-        await self._redis.ping()
+        # Retry the ping once on initial transient timeout — the next
+        # attempt usually succeeds because the resolver cached the
+        # name and the executor pool freed up.
+        for attempt in range(2):
+            try:
+                await self._redis.ping()
+                break
+            except (redis.TimeoutError, asyncio.TimeoutError):
+                if attempt == 1:
+                    raise
+                log.warning(
+                    "argus-bridge-llm: redis ping timed out, retrying once"
+                )
+                await asyncio.sleep(0.5)
         log.info("argus-bridge-llm: redis online (url=%s)", _redact(self._redis_url))
 
     async def close(self) -> None:
@@ -145,6 +177,19 @@ class BridgeLLM:
                         f"argus-bridge: {payload.get('error') or 'unknown error'}"
                     )
                 self.last_model_id = payload.get("model") or None
+                # Token counts — accept either flat ``usage_in/out`` or
+                # a nested ``usage: {...}``. The bridge worker decides
+                # which shape based on what the host CLI gives it; we
+                # tolerate both so a worker upgrade isn't required for
+                # the columns to populate.
+                _ui = payload.get("usage_in")
+                _uo = payload.get("usage_out")
+                _u = payload.get("usage") if isinstance(payload.get("usage"), dict) else None
+                if _u:
+                    _ui = _ui if isinstance(_ui, int) else _u.get("input_tokens")
+                    _uo = _uo if isinstance(_uo, int) else _u.get("output_tokens")
+                self.last_input_tokens = _ui if isinstance(_ui, int) else None
+                self.last_output_tokens = _uo if isinstance(_uo, int) else None
                 # Newer claude envelopes carry the assistant text under
                 # ``result``; fall back to raw stdout for older ones.
                 text = payload.get("result")

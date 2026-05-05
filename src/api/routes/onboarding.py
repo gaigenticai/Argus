@@ -182,6 +182,122 @@ async def _get_session_or_404(
     return sess
 
 
+def _canonicalize_domain(raw: str | None) -> str | None:
+    """Strip scheme/www/path/port and lowercase. Returns None if empty
+    or clearly not a domain (no dot). Matches the canonicalisation used
+    by ``POST /organizations/{id}/domains`` so the same string anchors
+    verification end-to-end."""
+    if not raw:
+        return None
+    cleaned = raw.strip().lower()
+    for prefix in ("https://", "http://", "www."):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):]
+    cleaned = cleaned.split("/", 1)[0].split(":", 1)[0]
+    return cleaned if cleaned and "." in cleaned else None
+
+
+async def _upsert_draft_org_for_session(
+    db: AsyncSession,
+    sess: OnboardingSession,
+    org_payload: dict[str, Any],
+    analyst: AnalystUser,
+) -> Organization | None:
+    """Create or update a *draft* Org bound to this wizard session.
+
+    The org carries a domain-verification token from the moment a
+    primary domain is provided so the operator can verify ownership
+    *during* the wizard — verification is the identity proof, not an
+    afterthought tacked onto the post-completion banner. Only the
+    primary domain anchors identity; assets/keywords/etc. arrive at
+    completion.
+
+    No-op when the session is already bound to a *real* (completed)
+    org, e.g. when an operator restarts the wizard against an
+    existing tenant."""
+    from sqlalchemy.orm.attributes import flag_modified
+    from src.core.domain_verification import request_token, get_state
+
+    domain = _canonicalize_domain(org_payload.get("primary_domain"))
+    name = (org_payload.get("name") or "").strip()
+    industry = (org_payload.get("industry") or "").strip() or None
+    keywords_raw = org_payload.get("keywords") or []
+    keywords = [k.strip() for k in keywords_raw if isinstance(k, str) and k.strip()]
+    notes = (org_payload.get("notes") or "").strip() or None
+
+    if sess.organization_id:
+        org = await db.get(Organization, sess.organization_id)
+        if org is None:
+            # Bound org disappeared (rare — manual DB cleanup). Fall
+            # through to create a fresh draft so the wizard isn't
+            # wedged.
+            sess.organization_id = None
+        else:
+            # Only mutate orgs we created as drafts for this session;
+            # never silently rewrite a real org's identity.
+            settings = dict(org.settings or {})
+            if settings.get("draft_session_id") != str(sess.id):
+                return org
+            if name:
+                org.name = name
+            if industry is not None:
+                org.industry = industry
+            if keywords:
+                org.keywords = keywords
+            if notes is not None:
+                settings["notes"] = notes
+            if domain:
+                existing_domains = list(org.domains or [])
+                if not existing_domains or existing_domains[0] != domain:
+                    # Primary changed (or not set yet). Re-mint the
+                    # token only if we don't already have a live one
+                    # for this exact value. Drop any other domains —
+                    # a draft org should only ever carry the in-flight
+                    # primary; secondary domains belong to verified
+                    # orgs added later via Settings → Domains.
+                    state = get_state(settings, domain)
+                    if state is None or state.status not in ("pending", "verified"):
+                        settings, _ = request_token(settings, domain)
+                    # Strip stale verification entries for any
+                    # previous primaries on this draft.
+                    block = dict(settings.get("domain_verification") or {})
+                    settings["domain_verification"] = {
+                        k: v for k, v in block.items() if k == domain
+                    }
+                    org.domains = [domain]
+                    flag_modified(org, "domains")
+            org.settings = settings
+            flag_modified(org, "settings")
+            return org
+
+    # Need at least a domain OR a name to create a draft. We prefer a
+    # domain (it's identity); name alone gives us nothing to verify.
+    if not domain and not name:
+        return None
+
+    base_settings: dict[str, Any] = {
+        "created_via": "wizard",
+        "created_by": analyst.email,
+        "draft_session_id": str(sess.id),
+    }
+    if notes is not None:
+        base_settings["notes"] = notes
+    if domain:
+        base_settings, _ = request_token(base_settings, domain)
+
+    org = Organization(
+        name=name or "(unnamed — verify your domain to continue)",
+        domains=[domain] if domain else [],
+        keywords=keywords,
+        industry=industry,
+        settings=base_settings,
+    )
+    db.add(org)
+    await db.flush()
+    sess.organization_id = org.id
+    return org
+
+
 def _validate_step(step: str, data: dict[str, Any]) -> tuple[bool, list[dict]]:
     schema = _STEP_SCHEMAS[step]
     try:
@@ -201,7 +317,9 @@ def _validate_step(step: str, data: dict[str, Any]) -> tuple[bool, list[dict]]:
                 )
                 continue
             try:
-                validate_asset_details(entry.asset_type, entry.details)
+                validate_asset_details(
+                    entry.asset_type, entry.details, value=entry.value
+                )
             except (ValidationError, ValueError) as err:
                 per_row_errors.append(
                     {"loc": ["assets", idx, "details"], "msg": str(err)}
@@ -332,6 +450,13 @@ async def update_session(
     step_data[body.step] = body.data
     sess.step_data = step_data
 
+    # When step 1 ("organization") is saved, eagerly upsert a draft
+    # Organization so the operator can verify the primary domain
+    # *during* the wizard rather than after completion. The same draft
+    # is reused on every subsequent save until completion.
+    if body.step == "organization":
+        await _upsert_draft_org_for_session(db, sess, body.data, analyst)
+
     if body.advance:
         target_step = _STEP_NUMBERS[body.step]
         if target_step + 1 > sess.current_step:
@@ -404,17 +529,53 @@ async def complete_session(
     org_step = OrgStep.model_validate(data["organization"])
     review = ReviewStep.model_validate(data.get("review", {}))
 
-    # Create or fetch the org
+    # Create or fetch the org. The wizard now upserts a draft org on
+    # every save of step 1, so the org typically already exists by
+    # the time we get here. We re-sync the latest values either way
+    # and drop the draft marker on success.
+    from sqlalchemy.orm.attributes import flag_modified
+    from src.core.domain_verification import request_token as _vt
+
     if sess.organization_id:
         org = await db.get(Organization, sess.organization_id)
         if not org:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Bound organization disappeared")
+        # Sync the freshest values from the completed step 1.
+        org.name = org_step.name
+        if org_step.industry is not None:
+            org.industry = org_step.industry
+        if org_step.keywords:
+            org.keywords = list(org_step.keywords)
+        domain = _canonicalize_domain(org_step.primary_domain)
+        settings = dict(org.settings or {})
+        if domain:
+            existing_domains = list(org.domains or [])
+            if not existing_domains or existing_domains[0] != domain:
+                settings, _ = _vt(settings, domain)
+                org.domains = [domain] + [d for d in existing_domains if d != domain]
+                flag_modified(org, "domains")
+        # Promote out of draft.
+        settings.pop("draft_session_id", None)
+        org.settings = settings
+        flag_modified(org, "settings")
     else:
+        # No draft was ever created (e.g. step 1 was never saved with a
+        # value). Same bootstrap as /quickstart so the dashboard can
+        # render the verify-your-domain banner the moment the wizard
+        # completes.
+        base_settings: dict = {
+            "created_via": "wizard",
+            "created_by": analyst.email,
+        }
+        domain = _canonicalize_domain(org_step.primary_domain)
+        if domain:
+            base_settings, _ = _vt(base_settings, domain)
         org = Organization(
             name=org_step.name,
-            domains=[org_step.primary_domain] if org_step.primary_domain else [],
+            domains=[domain] if domain else [],
             keywords=org_step.keywords,
             industry=org_step.industry,
+            settings=base_settings,
         )
         db.add(org)
         await db.flush()
@@ -439,7 +600,9 @@ async def complete_session(
 
     for entry in all_entries:
         canonical = canonicalize_asset_value(entry.asset_type, entry.value)
-        validated_details = validate_asset_details(entry.asset_type, entry.details)
+        validated_details = validate_asset_details(
+            entry.asset_type, entry.details, value=canonical
+        )
 
         existing = await db.execute(
             select(Asset.id).where(
@@ -545,6 +708,24 @@ async def abandon_session(
         raise HTTPException(
             status.HTTP_409_CONFLICT, f"Session is already {sess.state}"
         )
+    # If we created a draft Org for this session and it has no real
+    # data on it (no assets attached), clean it up — leaving an empty
+    # half-named org around just because the operator clicked Abandon
+    # would clutter the org list and keep an unverifiable domain on
+    # the verification gate.
+    if sess.organization_id:
+        draft_org = await db.get(Organization, sess.organization_id)
+        if draft_org is not None:
+            settings = dict(draft_org.settings or {})
+            if settings.get("draft_session_id") == str(sess.id):
+                asset_count = await db.scalar(
+                    select(Asset.id)
+                    .where(Asset.organization_id == draft_org.id)
+                    .limit(1)
+                )
+                if not asset_count:
+                    await db.delete(draft_org)
+                    sess.organization_id = None
     sess.state = OnboardingState.ABANDONED.value
     ip, ua = _client_meta(request)
     await audit_log(
@@ -636,3 +817,239 @@ async def cancel_discovery_job(
     await db.commit()
     await db.refresh(job)
     return job
+
+
+# ── Quickstart — first-run "see it work in 2 minutes" path ──────────
+#
+# Why this exists alongside the 5-step ``/onboarding/sessions`` wizard:
+# the full wizard collects assets, vendors, infra, people — solid for
+# a thorough rollout but heavy for a fresh login. The quickstart asks
+# for the bare minimum to make the AI triage produce a *real* result
+# (org name, primary domain, brand keyword) so the operator hits the
+# "I see why this product exists" moment inside ~2 minutes.
+#
+# The full wizard is still reachable from /onboarding for deeper
+# onboarding once the operator has seen the product work.
+
+
+# A user-created org is one whose ``settings.created_via`` shows the
+# operator deliberately chose to monitor that target — the wizard
+# (``"wizard"``), the 2-minute quickstart (``"quickstart"``), or the
+# load-real-target loader (``"load_real_target"``) which the operator
+# runs from the CLI to pin a real customer for evaluation. The
+# synthetic demo seed paths (``demo``, ``realistic``) never set this
+# marker, so it remains a clean discriminator: real customer data ≠
+# illustrative samples, regardless of how it got into the DB.
+_USER_CREATED_MARKERS = {"quickstart", "wizard", "load_real_target"}
+
+
+class QuickstartPayload(BaseModel):
+    org_name: str = Field(min_length=2, max_length=255)
+    primary_domain: str = Field(min_length=4, max_length=255)
+    brand_keyword: str = Field(min_length=1, max_length=255)
+    industry: str | None = Field(default=None, max_length=100)
+
+
+class QuickstartResponse(BaseModel):
+    organization_id: uuid.UUID
+    asset_id: uuid.UUID
+    brand_term_ids: list[uuid.UUID]
+
+
+class FirstRunState(BaseModel):
+    """Snapshot of where the operator is in the first-run journey.
+
+    Drives the post-login routing decision: should the user land on
+    the analytics dashboard, see a one-time demo banner, or be
+    pushed through the quickstart? Distinct from the session-level
+    ``OnboardingState`` enum (DRAFT/COMPLETED/ABANDONED) — that one
+    tracks individual wizard sessions, this one summarises the
+    operator's overall product setup state.
+    """
+    current_user_email: str
+    is_demo_user: bool
+    seed_mode: str
+    user_org_count: int
+    seed_org_count: int
+    seed_org_names: list[str]
+    has_user_created_org: bool
+    has_recent_triage: bool
+    has_alerts: bool
+    next_action: Literal[
+        "ready",          # operator has done setup; show normal dashboard
+        "welcome_demo",   # demo seed; show one-time banner
+        "quickstart",     # no user org yet; push to /welcome
+        "trigger_triage",  # org exists but no triage run; encourage
+        "review_alerts",   # triage ran, alerts produced; show them
+    ]
+
+
+@router.get("/state", response_model=FirstRunState)
+async def get_onboarding_state(
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+) -> FirstRunState:
+    """Return where the current operator is in the first-run journey.
+
+    Called by the dashboard's auth shell on every login so it can
+    route a brand-new operator to ``/welcome`` instead of dumping
+    them on a sea-of-zeros analytics page.
+    """
+    import os
+    from src.models.intel import TriageRun
+    from src.models.threat import Alert
+
+    orgs_q = await db.execute(select(Organization))
+    all_orgs = list(orgs_q.scalars().all())
+    user_orgs = [
+        o for o in all_orgs
+        if (o.settings or {}).get("created_via") in _USER_CREATED_MARKERS
+    ]
+    seed_orgs = [o for o in all_orgs if o not in user_orgs]
+
+    has_recent_triage_q = await db.execute(
+        select(TriageRun.id)
+        .where(TriageRun.status == "completed")
+        .limit(1)
+    )
+    has_recent_triage = has_recent_triage_q.scalar_one_or_none() is not None
+
+    has_alerts_q = await db.execute(select(Alert.id).limit(1))
+    has_alerts = has_alerts_q.scalar_one_or_none() is not None
+
+    seed_mode = (os.environ.get("ARGUS_SEED_MODE") or "unknown").lower()
+    is_demo_user = (analyst.email or "").lower() == "admin@argus.demo"
+
+    if user_orgs:
+        next_action = "review_alerts" if has_alerts else "trigger_triage"
+    elif is_demo_user and seed_orgs:
+        next_action = "welcome_demo"
+    elif seed_orgs and seed_mode == "realistic":
+        next_action = "welcome_demo"
+    else:
+        next_action = "quickstart"
+
+    if next_action == "review_alerts" and has_recent_triage:
+        next_action = "ready"
+
+    return FirstRunState(
+        current_user_email=analyst.email or "",
+        is_demo_user=is_demo_user,
+        seed_mode=seed_mode,
+        user_org_count=len(user_orgs),
+        seed_org_count=len(seed_orgs),
+        seed_org_names=[o.name for o in seed_orgs],
+        has_user_created_org=bool(user_orgs),
+        has_recent_triage=has_recent_triage,
+        has_alerts=has_alerts,
+        next_action=next_action,
+    )
+
+
+@router.post("/quickstart", response_model=QuickstartResponse, status_code=201)
+async def onboarding_quickstart(
+    payload: QuickstartPayload,
+    request: Request,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+) -> QuickstartResponse:
+    """Create the minimum scaffold needed to make the AI triage
+    produce real, org-scoped findings: an Organization, an Asset
+    (the primary domain), and BrandTerm rows for the brand
+    name + apex domain.
+
+    Idempotent only at the org-name level — calling twice with the
+    same ``org_name`` raises 409. The wizard handles the conflict
+    by re-routing to the existing org instead of double-creating.
+    """
+    from src.models.brand import BrandTerm, BrandTermKind
+
+    primary_domain = payload.primary_domain.strip().lower()
+    # Strip a leading scheme/path if the operator pasted a URL — we
+    # only want the apex.
+    for prefix in ("https://", "http://", "www."):
+        if primary_domain.startswith(prefix):
+            primary_domain = primary_domain[len(prefix):]
+    primary_domain = primary_domain.split("/", 1)[0].split(":", 1)[0]
+    brand_keyword = payload.brand_keyword.strip()
+    org_name = payload.org_name.strip()
+
+    existing = await db.execute(
+        select(Organization).where(Organization.name == org_name)
+    )
+    if existing.scalar_one_or_none() is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"An organization named {org_name!r} already exists.",
+        )
+
+    # Auto-issue a verification challenge for the primary domain at
+    # creation time so the dashboard can show TXT/HTTP instructions
+    # immediately. The gate flag (ARGUS_REQUIRE_DOMAIN_VERIFICATION)
+    # decides whether downstream workers respect the verified bit;
+    # the operator UX is the same either way.
+    from src.core.domain_verification import request_token
+    from src.core.industry_defaults import default_tech_stack
+    base_settings = {"created_via": "quickstart", "created_by": analyst.email}
+    settings_with_token, _state = request_token(base_settings, primary_domain)
+
+    org = Organization(
+        name=org_name,
+        domains=[primary_domain],
+        keywords=[brand_keyword],
+        industry=payload.industry,
+        # Same rationale as load_real_target: seed the canonical
+        # stack for the chosen industry so triage produces real
+        # alerts before the operator has had a chance to refine.
+        tech_stack=default_tech_stack(payload.industry),
+        settings=settings_with_token,
+    )
+    db.add(org)
+    await db.flush()
+
+    asset = Asset(
+        organization_id=org.id,
+        asset_type="domain",
+        value=primary_domain,
+        details={"primary": True, "source": "quickstart"},
+        criticality="crown_jewel",
+        discovery_method="manual",
+    )
+    db.add(asset)
+
+    name_term = BrandTerm(
+        organization_id=org.id,
+        kind=BrandTermKind.NAME.value,
+        value=brand_keyword,
+        keywords=[brand_keyword.lower()],
+    )
+    apex_term = BrandTerm(
+        organization_id=org.id,
+        kind=BrandTermKind.APEX_DOMAIN.value,
+        value=primary_domain,
+        keywords=[primary_domain],
+    )
+    db.add_all([name_term, apex_term])
+
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db,
+        AuditAction.ORG_CREATE,
+        user=analyst,
+        resource_type="organization",
+        resource_id=str(org.id),
+        ip_address=ip,
+        user_agent=ua,
+        details={"source": "quickstart", "name": org_name, "domain": primary_domain},
+    )
+
+    await db.commit()
+    await db.refresh(org)
+    await db.refresh(asset)
+    await db.refresh(name_term)
+    await db.refresh(apex_term)
+    return QuickstartResponse(
+        organization_id=org.id,
+        asset_id=asset.id,
+        brand_term_ids=[name_term.id, apex_term.id],
+    )

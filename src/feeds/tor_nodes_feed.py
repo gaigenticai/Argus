@@ -106,43 +106,19 @@ class TorNodesFeed(BaseFeed):
     # ------------------------------------------------------------------
 
     async def poll(self) -> AsyncIterator[FeedEntry]:
-        """Fetch both lists, deduplicate, yield one entry per unique IP.
+        """Fetch the Tor Project bulk list, yield one entry per IP.
 
-        IPs seen in both sources are attributed to ``torproject`` (the
-        authoritative upstream).
+        ``check.torproject.org/torbulkexitlist`` is the canonical
+        upstream — every other public Tor exit list (incl. dan.me.uk)
+        is a mirror of it. We dropped the dan.me.uk secondary source
+        in 2025 after they began rate-limiting automated callers
+        (HTTP 403 with JS challenge); keeping it as a "second
+        authoritative" source was always misleading anyway.
         """
-        # Fetch both sources concurrently
-        import asyncio
-
-        torproject_ips, dan_ips = await asyncio.gather(
-            self._fetch_torproject(),
-            self._fetch_dan_me_uk(),
-        )
-
-        # Yield torproject IPs first (authoritative)
-        all_seen: set[str] = set()
-        count = 0
-
+        torproject_ips = await self._fetch_torproject()
         for ip in torproject_ips:
-            all_seen.add(ip)
-            count += 1
             yield self._make_entry(ip, "torproject")
-
-        # Yield dan.me.uk IPs not already seen
-        dan_unique = 0
-        for ip in dan_ips:
-            if ip in all_seen:
-                continue
-            all_seen.add(ip)
-            count += 1
-            dan_unique += 1
-            yield self._make_entry(ip, "dan_me_uk")
-
-        overlap = len(torproject_ips & dan_ips)
         logger.info(
-            "[%s] poll complete — %d unique exit nodes (%d overlap between sources, %d dan.me.uk-only)",
-            self.name,
-            count,
-            overlap,
-            dan_unique,
+            "[%s] poll complete — %d unique exit nodes from torproject.org",
+            self.name, len(torproject_ips),
         )

@@ -435,7 +435,7 @@ function UploadLogoModal({
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             style={inputStyle}
-            placeholder="e.g. argus-primary-mark"
+            placeholder="e.g. marsad-primary-mark"
             autoFocus
           />
         </Field>

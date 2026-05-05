@@ -51,7 +51,7 @@ class MatrixCrawler(BaseCrawler):
         }
     """
 
-    name = "matrix_crawler"
+    name = "matrix_room"
     source_type = SourceType.MATRIX
 
     # Matrix Client-Server API paths

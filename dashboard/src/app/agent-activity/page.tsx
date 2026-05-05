@@ -20,6 +20,7 @@ import {
   type AgentActivityItem,
   type AgentKind,
   type AgentPosture,
+  type FeedbackStats,
 } from "@/lib/api";
 import {
   PageHeader,
@@ -30,6 +31,7 @@ import {
 } from "@/components/shared/page-primitives";
 import { useToast } from "@/components/shared/toast";
 import { timeAgo } from "@/lib/utils";
+import { CoverageGate } from "@/components/shared/coverage-gate";
 
 
 const KIND_PRESENTATION: Record<
@@ -68,27 +70,25 @@ export default function AgentActivityPage() {
   const { toast } = useToast();
   const [items, setItems] = useState<AgentActivityItem[]>([]);
   const [posture, setPosture] = useState<AgentPosture | null>(null);
+  const [feedbackStats, setFeedbackStats] = useState<FeedbackStats | null>(null);
   const [filter, setFilter] = useState<AgentKind | "all">("all");
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [feed, p] = await Promise.all([
+      const [feed, p, fb] = await Promise.allSettled([
         api.agents.activity({ limit: 100 }),
         api.agents.posture(),
+        api.feedback.stats(),
       ]);
-      setItems(feed);
-      setPosture(p);
-    } catch (e) {
-      toast(
-        "error",
-        e instanceof Error ? e.message : "Failed to load agent activity",
-      );
+      if (feed.status === "fulfilled") setItems(feed.value);
+      if (p.status === "fulfilled") setPosture(p.value);
+      if (fb.status === "fulfilled") setFeedbackStats(fb.value);
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -98,6 +98,7 @@ export default function AgentActivityPage() {
     filter === "all" ? items : items.filter((i) => i.kind === filter);
 
   return (
+    <CoverageGate pageSlug="agent-activity" pageLabel="Agent Activity">
     <div className="space-y-6">
       <PageHeader
         eyebrow={{ icon: Sparkles, label: "Agentic" }}
@@ -111,6 +112,12 @@ export default function AgentActivityPage() {
 
       {/* HIL posture banner */}
       {posture ? <PostureBanner posture={posture} /> : null}
+
+      {/* Triage Quality (moved from /feeds — quality of agent
+          decisions belongs alongside the agent activity log, not
+          mixed in with feed pipeline health). */}
+      <TriageQualityCards stats={feedbackStats} />
+
 
       {/* Filter chips */}
       <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
@@ -176,6 +183,7 @@ export default function AgentActivityPage() {
         )}
       </Section>
     </div>
+      </CoverageGate>
   );
 }
 
@@ -402,6 +410,86 @@ function PostureBanner({ posture }: { posture: AgentPosture }) {
             : "(none)"}
         </p>
       </div>
+    </div>
+  );
+}
+
+// Triage Quality — three KPIs that describe how good the AI Triage
+// Agent's decisions are, scored against operator-submitted verdicts
+// (true positive / false positive / category re-classification). Was
+// previously sitting on the Feed Health page where it didn't belong;
+// agent quality lives with agent activity.
+function TriageQualityCards({ stats }: { stats: FeedbackStats | null }) {
+  const tpr = stats ? Math.round((stats.true_positive_rate || 0) * 100) : 0;
+  const topCategory = stats?.category_accuracy
+    ?.slice()
+    .sort((a, b) => b.accuracy - a.accuracy)[0];
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <QualityCard
+        label="Analyst Feedback"
+        value={(stats?.total_feedback ?? 0).toLocaleString()}
+        sub="Total triage verdicts submitted"
+        emptyHint={!stats || stats.total_feedback === 0
+          ? "No feedback yet — open an alert and rate the triage decision to start scoring the agent."
+          : undefined}
+      />
+      <QualityCard
+        label="True Positive Rate"
+        value={stats ? `${tpr}%` : "—"}
+        sub={stats
+          ? `${stats.true_positives ?? 0} TP / ${stats.false_positives ?? 0} FP`
+          : "Awaiting feedback"}
+      />
+      <QualityCard
+        label="Top Category Accuracy"
+        value={topCategory ? topCategory.category : "—"}
+        sub={topCategory ? `${Math.round(topCategory.accuracy)}% accuracy` : "No feedback yet"}
+      />
+    </div>
+  );
+}
+
+function QualityCard({
+  label,
+  value,
+  sub,
+  emptyHint,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  emptyHint?: string;
+}) {
+  return (
+    <div
+      className="px-4 py-3"
+      style={{
+        background: "var(--color-canvas)",
+        border: "1px solid var(--color-border)",
+        borderRadius: 5,
+      }}
+    >
+      <p
+        className="text-[10px] font-semibold uppercase tracking-[0.7px] mb-1"
+        style={{ color: "var(--color-muted)" }}
+      >
+        {label}
+      </p>
+      <p
+        className="text-[22px] font-medium leading-none tracking-[-0.02em]"
+        style={{ color: "var(--color-ink)" }}
+      >
+        {value}
+      </p>
+      <p className="text-[11.5px] mt-1.5" style={{ color: "var(--color-muted)" }}>
+        {sub}
+      </p>
+      {emptyHint && (
+        <p className="text-[11px] mt-1.5 leading-relaxed" style={{ color: "var(--color-muted)" }}>
+          {emptyHint}
+        </p>
+      )}
     </div>
   );
 }

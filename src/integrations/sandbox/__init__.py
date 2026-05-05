@@ -1,6 +1,6 @@
 """Sandbox detonation connectors (P3 #3.6).
 
-Four sandbox providers behind a uniform submit / poll / report
+Five sandbox providers behind a uniform submit / poll / report
 interface. Argus uploads a sample (or a hash for cloud-only
 re-analysis), the connector returns an ``analysis_id`` immediately,
 and ``get_report`` is polled by the case copilot until a verdict
@@ -8,13 +8,14 @@ lands. Reports are normalised into :class:`AnalysisReport` so the
 case timeline doesn't have to know which sandbox produced them.
 
   cape          CAPEv2 — operator self-hosted, free / open-source
+  cuckoo3       Cuckoo3 (CERT-EE rewrite) — operator self-hosted, OSS
   joe           Joe Sandbox Cloud — commercial BYOK
   hybrid        Hybrid-Analysis (Falcon Sandbox) — commercial BYOK
   virustotal    VirusTotal Premium / Enterprise — strict BYOK
                 (free-tier ToS forbids commercial-product use; we
                 deliberately refuse to run without a paid key)
 
-All four:
+All five:
   - read their config from env vars
   - degrade to ``unconfigured`` when keys are missing
   - go through ``src.core.http_circuit`` so a sandbox outage doesn't
@@ -31,6 +32,7 @@ from .base import (
     SignatureHit,
 )
 from .cape import CapeConnector
+from .cuckoo3 import Cuckoo3Connector
 from .joe import JoeSandboxConnector
 from .hybrid import HybridAnalysisConnector
 from .virustotal import VirusTotalConnector
@@ -38,6 +40,7 @@ from .virustotal import VirusTotalConnector
 
 CONNECTORS: dict[str, type[SandboxConnector]] = {
     "cape":       CapeConnector,
+    "cuckoo3":    Cuckoo3Connector,
     "joe":        JoeSandboxConnector,
     "hybrid":     HybridAnalysisConnector,
     "virustotal": VirusTotalConnector,
@@ -69,6 +72,7 @@ __all__ = [
     "SandboxResult",
     "SignatureHit",
     "CapeConnector",
+    "Cuckoo3Connector",
     "JoeSandboxConnector",
     "HybridAnalysisConnector",
     "VirusTotalConnector",

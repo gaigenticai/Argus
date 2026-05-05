@@ -29,7 +29,7 @@ class TelegramCrawler(BaseCrawler):
     the t.me web preview without needing a Telegram API key.
     """
 
-    name = "telegram_crawler"
+    name = "telegram_channel"
     source_type = SourceType.TELEGRAM
 
     TELEGRAM_WEB = "https://t.me/s"  # public channel web view
@@ -58,6 +58,31 @@ class TelegramCrawler(BaseCrawler):
 
         # Telegram web preview uses specific class names
         messages = soup.select("div.tgme_widget_message_wrap")
+
+        # When a channel disables its public preview, gets banned, or
+        # is age-restricted, t.me/s/<handle> 302s to t.me/<handle> —
+        # the (followed) redirect target is the join page, which has
+        # no message wraps. Without this check the crawler emits 0
+        # results silently. Distinguishing "no preview" from "no
+        # messages" lets the operator prune dead handles from their
+        # monitor list instead of staring at an empty Telegram pane.
+        if not messages:
+            join_marker = soup.select_one("a.tgme_action_button_new") or soup.select_one(
+                "div.tgme_page_action"
+            )
+            if join_marker:
+                logger.warning(
+                    "[%s] channel @%s: t.me/s/ redirected to join page — "
+                    "preview disabled, channel may be private/defunct/restricted",
+                    self.name, channel,
+                )
+            else:
+                logger.info(
+                    "[%s] channel @%s: 0 messages in preview (channel may be "
+                    "empty or recently created)",
+                    self.name, channel,
+                )
+            return
 
         for msg in messages:
             text_el = msg.select_one("div.tgme_widget_message_text")

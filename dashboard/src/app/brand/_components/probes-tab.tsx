@@ -17,6 +17,7 @@ import {
 } from "@/components/shared/page-primitives";
 import { formatDate, timeAgo } from "@/lib/utils";
 import { useBrandContext } from "./use-brand-context";
+import { ScheduledProbesCard } from "./scheduled-probes-card";
 
 const VERDICT_TONE: Record<string, StateTone> = {
   phishing: "error-strong",
@@ -74,6 +75,8 @@ export function ProbesTab() {
 
   return (
     <div className="space-y-4">
+      <ScheduledProbesCard />
+
       <div className="flex items-center gap-2 flex-wrap">
         <Select
           ariaLabel="Verdict"

@@ -813,12 +813,32 @@ fi
 
 cd "$ROOT"
 
-ADMIN_EMAIL_DEFAULT="admin@argus.local"
-ADMIN_PASS_DEFAULT="ChangeMe-On-First-Login!"
+# What credentials to advertise in the banner depends on which seed
+# path actually ran:
+#   - realistic: scripts/seed/backfill_to_min.py inserts a fixed roster
+#     including admin@argus.demo with a frozen Argon2 hash matching
+#     "ArgusDemo123!". Those creds are stable across re-seeds.
+#   - minimal:   scripts/seed/minimal.py creates admin@argus.local. If
+#     ARGUS_BOOTSTRAP_ADMIN_PASSWORD is set in .env we display it; if
+#     not, the seed generates a random password and prints it ONCE in
+#     the seed log — point the operator there instead of inventing a
+#     value the API will reject.
 ADMIN_EMAIL="$(env_get ARGUS_BOOTSTRAP_ADMIN_EMAIL)"
 ADMIN_PASS="$(env_get ARGUS_BOOTSTRAP_ADMIN_PASSWORD)"
-[ -z "$ADMIN_EMAIL" ] && ADMIN_EMAIL="$ADMIN_EMAIL_DEFAULT"
-[ -z "$ADMIN_PASS" ]  && ADMIN_PASS="$ADMIN_PASS_DEFAULT"
+if [ -z "$ADMIN_EMAIL" ]; then
+  if [ "$SEED_LABEL" = "realistic" ]; then
+    ADMIN_EMAIL="admin@argus.demo"
+  else
+    ADMIN_EMAIL="admin@argus.local"
+  fi
+fi
+if [ -z "$ADMIN_PASS" ]; then
+  if [ "$SEED_LABEL" = "realistic" ]; then
+    ADMIN_PASS="ArgusDemo123!"
+  else
+    ADMIN_PASS="(random — run: docker compose logs argus-seed | grep -A1 'BOOTSTRAP ADMIN')"
+  fi
+fi
 
 if [ "$api_ready" -eq 1 ]; then
   STATUS_API="${G}ready${NC}"
@@ -874,7 +894,42 @@ ${B}${G}━━━━━━━━━━━━━━━━━━━━━━━━
 
 EOF
 
-# Tail dashboard logs so the operator sees Next.js compile errors etc.
-# in the same terminal until they Ctrl+C.
+# Stream live activity from every long-running component into the
+# operator's terminal so an "AI triage" click visibly does work
+# (claude subprocess spawn, feed-triage progress, dashboard requests)
+# rather than appearing inert. Each tailer is prefixed so the streams
+# don't blur together. They run in the background; Ctrl+C tears them
+# down via the trap below.
+TAIL_PIDS=()
+_tail_with_prefix() {
+  # $1 = label, $2 = file (created if missing so tail -F doesn't error)
+  local label="$1" path="$2"
+  : > /dev/null  # no-op
+  if [ ! -f "$path" ]; then : > "$path"; fi
+  ( tail -n 0 -F "$path" 2>/dev/null \
+      | awk -v p="${C}[${label}]${NC} " '{ print p $0; fflush(); }' ) &
+  TAIL_PIDS+=("$!")
+}
+
+# Compose stdout for the api container — gives the operator live
+# feed-triage / agent run / request-id lines as they happen.
+( docker compose logs -f --tail=0 argus-api 2>/dev/null \
+    | awk -v p="${G}[api]${NC} " '{ sub(/^argus-api-1[ ]*\| /, ""); print p $0; fflush(); }' ) &
+TAIL_PIDS+=("$!")
+
+if [ "$BRIDGE_HOST_NATIVE" -eq 1 ]; then
+  _tail_with_prefix "bridge" "$ROOT/logs/bridge-host.log"
+fi
+
+_tail_with_prefix "dashboard" "$ROOT/.dashboard.log"
+
+cleanup_with_tails() {
+  for pid in "${TAIL_PIDS[@]:-}"; do
+    [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+  done
+  cleanup
+}
+trap cleanup_with_tails INT TERM
+
 wait "$DASHBOARD_PID" 2>/dev/null || true
-cleanup
+cleanup_with_tails

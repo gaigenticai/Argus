@@ -215,6 +215,31 @@ async def allow_auto_action(
     return decision
 
 
+def _llm_snapshot() -> dict[str, str]:
+    """Resolve the configured LLM provider/model into a display label
+    the dashboard can render verbatim — so UI copy never hard-codes a
+    specific provider name (e.g. ``"using z.ai GLM-5"``) when the
+    operator has actually wired up Claude Code or Gemma."""
+    from src.config.settings import settings as _settings
+
+    provider = (_settings.llm.provider or "").lower()
+    model = _settings.llm.model or ""
+    if provider == "bridge":
+        label = "Claude Code (host CLI)"
+    elif provider == "anthropic":
+        label = f"Anthropic {model}" if model else "Anthropic"
+    elif provider == "ollama":
+        label = f"Ollama · {model}" if model else "Ollama"
+    elif provider == "openai":
+        # The OpenAI-compatible path is how the bundled Gemma vLLM /
+        # other on-prem servers register themselves. Surface the model
+        # directly so "Google Gemma 4 31B" reads naturally.
+        label = model or "OpenAI-compatible LLM"
+    else:
+        label = provider or "LLM not configured"
+    return {"provider": provider, "model": model, "label": label}
+
+
 def posture_snapshot() -> dict[str, object]:
     """Lightweight read-only snapshot for the dashboard banner.
     Exposes the current master + per-feature state without touching
@@ -230,6 +255,7 @@ def posture_snapshot() -> dict[str, object]:
             "master": _MASTER_ENV,
             **{kind.value: env for kind, env in _FEATURE_ENV.items()},
         },
+        "llm": _llm_snapshot(),
     }
 
 

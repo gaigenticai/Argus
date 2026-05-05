@@ -31,11 +31,13 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     Enum,
     Float,
     ForeignKey,
     Index,
+    Integer,
     String,
     Text,
     UniqueConstraint,
@@ -197,6 +199,14 @@ class QuestionnaireInstance(Base, UUIDMixin, TimestampMixin):
     score: Mapped[float | None] = mapped_column(Float)
     notes: Mapped[str | None] = mapped_column(Text)
 
+    # Immutable template snapshot for compliance reproducibility — once a
+    # questionnaire is sent, the template version + hash + frozen JSON
+    # snapshot of every question are pinned. Re-running the template
+    # editor never mutates a sent instance.
+    template_version: Mapped[int | None] = mapped_column(Integer)
+    template_hash: Mapped[str | None] = mapped_column(String(64))
+    template_snapshot: Mapped[dict | None] = mapped_column(JSONB)
+
     __table_args__ = (
         Index(
             "ix_q_instance_org_state",
@@ -290,16 +300,179 @@ def is_stage_transition_allowed(from_stage: str, to_stage: str) -> bool:
     return to_stage in _ALLOWED_STAGE_TRANSITIONS.get(from_stage, set())
 
 
+# ---------------------------------------------------------------------
+# Phase 2 — TPRM full-audit additions: evidence vault, contract vault,
+# sanctions checks, posture signals, scorecard history.
+# ---------------------------------------------------------------------
+
+
+class VendorTier(str, enum.Enum):
+    TIER_1 = "tier_1"  # critical / annual review
+    TIER_2 = "tier_2"  # important / biennial
+    TIER_3 = "tier_3"  # standard / on-demand
+
+
+class VendorCategory(str, enum.Enum):
+    PAYMENT_PROCESSOR = "payment_processor"
+    CLOUD_PROVIDER = "cloud_provider"
+    SECURITY_VENDOR = "security_vendor"
+    HR_PAYROLL = "hr_payroll"
+    TELECOM = "telecom"
+    LEGAL = "legal"
+    AUDITOR = "auditor"
+    MARKETING_SAAS = "marketing_saas"
+    DATA_BROKER = "data_broker"
+    OTHER = "other"
+
+
+class VendorEvidenceFile(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "vendor_evidence_files"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    vendor_asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    questionnaire_instance_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("questionnaire_instances.id", ondelete="SET NULL"),
+    )
+    question_id: Mapped[str | None] = mapped_column(String(80))
+    file_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    mime_type: Mapped[str | None] = mapped_column(String(120))
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    uploaded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    extracted: Mapped[dict | None] = mapped_column(JSONB)
+
+
+class VendorContract(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "vendor_contracts"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    vendor_asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    contract_kind: Mapped[str | None] = mapped_column(String(64))  # msa | dpa | nda | sla
+    file_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    effective_date: Mapped[datetime | None] = mapped_column(Date)
+    expiration_date: Mapped[datetime | None] = mapped_column(Date)
+    extracted_clauses: Mapped[dict | None] = mapped_column(JSONB)
+    uploaded_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+
+class VendorSanctionsCheck(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "vendor_sanctions_checks"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    vendor_asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # ofac | ofsi | eu_consolidated | un
+    matched: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    match_score: Mapped[float | None] = mapped_column(Float)
+    match_payload: Mapped[dict | None] = mapped_column(JSONB)
+    checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class VendorPostureSignal(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "vendor_posture_signals"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    vendor_asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # kind = dmarc | spf | dkim | hibp | github_leak | nuclei | typosquat | sanctions | breach
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    score: Mapped[float | None] = mapped_column(Float)
+    summary: Mapped[str | None] = mapped_column(Text)
+    evidence: Mapped[dict | None] = mapped_column(JSONB)
+    collected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "vendor_asset_id", "kind", name="uq_vendor_posture_kind"
+        ),
+    )
+
+
+class VendorScorecardSnapshot(Base, UUIDMixin, TimestampMixin):
+    __tablename__ = "vendor_scorecard_snapshots"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    vendor_asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    grade: Mapped[str] = mapped_column(String(4), nullable=False)
+    pillar_scores: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    snapshot_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 __all__ = [
     "VendorGrade",
+    "VendorTier",
+    "VendorCategory",
     "QuestionnaireKind",
     "AnswerKind",
     "QuestionnaireState",
     "VendorOnboardingStage",
     "VendorScorecard",
+    "VendorScorecardSnapshot",
     "QuestionnaireTemplate",
     "QuestionnaireInstance",
     "QuestionnaireAnswer",
     "VendorOnboardingWorkflow",
+    "VendorEvidenceFile",
+    "VendorContract",
+    "VendorSanctionsCheck",
+    "VendorPostureSignal",
     "is_stage_transition_allowed",
 ]

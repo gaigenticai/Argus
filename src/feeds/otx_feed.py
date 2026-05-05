@@ -94,10 +94,27 @@ class OTXFeed(BaseFeed):
     default_interval_seconds = 3600  # 1 hour
 
     def _headers(self) -> dict[str, str]:
-        return {"X-OTX-API-KEY": settings.feeds.otx_api_key or ""}
+        from src.core import integration_keys
+        key = integration_keys.get(
+            "otx", env_fallback="ARGUS_FEED_OTX_API_KEY",
+        ) or settings.feeds.otx_api_key or ""
+        # OTX's CDN started serving zstandard-compressed responses by
+        # default; aiohttp doesn't ship a zstd decoder. Pinning
+        # Accept-Encoding to gzip+deflate forces the upstream to use
+        # encodings the standard library + aiohttp already handle.
+        return {
+            "X-OTX-API-KEY": key,
+            "Accept-Encoding": "gzip, deflate",
+        }
 
     async def poll(self) -> AsyncIterator[FeedEntry]:
-        api_key = settings.feeds.otx_api_key
+        from src.core import integration_keys
+        api_key = (
+            integration_keys.get(
+                "otx", env_fallback="ARGUS_FEED_OTX_API_KEY",
+            )
+            or settings.feeds.otx_api_key
+        )
         if not api_key:
             # The base class persists a FeedHealth row whenever ``poll``
             # yields zero entries AND ``self.last_unconfigured_reason``

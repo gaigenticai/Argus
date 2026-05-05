@@ -72,7 +72,8 @@ from src.models.compliance import (
 )
 from src.models.threat import Organization
 from src.storage import evidence_store
-from src.storage.database import async_session_factory, get_session
+from src.storage import database as _db
+from src.storage.database import get_session
 
 logger = logging.getLogger(__name__)
 
@@ -188,12 +189,12 @@ async def _process_export(export_id: uuid.UUID) -> None:
     Runs in a fresh SQLAlchemy session — does NOT inherit the request
     session. RLS GUC is set explicitly before any tenant-scoped query.
     """
-    if async_session_factory is None:
+    if _db.async_session_factory is None:
         logger.error("compliance export %s: session factory not initialised",
                      export_id)
         return
 
-    async with async_session_factory() as session:
+    async with _db.async_session_factory() as session:
         export = (await session.execute(
             select(ComplianceExport).where(ComplianceExport.id == export_id)
         )).scalar_one_or_none()

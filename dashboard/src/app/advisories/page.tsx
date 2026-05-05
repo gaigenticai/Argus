@@ -30,6 +30,7 @@ import {
   type StateTone,
 } from "@/components/shared/page-primitives";
 import { formatDate, timeAgo } from "@/lib/utils";
+import { CoverageGate } from "@/components/shared/coverage-gate";
 
 const STATE_TONE: Record<string, StateTone> = {
   draft: "muted",
@@ -63,6 +64,7 @@ export default function AdvisoriesPage() {
   const [selected, setSelected] = useState<AdvisoryResponse | null>(null);
   const [stateFilter, setStateFilter] = useState("all");
   const [severityFilter, setSeverityFilter] = useState("all");
+  const [kevOnly, setKevOnly] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -101,9 +103,9 @@ export default function AdvisoriesPage() {
         organization_id: orgId || undefined,
         state: stateFilter === "all" ? undefined : stateFilter,
         severity: severityFilter === "all" ? undefined : severityFilter,
-        limit: 200,
+        limit: 500,
       });
-      setRows(data);
+      setRows(kevOnly ? data.filter((a) => a.is_kev) : data);
     } catch (e) {
       toast(
         "error",
@@ -112,7 +114,7 @@ export default function AdvisoriesPage() {
     } finally {
       setLoading(false);
     }
-  }, [orgId, stateFilter, severityFilter, toast]);
+  }, [orgId, stateFilter, severityFilter, kevOnly, toast]);
 
   useEffect(() => {
     load();
@@ -143,6 +145,7 @@ export default function AdvisoriesPage() {
   };
 
   return (
+    <CoverageGate pageSlug="advisories" pageLabel="Advisories">
     <div className="space-y-6">
       <PageHeader
         eyebrow={{ icon: Megaphone, label: "Intelligence" }}
@@ -152,6 +155,29 @@ export default function AdvisoriesPage() {
           <>
             <OrgSwitcher orgs={orgs} orgId={orgId} onChange={setOrgId} />
             <RefreshButton onClick={load} refreshing={loading} />
+            <button
+              onClick={async () => {
+                try {
+                  const r = await api.news.ingestCisaKev();
+                  toast(
+                    "success",
+                    `CISA KEV — inserted ${r.inserted}, updated ${r.updated}, total ${r.total}`,
+                  );
+                  await load();
+                } catch (e) {
+                  toast("error", e instanceof Error ? e.message : "CISA KEV ingest failed");
+                }
+              }}
+              className="inline-flex items-center gap-2 h-10 px-4 text-[13px] font-bold"
+              style={{
+                borderRadius: "4px",
+                border: "1px solid var(--color-border)",
+                background: "var(--color-canvas)",
+                color: "var(--color-body)",
+              }}
+            >
+              Ingest CISA KEV
+            </button>
             <button
               onClick={() => setShowCreate(true)}
               className="inline-flex items-center gap-2 h-10 px-4 text-[13px] font-bold"
@@ -189,6 +215,14 @@ export default function AdvisoriesPage() {
           ]}
           onChange={setSeverityFilter}
         />
+        <label className="inline-flex items-center gap-2 text-[12px] font-semibold ml-2" style={{ color: "var(--color-muted)" }}>
+          <input
+            type="checkbox"
+            checked={kevOnly}
+            onChange={(e) => setKevOnly(e.target.checked)}
+          />
+          KEV only
+        </label>
       </div>
 
       {selected ? (
@@ -252,7 +286,31 @@ export default function AdvisoriesPage() {
                       </td>
                       <td className="px-3">
                         <div className="flex flex-wrap items-center gap-1">
-                          {a.cve_ids.slice(0, 3).map((c) => (
+                          {a.is_kev && (
+                            <span
+                              className="inline-flex items-center h-[18px] px-1.5 text-[10.5px] font-bold uppercase tracking-wide"
+                              style={{ borderRadius: "4px", background: "#B71D18", color: "#fff" }}
+                            >
+                              KEV
+                            </span>
+                          )}
+                          {typeof a.cvss3_score === "number" && (
+                            <span
+                              className="inline-flex items-center h-[18px] px-1.5 text-[10.5px] font-bold"
+                              style={{ borderRadius: "4px", background: "rgba(183,29,24,0.10)", color: "#B71D18" }}
+                            >
+                              CVSS {a.cvss3_score.toFixed(1)}
+                            </span>
+                          )}
+                          {typeof a.epss_score === "number" && (
+                            <span
+                              className="inline-flex items-center h-[18px] px-1.5 text-[10.5px] font-bold"
+                              style={{ borderRadius: "4px", background: "rgba(255,171,0,0.12)", color: "#B76E00" }}
+                            >
+                              EPSS {(a.epss_score * 100).toFixed(0)}%
+                            </span>
+                          )}
+                          {a.cve_ids.slice(0, 2).map((c) => (
                             <span
                               key={c}
                               className="inline-flex items-center h-[18px] px-1.5 text-[10.5px] font-mono tabular-nums tracking-wide"
@@ -261,7 +319,15 @@ export default function AdvisoriesPage() {
                               {c}
                             </span>
                           ))}
-                          {a.tags.slice(0, 3).map((t) => (
+                          {a.source && a.source !== "manual" && (
+                            <span
+                              className="inline-flex items-center h-[16px] px-1 text-[10px] font-bold uppercase"
+                              style={{ borderRadius: "4px", background: "var(--color-surface-muted)", color: "var(--color-body)" }}
+                            >
+                              {a.source}
+                            </span>
+                          )}
+                          {a.tags.slice(0, 2).map((t) => (
                             <span
                               key={t}
                               className="inline-flex items-center h-[16px] px-1 text-[10px] font-bold"
@@ -271,6 +337,11 @@ export default function AdvisoriesPage() {
                             </span>
                           ))}
                         </div>
+                        {a.triage_state && a.triage_state !== "new" && (
+                          <div className="text-[10px] mt-1" style={{ color: "var(--color-muted)" }}>
+                            triage: <span className="font-semibold">{a.triage_state}</span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-3">
                         <StatePill
@@ -301,6 +372,7 @@ export default function AdvisoriesPage() {
         />
       )}
     </div>
+      </CoverageGate>
   );
 }
 
@@ -370,6 +442,9 @@ function AdvisoryDetail({
           ) : null}
         </div>
       </div>
+      <TriageBar advisory={advisory} />
+      <AffectedExposuresPanel advisoryId={advisory.id} />
+      <CommentsPanel advisoryId={advisory.id} />
       <Section>
         <div className="px-6 py-5">
           <article className="prose prose-sm max-w-none whitespace-pre-wrap text-[13.5px] leading-relaxed" style={{ color: "var(--color-body)" }}>
@@ -661,5 +736,187 @@ function RevokeModal({
         disabled={!reason.trim()}
       />
     </ModalShell>
+  );
+}
+
+
+function TriageBar({ advisory }: { advisory: AdvisoryResponse }) {
+  const { toast } = useToast();
+  const [state, setState] = useState(advisory.triage_state || "new");
+  const states = [
+    { id: "new", label: "New", color: "#6B7280" },
+    { id: "acknowledged", label: "Acknowledged", color: "#007B8A" },
+    { id: "in_remediation", label: "In remediation", color: "#B76E00" },
+    { id: "resolved", label: "Resolved", color: "#007B55" },
+    { id: "dismissed", label: "Dismissed", color: "#6B21A8" },
+  ];
+  return (
+    <div className="flex items-center gap-2 px-3 py-2" style={{ background: "var(--color-surface)", border: "1px solid var(--color-border)", borderRadius: 5 }}>
+      <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: "var(--color-muted)" }}>
+        Triage:
+      </span>
+      {states.map((s) => (
+        <button
+          key={s.id}
+          onClick={async () => {
+            try {
+              await api.news.triageAdvisory(advisory.id, s.id);
+              setState(s.id);
+              toast("success", `Moved to ${s.label}`);
+            } catch (e) {
+              toast("error", `Triage failed — ${String(e)}`);
+            }
+          }}
+          className="h-7 px-2 text-[11px] font-bold transition-colors"
+          style={{
+            borderRadius: 3,
+            border: state === s.id ? `1px solid ${s.color}` : "1px solid var(--color-border)",
+            background: state === s.id ? `${s.color}15` : "var(--color-canvas)",
+            color: state === s.id ? s.color : "var(--color-body)",
+          }}
+        >
+          {s.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+
+function AffectedExposuresPanel({ advisoryId }: { advisoryId: string }) {
+  const [orgId, setOrgId] = useState<string | null>(null);
+  const [rows, setRows] = useState<{ id: string; cve_ids: string[]; severity: string | null; asset_value: string | null; title: string | null }[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.getCurrentOrg().then((o) => setOrgId(o?.id || null)).catch(() => setOrgId(null));
+  }, []);
+
+  useEffect(() => {
+    if (!orgId) return;
+    setLoading(true);
+    api.news.affectedAssets(advisoryId, orgId)
+      .then(setRows)
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  }, [advisoryId, orgId]);
+
+  return (
+    <Section>
+      <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
+        <h3 className="text-[12px] font-bold uppercase tracking-[0.1em]" style={{ color: "var(--color-body)" }}>
+          Affected exposures in your environment
+        </h3>
+      </div>
+      <div className="px-4 py-3">
+        {loading ? (
+          <p className="text-[12px]" style={{ color: "var(--color-muted)" }}>Checking your exposures…</p>
+        ) : rows.length === 0 ? (
+          <p className="text-[12px] italic" style={{ color: "var(--color-muted)" }}>
+            No exposures in your tracked assets reference these CVEs.
+          </p>
+        ) : (
+          <ul className="space-y-1.5">
+            {rows.map((r) => (
+              <li key={r.id} className="flex items-center gap-3 text-[12px]" style={{ color: "var(--color-body)" }}>
+                {r.severity && (
+                  <span
+                    className="inline-flex h-[18px] px-1.5 text-[10px] font-bold uppercase"
+                    style={{ borderRadius: 3, background: "rgba(255,86,48,0.05)", color: "#B71D18" }}
+                  >
+                    {r.severity}
+                  </span>
+                )}
+                {r.asset_value && <span className="font-mono">{r.asset_value}</span>}
+                <span className="font-semibold flex-1 truncate" style={{ color: "var(--color-ink)" }}>{r.title}</span>
+                <span className="text-[10px]" style={{ color: "var(--color-muted)" }}>
+                  {r.cve_ids.slice(0, 2).join(", ")}
+                  {r.cve_ids.length > 2 && ` +${r.cve_ids.length - 2}`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+
+function CommentsPanel({ advisoryId }: { advisoryId: string }) {
+  const { toast } = useToast();
+  const [items, setItems] = useState<{ id: string; body: string; author_user_id: string | null; created_at: string }[]>([]);
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(true);
+  const load = useCallback(async () => {
+    try {
+      const r = await api.news.listAdvisoryComments(advisoryId);
+      setItems(r);
+    } finally {
+      setLoading(false);
+    }
+  }, [advisoryId]);
+  useEffect(() => { void load(); }, [load]);
+
+  return (
+    <Section>
+      <div className="px-4 py-3" style={{ borderBottom: "1px solid var(--color-border)" }}>
+        <h3 className="text-[12px] font-bold uppercase tracking-[0.1em]" style={{ color: "var(--color-body)" }}>
+          Comments
+        </h3>
+      </div>
+      <div className="px-4 py-3 space-y-3">
+        <div className="flex gap-2">
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Add a comment…"
+            className="flex-1 h-9 px-3 text-[13px]"
+            style={{
+              borderRadius: 4,
+              border: "1px solid var(--color-border)",
+              background: "var(--color-canvas)",
+              color: "var(--color-ink)",
+            }}
+          />
+          <button
+            disabled={!draft.trim()}
+            onClick={async () => {
+              try {
+                await api.news.addAdvisoryComment(advisoryId, draft.trim());
+                setDraft("");
+                await load();
+              } catch (e) {
+                toast("error", `Comment failed — ${String(e)}`);
+              }
+            }}
+            className="h-9 px-3 text-[12px] font-semibold disabled:opacity-50"
+            style={{ borderRadius: 4, background: "var(--color-accent)", color: "#fff" }}
+          >
+            Post
+          </button>
+        </div>
+        {loading ? (
+          <p className="text-[12px]" style={{ color: "var(--color-muted)" }}>Loading…</p>
+        ) : items.length === 0 ? (
+          <p className="text-[12px] italic" style={{ color: "var(--color-muted)" }}>No comments yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {items.map((c) => (
+              <li
+                key={c.id}
+                className="p-2"
+                style={{ borderRadius: 4, background: "var(--color-surface)" }}
+              >
+                <p className="text-[12px]" style={{ color: "var(--color-body)" }}>{c.body}</p>
+                <p className="text-[10px] mt-1" style={{ color: "var(--color-muted)" }}>
+                  {new Date(c.created_at).toISOString().replace("T", " ").slice(0, 19)}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Section>
   );
 }

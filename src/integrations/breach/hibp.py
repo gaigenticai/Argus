@@ -38,9 +38,22 @@ class HibpProvider(BreachProvider):
     label = "Have I Been Pwned (Enterprise)"
 
     def __init__(self):
-        self._key = (os.environ.get("ARGUS_HIBP_API_KEY") or "").strip()
+        # Resolve key live at construction time. Operators can rotate
+        # the key from Settings → Integrations and the next provider
+        # instantiation picks it up without an env-edit + restart.
+        from src.core import integration_keys
+        self._key = (
+            integration_keys.get("hibp", env_fallback="ARGUS_HIBP_API_KEY") or ""
+        ).strip()
 
     def is_configured(self) -> bool:
+        # Re-resolve every check so a freshly-rotated key takes effect
+        # mid-process. Cheap (in-memory dict lookup); no DB hit.
+        if not self._key:
+            from src.core import integration_keys
+            self._key = (
+                integration_keys.get("hibp", env_fallback="ARGUS_HIBP_API_KEY") or ""
+            ).strip()
         return bool(self._key)
 
     async def search_email(self, email: str) -> ProviderResult:

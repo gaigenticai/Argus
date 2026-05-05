@@ -555,6 +555,60 @@ class JasminSmsAdapter(Adapter):
 # --- Registry -----------------------------------------------------------
 
 
+class AppriseAdapter(Adapter):
+    """OSS-default fan-out via the Apprise library.
+
+    One channel kind that talks to 90+ services (Slack, Mattermost,
+    Rocket.Chat, ntfy, Telegram, Discord, Teams, PagerDuty, Opsgenie,
+    SMTP, Twilio, etc.) by URL scheme. Operators set
+    ``config.urls = ["mattermost://...","ntfy://...","slack://..."]``
+    and Apprise routes each event accordingly. Replaces the need to
+    individually configure five adapters when one self-hostable OSS
+    fan-out covers them all."""
+
+    kind = "apprise"
+
+    async def send(self, event, channel) -> AdapterResult:
+        cfg = channel.config or {}
+        urls = cfg.get("urls") or []
+        if isinstance(urls, str):
+            urls = [u.strip() for u in urls.split(",") if u.strip()]
+        if not urls:
+            return AdapterResult(
+                success=False,
+                error_message="No Apprise URLs configured (config.urls = [...])",
+            )
+        try:
+            import apprise  # type: ignore
+        except Exception as e:  # noqa: BLE001
+            return AdapterResult(
+                success=False,
+                error_message=f"apprise lib not installed: {e}",
+            )
+        ap = apprise.Apprise()
+        for u in urls:
+            ap.add(str(u))
+        title = f"[Argus][{(event.severity or 'info').upper()}] {event.title}"
+        body = event.body or event.title
+        try:
+            ok = ap.notify(title=title, body=body)
+        except Exception as e:  # noqa: BLE001
+            return AdapterResult(success=False, error_message=str(e))
+        if ok:
+            return AdapterResult(
+                success=True,
+                response_status=200,
+                response_body=f"delivered to {len(urls)} url(s)",
+            )
+        return AdapterResult(
+            success=False,
+            error_message=(
+                f"Apprise reported failure across {len(urls)} URL(s); "
+                "check service-side webhooks / ports / credentials"
+            ),
+        )
+
+
 _REGISTRY: dict[str, Adapter] = {
     "email": EmailAdapter(),
     "slack": SlackAdapter(),
@@ -563,6 +617,7 @@ _REGISTRY: dict[str, Adapter] = {
     "pagerduty": PagerDutyAdapter(),
     "opsgenie": OpsgenieAdapter(),
     "jasmin_sms": JasminSmsAdapter(),
+    "apprise": AppriseAdapter(),
 }
 
 

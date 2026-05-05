@@ -3,6 +3,7 @@ fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 pydantic>=2.9.0
 pydantic-settings>=2.5.0
+email-validator>=2.2.0
 
 # Database
 sqlalchemy[asyncio]>=2.0.35
@@ -16,6 +17,13 @@ redis>=5.2.0
 # HTTP / Crawling
 aiohttp>=3.11.0
 aiohttp-socks>=0.9.0
+# OTX, AbuseIPDB, and several Cloudflare/Akamai-fronted upstreams
+# negotiate ``brotli`` or ``zstandard`` encoding regardless of our
+# Accept-Encoding hint. Without these decoders aiohttp surfaces the
+# response as a ``ClientResponseError 400 (Can not decode content-
+# encoding)`` even when the upstream sent a valid 200.
+brotli>=1.1.0
+zstandard>=0.23.0
 beautifulsoup4>=4.12.0
 # playwright>=1.49.0  # Only needed for crawler mode, not API-only deploys
 
@@ -102,6 +110,22 @@ parsedmarc==9.11.0
 # Brand Protection — typosquat / lookalike domain generator
 dnstwist==20250130
 
+# OSINT / leakage — does this email exist on 120+ services?
+# Powers /leakage exposure surface alongside HudsonRock Cavalier.
+holehe>=1.61
+
+# Apprise — OSS-default notification fan-out. Single library, one URL
+# scheme per service (slack://, mailto://, ntfy://, mattermost://,
+# rocket://, pagerduty://, telegram://, discord://, etc.) — operators
+# don't need to wire each notifier individually.
+apprise>=1.9.0
+
+# theHarvester is published on PyPI under a different cadence and
+# the latest stable version isn't reliably mirrored. Install at boot
+# via ``pip install git+https://github.com/laramies/theHarvester``
+# from the Dockerfile post-pin (see Dockerfile + RUN steps) instead
+# of pinning here.
+
 # Brand Protection — TLD parsing driven by the Public Suffix List.
 # tldextract ships a bundled PSL snapshot; ``include_psl_private_domains``
 # keeps the snapshot deterministic in offline / air-gap deploys.
@@ -110,6 +134,12 @@ tldextract>=5.1.2
 # Logo abuse — perceptual hashing (lightweight CLIP alternative — see docs/HARDWARE_DECISIONS.md)
 imagehash>=4.3.2
 Pillow>=11.0.0
+
+# Evidence Vault — text extraction for the artefact summariser agent.
+# pypdf parses PDFs; pytesseract is a thin wrapper over the optional
+# Tesseract binary (degrades gracefully when the binary is absent).
+pypdf>=5.0.0
+pytesseract>=0.3.13
 
 # Impersonation matching — fast string + name similarity
 rapidfuzz>=3.10.0
@@ -137,12 +167,13 @@ prometheus_client>=0.20.0
 pyotp>=2.9.0
 
 # Mobile-app store scrapers (Audit B3 — Phase 4.4)
-#   Android: google-play-scraper, pure-Python, no API key.
-#   iOS: Apple's official public iTunes Search API
-#        (https://itunes.apple.com/search) — no SDK or API key, hit
-#        directly with aiohttp. The third-party `app-store-scraper`
-#        package pins ancient urllib3 incompatible with Py 3.13.
-google-play-scraper==1.2.7
+#   Android: native aiohttp scraper in src/social/mobile_apps.py
+#       — replaced the third-party google-play-scraper lib because it
+#       does brittle deep-DOM traversal that returns None for short
+#       queries (e.g. "ENBD"), silently dropping coverage. We now
+#       parse Open Graph meta tags from /store/apps/details pages,
+#       which is a stable web standard.
+#   iOS: Apple's public iTunes Search API hit directly with aiohttp.
 
 # Social monitoring (Audit B3 — Phase 4.1) — open-source scrapers
 # that work without paid API keys. Each is opt-in per worker config.

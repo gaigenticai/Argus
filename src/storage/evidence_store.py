@@ -105,6 +105,32 @@ def sha256_of(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def triple_hash(data: bytes) -> tuple[str, str, str]:
+    """Compute MD5 + SHA-1 + SHA-256 of *data* in a single streaming pass.
+
+    NIST SP 800-86 calls for legacy digests alongside SHA-256 to keep
+    evidence admissible in jurisdictions whose courts still mandate
+    MD5/SHA-1 footprints. The single-pass form keeps the hot upload
+    loop O(n) on bytes rather than 3·O(n).
+
+    Returns
+    -------
+    (md5_hex, sha1_hex, sha256_hex)
+    """
+    md5 = hashlib.md5()        # noqa: S324 — mandated by court-admissibility statutes
+    sha1 = hashlib.sha1()      # noqa: S324 — same.
+    sha256 = hashlib.sha256()
+    # Walk in 1-MiB chunks to keep peak memory bounded for large blobs.
+    mv = memoryview(data)
+    chunk = 1024 * 1024
+    for i in range(0, len(mv), chunk):
+        block = mv[i : i + chunk]
+        md5.update(block)
+        sha1.update(block)
+        sha256.update(block)
+    return md5.hexdigest(), sha1.hexdigest(), sha256.hexdigest()
+
+
 def storage_key(organization_id: str, sha256: str) -> str:
     """Canonical S3 key for an evidence blob.
 
@@ -180,6 +206,7 @@ __all__ = [
     "get_client",
     "reset_client",
     "sha256_of",
+    "triple_hash",
     "storage_key",
     "put",
     "get",

@@ -29,12 +29,14 @@ from .base import (
 from .proofpoint import ProofpointTapConnector
 from .mimecast import MimecastConnector
 from .abnormal import AbnormalConnector
+from .rspamd import RspamdConnector
 
 
 CONNECTORS: dict[str, type[EmailGatewayConnector]] = {
     "proofpoint": ProofpointTapConnector,
     "mimecast":   MimecastConnector,
     "abnormal":   AbnormalConnector,
+    "rspamd":     RspamdConnector,
 }
 
 
@@ -68,6 +70,7 @@ __all__ = [
     "ProofpointTapConnector",
     "MimecastConnector",
     "AbnormalConnector",
+    "RspamdConnector",
     "CONNECTORS",
     "get_connector",
     "list_available",

@@ -535,26 +535,27 @@ async def _breach_exposure_pillar(
 
     cutoff = _now() - timedelta(days=_DMARC_FAIL_WINDOW_DAYS)
     dmarc_total, dmarc_fail = 0, 0
+    # The DmarcReport schema uses ``date_begin`` / ``date_end`` (the RFC
+    # 7489 ``report_metadata.date_range`` fields). Older drafts of this
+    # rating engine referenced ``report_end_at`` / ``aggregate_totals``
+    # which don't exist on the model — that bug surfaced as a 500 on
+    # the exec-summary "Compute Rating" button.
     dmarc_records = (
         await db.execute(
             select(DmarcReport).where(
                 and_(
                     DmarcReport.organization_id == organization_id,
-                    DmarcReport.report_end_at >= cutoff,
+                    DmarcReport.date_end >= cutoff,
                 )
             )
         )
     ).scalars().all()
     for rec in dmarc_records:
-        # DmarcReport tallies are stored as JSONB or columns depending
-        # on schema vintage; support both.
-        totals = rec.aggregate_totals if getattr(rec, "aggregate_totals", None) else None
-        if totals and isinstance(totals, dict):
-            dmarc_total += int(totals.get("total", 0) or 0)
-            dmarc_fail += int(totals.get("fail", 0) or 0)
-        else:
-            dmarc_total += int(getattr(rec, "total_count", 0) or 0)
-            dmarc_fail += int(getattr(rec, "dmarc_fail_count", 0) or 0)
+        dmarc_total += int(rec.total_messages or 0)
+        # ``fail_count`` covers both quarantined + rejected messages —
+        # any message that didn't pass DMARC is a failure for posture
+        # scoring purposes.
+        dmarc_fail += int(rec.fail_count or 0)
 
     dmarc_fail_pct = (dmarc_fail / dmarc_total * 100.0) if dmarc_total else 0.0
     dmarc_penalty = (dmarc_fail_pct / 100.0) * _DMARC_FAIL_PENALTY_AT_100
@@ -612,7 +613,7 @@ async def _dark_web_pillar(
     because that is a confirmed-targeting signal, not background
     chatter.
     """
-    from src.models.intel import RawIntel
+    from src.models.threat import RawIntel
 
     org = await db.get(Organization, organization_id)
     keywords: list[str] = []
@@ -645,15 +646,20 @@ async def _dark_web_pillar(
     cutoff = _now() - timedelta(days=_DARKWEB_WINDOW_DAYS)
 
     # Match raw_intel rows whose content contains any keyword (case-insens).
+    # Schema reality: ``source_type`` (enum) is the source kind, and the
+    # row's collection time is captured by the TimestampMixin's
+    # ``created_at`` — earlier drafts of this engine referenced
+    # ``source_kind`` / ``collected_at`` which never existed on the
+    # model and caused 500s on Compute Rating.
     keyword_filters = [
         RawIntel.content.ilike(f"%{kw}%") for kw in keywords[:32]
     ]
     rows = (
         await db.execute(
-            select(RawIntel.id, RawIntel.source_kind, RawIntel.content_hash)
+            select(RawIntel.id, RawIntel.source_type, RawIntel.content_hash)
             .where(
                 and_(
-                    RawIntel.collected_at >= cutoff,
+                    RawIntel.created_at >= cutoff,
                     or_(*keyword_filters),
                 )
             )
@@ -666,12 +672,12 @@ async def _dark_web_pillar(
     plain_mentions = 0
     ransomware_mentions = 0
     by_source: dict[str, int] = {}
-    for _id, source_kind, content_hash in rows:
+    for _id, source_type, content_hash in rows:
         if content_hash and content_hash in seen_hashes:
             continue
         if content_hash:
             seen_hashes.add(content_hash)
-        kind = source_kind or "unknown"
+        kind = source_type or "unknown"
         by_source[kind] = by_source.get(kind, 0) + 1
         if kind in ("ransomware_leak", "ransomware_victim", "leak_site"):
             ransomware_mentions += 1

@@ -12,7 +12,7 @@ from src.config.settings import settings
 from src.storage.database import init_db, close_db
 from src.core.rate_limit import close_redis_pool
 from src.api.routes import organizations, alerts, crawlers, scan, webhooks, reports, activity, auth, users, audit
-from src.api.routes import sources, retention, feedback, iocs, actors, stix, threat_map, feeds
+from src.api.routes import retention, feedback, iocs, actors, stix, threat_map, feeds, exposure, ingest
 from src.api.routes import investigations as investigations_routes
 from src.api.routes import brand_actions as brand_actions_routes
 from src.api.routes import case_copilot as case_copilot_routes
@@ -20,17 +20,21 @@ from src.api.routes import threat_hunts as threat_hunts_routes
 from src.api.routes import agent_admin as agent_admin_routes
 from src.api.routes import integrations as tools_routes
 from src.api.routes import assets, onboarding, evidence, cases, notifications, mitre, easm, ratings
+from src.api.routes import surface as surface_routes
 from src.api.routes import dmarc as dmarc_routes
 from src.api.routes import brand as brand_routes
 from src.api.routes import social as social_routes
 from src.api.routes import leakage as leakage_routes
 from src.api.routes import intel as intel_routes
 from src.api.routes import tprm as tprm_routes
+from src.api.routes import tprm_extras as tprm_extras_routes
 from src.api.routes import news as news_routes
 from src.api.routes import sla as sla_routes
 from src.api.routes import takedown as takedown_routes
 from src.api.routes import audit_export as audit_export_routes
 from src.api.routes import exec_report as exec_report_routes
+from src.api.routes import exec_briefing as exec_briefing_routes
+from src.api.routes import playbooks as playbook_routes
 from src.api.routes import admin_settings as admin_settings_routes
 from src.api.routes import compliance as compliance_routes
 from src.api.routes import taxii as taxii_routes
@@ -72,7 +76,42 @@ async def lifespan(app: FastAPI):
         _logger.info("Layers & integrations seeded.")
     except Exception as e:  # noqa: BLE001
         _logger.warning("Layer seeding failed (non-fatal): %s", e)
+
+    # Integration-keys cache — keep API-key lookups in sync with the
+    # ``app_settings`` table so operators can rotate keys from
+    # Settings → Integrations without restarting the API.
+    import asyncio as _asyncio
+    from src.core import integration_keys as _integration_keys
+    _integration_keys_stop = _asyncio.Event()
+    app.state.integration_keys_stop = _integration_keys_stop
+    app.state.integration_keys_task = _asyncio.create_task(
+        _integration_keys.refresh_loop(_integration_keys_stop),
+        name="integration-keys-refresh",
+    )
+
+    # CTI maintenance scheduler — periodic RSS sync, KEV refresh,
+    # vendor-advisory ingest (MSRC/GHSA/Red Hat), IOC decay, digest
+    # delivery rendering, MITRE actor re-import.
+    from src.core import cti_scheduler as _cti_sched
+    _cti_stop = _asyncio.Event()
+    app.state.cti_scheduler_stop = _cti_stop
+    app.state.cti_scheduler_task = _asyncio.create_task(
+        _cti_sched.run_loop(_cti_stop),
+        name="cti-scheduler",
+    )
+
     yield
+
+    try:
+        _integration_keys_stop.set()
+        await app.state.integration_keys_task
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        _cti_stop.set()
+        await app.state.cti_scheduler_task
+    except Exception:  # noqa: BLE001
+        pass
     try:
         await close_redis_pool()
     except Exception:
@@ -138,6 +177,19 @@ app = FastAPI(
     version=_app_version,
     lifespan=lifespan,
     openapi_tags=_OPENAPI_TAGS,
+    # Auto-redirecting ``/foo`` ↔ ``/foo/`` is dangerous behind a
+    # reverse proxy: FastAPI's redirect Location is the absolute
+    # backend URL it sees on the request, which on a docker /
+    # cloud-run / k8s deployment is the internal hostname rather
+    # than the public origin. The browser follows the redirect to
+    # that internal URL, which is cross-origin → ``SameSite=lax``
+    # cookies are stripped → the request lands as 401 even though
+    # the user is logged in. We've seen this on /api/v1/organizations
+    # via the Next.js dashboard proxy. Routes are declared with
+    # explicit trailing-slash forms; clients should hit them as
+    # declared. Disabling the auto-redirect makes mismatched paths
+    # 404 cleanly instead of silently breaking auth.
+    redirect_slashes=False,
 )
 
 
@@ -333,6 +385,160 @@ async def _request_size_guard(request, call_next):
     return await call_next(request)
 
 
+# --- Domain-verification gate middleware -------------------------------
+# An organisation's identity is anchored by its verified primary domain
+# (anyone can type a name; only the domain owner can publish a TXT
+# record). When ``ARGUS_REQUIRE_DOMAIN_VERIFICATION`` is on, any API
+# request scoped to an org with an *issued-but-unverified* primary
+# domain is rejected with 412 Precondition Failed. This closes the
+# bypass where a hostile API consumer would otherwise pull intel for an
+# org they don't own — the dashboard already blurs the same data.
+#
+# Exempt: auth, onboarding (the operator needs to *complete* the wizard
+# to verify), the verification endpoints themselves, the org-listing
+# endpoint, and the user/profile/settings surface.
+import re as _re
+import time as _time
+import uuid as _uuid_gate
+from src.core.domain_verification import is_domain_verified as _is_dv
+
+# Precompile path-extractor for /organizations/{uuid}/...
+_ORG_PATH_RE = _re.compile(
+    r"^/api/v1/organizations/([0-9a-fA-F-]{36})(?:/|$)"
+)
+
+# Exempt prefixes (full-path, after the /api/v1 prefix). Any request
+# whose path matches one of these is allowed through regardless of
+# scope state.
+_GATE_EXEMPT_PREFIXES = (
+    "/api/v1/auth",
+    "/api/v1/onboarding",
+    "/api/v1/users",
+    "/api/v1/audit",
+    "/api/v1/health",
+    "/health",
+    "/metrics",
+    "/.well-known",
+    "/openapi.json",
+    "/docs",
+    "/redoc",
+)
+
+# Sub-resources of /organizations/{id}/... that must remain reachable
+# when the org is unverified — otherwise the operator cannot fix it.
+_GATE_EXEMPT_ORG_SUFFIXES = (
+    "/verification",
+    "/verification/request",
+    "/verification/check",
+    "/domains",
+)
+
+# Tiny TTL cache so we don't fetch the org settings on every request.
+# 30s strikes a balance: verification flips happen on operator-driven
+# clicks (Verify now), so a 30s lag before the gate clears is fine.
+_GATE_CACHE: dict[str, tuple[float, bool]] = {}
+_GATE_CACHE_TTL_SECONDS = 30.0
+
+
+def _extract_scoped_org_id(request) -> str | None:
+    """Pull an org id from the request — query param first, then path."""
+    qp = request.query_params.get("organization_id")
+    if qp:
+        return qp
+    m = _ORG_PATH_RE.match(request.url.path)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _gate_path_exempt(path: str) -> bool:
+    if any(path.startswith(p) for p in _GATE_EXEMPT_PREFIXES):
+        return True
+    m = _ORG_PATH_RE.match(path)
+    if m:
+        # /api/v1/organizations/<uuid>/... — strip the prefix and
+        # check sub-resource against the exempt list.
+        suffix = path[m.end() - 1:]  # keeps the leading slash
+        for ex in _GATE_EXEMPT_ORG_SUFFIXES:
+            if suffix == ex or suffix.startswith(ex + "/") or suffix.startswith(ex + "?"):
+                return True
+        # /api/v1/organizations/<uuid> exact (basic info) — also
+        # exempt; the dashboard needs to render the verify-your-domain
+        # banner and that requires reading the org's name.
+        if suffix in ("", "/"):
+            return True
+    return False
+
+
+async def _org_blocked_by_gate(org_id_str: str) -> bool:
+    """Return True if the org has issued a verification token whose
+    primary domain is not yet verified. Exempt: orgs with no
+    verification record (seed/legacy)."""
+    now = _time.monotonic()
+    cached = _GATE_CACHE.get(org_id_str)
+    if cached and now - cached[0] < _GATE_CACHE_TTL_SECONDS:
+        return cached[1]
+
+    try:
+        org_uuid = _uuid_gate.UUID(org_id_str)
+    except ValueError:
+        return False
+
+    from src.storage.database import async_session_factory
+    from src.models.threat import Organization
+
+    if async_session_factory is None:
+        return False
+    async with async_session_factory() as db:
+        org = await db.get(Organization, org_uuid)
+        if org is None:
+            blocked = False
+        else:
+            domains = list(org.domains or [])
+            settings = org.settings or {}
+            block = settings.get("domain_verification") or {}
+            # Seed/legacy orgs have no verification record at all.
+            # Don't gate them — they were created before the
+            # verification regime existed.
+            if not block:
+                blocked = False
+            elif not domains:
+                blocked = False
+            else:
+                primary = domains[0]
+                blocked = not _is_dv(settings, primary)
+    _GATE_CACHE[org_id_str] = (now, blocked)
+    return blocked
+
+
+@app.middleware("http")
+async def _domain_verification_gate(request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS":
+        return await call_next(request)
+    if _gate_path_exempt(path):
+        return await call_next(request)
+    org_id = _extract_scoped_org_id(request)
+    if not org_id:
+        return await call_next(request)
+    if await _org_blocked_by_gate(org_id):
+        from fastapi.responses import JSONResponse as _JR
+        return _JR(
+            status_code=412,
+            content={
+                "detail": (
+                    "Domain verification required: this organisation's "
+                    "primary domain has not been verified via DNS TXT. "
+                    "Complete verification in Settings → Domains before "
+                    "calling scope-sensitive endpoints."
+                ),
+                "code": "domain_verification_required",
+                "organization_id": org_id,
+            },
+        )
+    return await call_next(request)
+
+
 # --- Security headers (Audit A5) ---------------------------------------
 # Inject the standard hardening headers on every response. Defaults
 # match a strict configuration; CSP can be overridden per-deployment via
@@ -371,7 +577,6 @@ app.include_router(scan.router, prefix="/api/v1")
 app.include_router(webhooks.router, prefix="/api/v1")
 app.include_router(reports.router, prefix="/api/v1")
 app.include_router(activity.router, prefix="/api/v1")
-app.include_router(sources.router, prefix="/api/v1")
 app.include_router(retention.router, prefix="/api/v1")
 app.include_router(feedback.router, prefix="/api/v1")
 app.include_router(iocs.router, prefix="/api/v1")
@@ -379,6 +584,8 @@ app.include_router(actors.router, prefix="/api/v1")
 app.include_router(stix.router, prefix="/api/v1")
 app.include_router(threat_map.router, prefix="/api/v1")
 app.include_router(feeds.router, prefix="/api/v1")
+app.include_router(exposure.router, prefix="/api/v1")
+app.include_router(ingest.router, prefix="/api/v1")
 app.include_router(tools_routes.router, prefix="/api/v1")
 app.include_router(assets.router, prefix="/api/v1")
 app.include_router(onboarding.router, prefix="/api/v1")
@@ -391,6 +598,7 @@ from src.api.routes import oss_tools as oss_tools_routes
 app.include_router(oss_tools_routes.router, prefix="/api/v1")
 app.include_router(mitre.router, prefix="/api/v1")
 app.include_router(easm.router, prefix="/api/v1")
+app.include_router(surface_routes.router, prefix="/api/v1")
 app.include_router(ratings.router, prefix="/api/v1")
 app.include_router(dmarc_routes.router, prefix="/api/v1")
 app.include_router(brand_routes.router, prefix="/api/v1")
@@ -398,11 +606,14 @@ app.include_router(social_routes.router, prefix="/api/v1")
 app.include_router(leakage_routes.router, prefix="/api/v1")
 app.include_router(intel_routes.router, prefix="/api/v1")
 app.include_router(tprm_routes.router, prefix="/api/v1")
+app.include_router(tprm_extras_routes.router, prefix="/api/v1")
 app.include_router(news_routes.router, prefix="/api/v1")
 app.include_router(sla_routes.router, prefix="/api/v1")
 app.include_router(takedown_routes.router, prefix="/api/v1")
 app.include_router(audit_export_routes.router, prefix="/api/v1")
 app.include_router(exec_report_routes.router, prefix="/api/v1")
+app.include_router(exec_briefing_routes.router, prefix="/api/v1")
+app.include_router(playbook_routes.router, prefix="/api/v1")
 app.include_router(admin_settings_routes.router, prefix="/api/v1")
 app.include_router(investigations_routes.router, prefix="/api/v1")
 app.include_router(brand_actions_routes.router, prefix="/api/v1")

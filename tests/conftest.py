@@ -96,7 +96,13 @@ async def test_engine():
     # managed production deploy. If a model isn't in alembic, it isn't
     # in the test DB.
     cfg = Config(os.path.join(os.path.dirname(__file__), "..", "alembic.ini"))
-    cfg.set_main_option("sqlalchemy.url", db_url.replace("+asyncpg", ""))
+    # Pass the asyncpg URL form unchanged. ``alembic/env.py`` honours
+    # caller-provided URLs (see the placeholder check there) and uses
+    # ``async_engine_from_config`` which requires the +asyncpg dialect
+    # prefix. Stripping it caused the upgrade to silently target the
+    # dev database (``argus``) instead of the test database
+    # (``argus_test``) — new migrations then never applied to tests.
+    cfg.set_main_option("sqlalchemy.url", db_url)
     await asyncio.to_thread(command.upgrade, cfg, "head")
 
     yield engine

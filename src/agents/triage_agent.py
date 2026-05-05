@@ -24,6 +24,12 @@ from src.models.threat import Alert, ThreatCategory, ThreatSeverity
 from src.models.intel import TriageFeedback
 
 from src.core.activity import ActivityType, emit as activity_emit
+from src.intel.name_permutations import (
+    brand_permutations,
+    email_permutations,
+    split_name,
+    username_permutations,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +301,56 @@ class TriageAgent:
         source_name: str,
         org_profile: dict,
     ) -> str:
+        # Expand brand keywords + VIP identifiers using name_permutations
+        # so the LLM sees impersonation candidates (homoglyphs, leet,
+        # acronyms, common email patterns) without bloating org config.
+        # The expanded sets are passed as ADDITIONAL match surface — the
+        # LLM still applies judgment, we just remove the false-negative
+        # path where a typosquatted brand mention or permuted VIP email
+        # would otherwise be invisible.
+        org_name = org_profile.get("name") or ""
+        configured_keywords = list(org_profile.get("keywords") or [])
+        domains = list(org_profile.get("domains") or [])
+        vips = list(org_profile.get("vips") or [])
+
+        brand_variants: list[str] = []
+        seen_brand: set[str] = set()
+        for term in [org_name, *configured_keywords]:
+            for v in brand_permutations(term, max_variants=20):
+                key = v.lower()
+                if key in seen_brand:
+                    continue
+                seen_brand.add(key)
+                brand_variants.append(v)
+
+        vip_email_variants: list[str] = []
+        vip_username_variants: list[str] = []
+        for v in vips:
+            name = v.get("name") or ""
+            first, last = split_name(name)
+            # Literal entries always win — emails/usernames the operator
+            # explicitly added are ground truth. Permutations are extra.
+            for e in v.get("emails") or []:
+                if e and e not in vip_email_variants:
+                    vip_email_variants.append(e)
+            for u in v.get("usernames") or []:
+                if u and u not in vip_username_variants:
+                    vip_username_variants.append(u)
+            for e in email_permutations(first, last, domains, max_patterns=8):
+                if e not in vip_email_variants:
+                    vip_email_variants.append(e)
+            for u in username_permutations(first, last, max_patterns=6):
+                if u not in vip_username_variants:
+                    vip_username_variants.append(u)
+
+        # Cap displayed sets so the prompt doesn't balloon. The LLM
+        # gets a clear signal of "this is the surface" without becoming
+        # token-prohibitive — 40 brand variants + 30 VIP emails is
+        # enough headroom for a banking-grade enterprise.
+        brand_display = brand_variants[:40]
+        email_display = vip_email_variants[:30]
+        username_display = vip_username_variants[:20]
+
         return f"""## Intelligence Data
 Source Type: {source_type}
 Source: {source_name}
@@ -304,15 +360,22 @@ Content:
 ---
 
 ## Organization Profile
-Name: {org_profile.get('name', 'Unknown')}
-Domains: {', '.join(org_profile.get('domains', []))}
-Keywords: {', '.join(org_profile.get('keywords', []))}
-Industry: {org_profile.get('industry', 'Unknown')}
-Tech Stack: {json.dumps(org_profile.get('tech_stack', {}), indent=2)}
-VIP Names: {', '.join(v.get('name', '') for v in org_profile.get('vips', []))}
-VIP Emails: {', '.join(e for v in org_profile.get('vips', []) for e in v.get('emails', []))}
+Name: {org_name or 'Unknown'}
+Domains: {', '.join(domains)}
+Keywords (configured): {', '.join(configured_keywords)}
+Brand impersonation surface (homoglyph/leet/acronym variants — flag any mention):
+{', '.join(brand_display) if brand_display else '(none)'}
+Industry: {org_profile.get('industry') or 'Unknown'}
+Tech Stack: {json.dumps(org_profile.get('tech_stack') or {}, indent=2)}
+VIP Names: {', '.join(v.get('name', '') for v in vips)}
+VIP Email surface (configured + common enterprise patterns):
+{', '.join(email_display) if email_display else '(none)'}
+VIP Username surface:
+{', '.join(username_display) if username_display else '(none)'}
 
-Analyze whether this intelligence represents a threat to this organization."""
+Analyze whether this intelligence represents a threat to this organization.
+A match against any brand-impersonation variant or VIP email/username
+permutation should be treated as a probable threat, not a coincidence."""
 
     async def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
         """Dispatch to the configured LLM provider via ``src.llm.providers``.

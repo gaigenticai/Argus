@@ -302,6 +302,22 @@ async def scan_organization(
                 "auto_link_finding failed for suspect_domain %s", suspect.id
             )
 
+        # Subsidiary allowlist — auto-dismiss known-good domains BEFORE
+        # the agent gets queued. Saves an LLM call per legitimate
+        # subsidiary and prevents the dashboard from churning on
+        # noisy "obvious-yours" matches.
+        try:
+            from src.brand.allowlist import auto_dismiss_if_allowlisted
+
+            if await auto_dismiss_if_allowlisted(db, suspect=suspect):
+                # Allowlisted — skip the defender queue entirely.
+                continue
+        except Exception as _exc:  # noqa: BLE001
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "brand-allowlist check failed for %s: %s", suspect.id, _exc
+            )
+
         # Brand Defender agent — queue an agentic run for high-similarity
         # suspects so the dashboard surfaces a recommendation by the time
         # the analyst opens it. Best-effort: never block the scanner

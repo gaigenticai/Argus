@@ -208,6 +208,20 @@ class AuditAction(str, enum.Enum):
     FEED_SUBSCRIPTION_UPDATE = "feed_subscription_update"
     FEED_SUBSCRIPTION_DELETE = "feed_subscription_delete"
 
+    # Exec-briefing playbook execution layer (src.core.exec_playbooks).
+    # Each operator-initiated playbook run produces a chain of audit
+    # events: PREVIEW (read-only inspection) → EXECUTE (kicks off, may
+    # be pending_approval) → APPROVE/DENY (admin gates) → STEP_ADVANCE
+    # (multi-step playbooks) → CANCEL (operator abort). Compliance auditors
+    # can replay "who hit the One-Click Takedown button on Q2 2026 and
+    # who approved it?" from this trail alone.
+    PLAYBOOK_PREVIEW = "playbook_preview"
+    PLAYBOOK_EXECUTE = "playbook_execute"
+    PLAYBOOK_APPROVE = "playbook_approve"
+    PLAYBOOK_DENY = "playbook_deny"
+    PLAYBOOK_STEP_ADVANCE = "playbook_step_advance"
+    PLAYBOOK_CANCEL = "playbook_cancel"
+
 
 class AuditLog(Base, UUIDMixin):
     __tablename__ = "audit_logs"

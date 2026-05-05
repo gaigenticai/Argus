@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   Activity,
   AlertTriangle,
@@ -8,21 +9,35 @@ import {
   ArrowUp,
   Briefcase,
   Building2,
+  CheckCircle,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
+  CircleSlash,
   Download,
   GanttChart,
   Globe2,
+  Loader2,
+  Minus,
   RefreshCw,
   ShieldAlert,
   ShieldCheck,
   Smartphone,
+  Sparkles,
+  TrendingDown,
+  TrendingUp,
   UserX,
+  Zap,
 } from "lucide-react";
 import {
   api,
   type BrandOverviewResponse,
   type CaseCounts,
+  type ExecBriefingResponse,
+  type ExecChangesResponse,
+  type ExecComplianceResponse,
+  type ExecSuggestedActionsResponse,
+  type ExecTopRisksResponse,
   type Org,
   type SecurityRatingDetail,
   type SecurityRatingResponse,
@@ -30,6 +45,8 @@ import {
   type TprmScorecardResponse,
 } from "@/lib/api";
 import { useToast } from "@/components/shared/toast";
+import { useAuth } from "@/components/auth/auth-provider";
+import { ActionDrawer } from "@/components/exec-summary/action-drawer";
 import {
   OrgSwitcher,
   PageHeader,
@@ -72,6 +89,10 @@ export default function ExecSummaryPage() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
+  // Last PDF-export failure surfaces inline (next to Download PDF) so a
+  // board-page operator can see why their export failed instead of
+  // chasing a toast that vanishes in 5 seconds. Cleared on next try.
+  const [pdfError, setPdfError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -103,58 +124,113 @@ export default function ExecSummaryPage() {
     localStorage.setItem("argus_org_id", id);
   }, []);
 
-  const load = useCallback(async () => {
-    if (!orgId) return;
-    setLoading(true);
-    try {
-      const [cases, brand, rating, breaches, scorecards] = await Promise.all([
-        api.cases.count(orgId),
-        api.brand.overview(orgId),
-        api.ratings.current(orgId).catch(() => null),
-        api.sla
-          .listBreaches({ organization_id: orgId, limit: 200 })
-          .then((r) => ({ breaches: r, total: r.length }))
-          .catch(() => ({ breaches: [], total: 0 })),
-        api.tprm
-          .listScorecards({
-            organization_id: orgId,
-            is_current: true,
-            limit: 100,
-          })
-          .then((r) => r.data)
-          .catch(() => []),
-      ]);
-      setData({ cases, brand, rating, sla: breaches, scorecards });
-    } catch (e) {
-      toast(
-        "error",
-        e instanceof Error ? e.message : "Failed to load executive summary",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [orgId, toast]);
-
+  // Single fetch driven only by ``orgId``. Earlier shape used a
+  // ``useCallback load`` triggered from a ``useEffect`` keyed on the
+  // callback's identity — that fired three times per page load
+  // because the callback identity flipped on every state change
+  // (especially the ``toast`` ref from useToast). Inlining the fetch
+  // and pinning the dep to ``orgId`` collapses to one network hit per
+  // org switch, which is what the operator expects from a board page.
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!orgId) return;
+    let alive = true;
+    setLoading(true);
+    (async () => {
+      try {
+        const [cases, brand, rating, breaches, scorecards] = await Promise.all([
+          api.cases.count(orgId),
+          api.brand.overview(orgId),
+          api.ratings.current(orgId).catch(() => null),
+          api.sla
+            .listBreaches({ organization_id: orgId, limit: 200 })
+            .then((r) => ({ breaches: r, total: r.length }))
+            .catch(() => ({ breaches: [], total: 0 })),
+          api.tprm
+            .listScorecards({
+              organization_id: orgId,
+              is_current: true,
+              limit: 100,
+            })
+            .then((r) => r.data)
+            .catch(() => []),
+        ]);
+        if (!alive) return;
+        setData({ cases, brand, rating, sla: breaches, scorecards });
+      } catch (e) {
+        if (!alive) return;
+        toast(
+          "error",
+          e instanceof Error ? e.message : "Failed to load executive summary",
+        );
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId]);
+
+  const reload = useCallback(() => {
+    // ``Refresh`` button — flip orgId to itself via a tiny shim. We
+    // can't just call the inline effect; instead we trigger a state
+    // change that the effect already keys off. Stable + lint-clean.
+    setOrgIdState((id) => id);
+    setData(null);
+    setLoading(true);
+    if (!orgId) return;
+    void (async () => {
+      try {
+        const [cases, brand, rating, breaches, scorecards] = await Promise.all([
+          api.cases.count(orgId),
+          api.brand.overview(orgId),
+          api.ratings.current(orgId).catch(() => null),
+          api.sla
+            .listBreaches({ organization_id: orgId, limit: 200 })
+            .then((r) => ({ breaches: r, total: r.length }))
+            .catch(() => ({ breaches: [], total: 0 })),
+          api.tprm
+            .listScorecards({
+              organization_id: orgId,
+              is_current: true,
+              limit: 100,
+            })
+            .then((r) => r.data)
+            .catch(() => []),
+        ]);
+        setData({ cases, brand, rating, sla: breaches, scorecards });
+      } catch (e) {
+        toast(
+          "error",
+          e instanceof Error ? e.message : "Failed to load executive summary",
+        );
+      } finally {
+        setLoading(false);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId]);
 
   const downloadPdf = async () => {
     if (!orgId) return;
     setDownloading(true);
+    setPdfError(null);
     try {
       const blob = await api.exec.downloadPdf({ organization_id: orgId, days });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `argus-exec-summary-${days}d.pdf`;
+      a.download = `marsad-exec-summary-${days}d.pdf`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
       toast("success", "PDF downloaded");
     } catch (e) {
-      toast("error", e instanceof Error ? e.message : "PDF download failed");
+      const msg = e instanceof Error ? e.message : "PDF download failed";
+      setPdfError(msg);
+      toast("error", msg);
     } finally {
       setDownloading(false);
     }
@@ -178,7 +254,7 @@ export default function ExecSummaryPage() {
               }))}
               onChange={(v) => setDays(Number(v))}
             />
-            <RefreshButton onClick={load} refreshing={loading} />
+            <RefreshButton onClick={reload} refreshing={loading} />
             <button
               onClick={downloadPdf}
               disabled={downloading || !orgId}
@@ -191,6 +267,47 @@ export default function ExecSummaryPage() {
           </>
         }
       />
+
+      {pdfError && (
+        <div
+          className="px-3 py-2 flex items-start gap-2 text-[12px]"
+          style={{
+            background: "rgba(255,86,48,0.06)",
+            border: "1px solid rgba(255,86,48,0.3)",
+            borderRadius: 5,
+            color: "var(--color-error-dark)",
+          }}
+        >
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <div className="flex-1">
+            <div className="font-semibold">PDF export failed</div>
+            <div style={{ color: "var(--color-body)", marginTop: 2 }}>
+              {pdfError}
+            </div>
+            <div className="mt-1 text-[11px]" style={{ color: "var(--color-muted)" }}>
+              Check that the LLM provider is configured under Settings → Services
+              and that the selected window has at least one case or finding.
+              Retry from <strong>Download PDF</strong> after fixing.
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => setPdfError(null)}
+            aria-label="Dismiss"
+            className="text-[18px] leading-none"
+            style={{
+              background: "transparent",
+              border: "none",
+              color: "var(--color-muted)",
+              cursor: "pointer",
+              padding: 0,
+              marginLeft: 8,
+            }}
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {loading || !data ? (
         <DashboardSkeleton />
@@ -238,6 +355,22 @@ function Dashboard({ data, orgId, onRatingRecomputed }: { data: DashboardData; o
 
   return (
     <>
+      {/* AI Executive Briefing — the CIO-facing centerpiece. Loads
+          asynchronously so the rest of the page renders immediately. */}
+      <CioBriefing orgId={orgId} />
+
+      {/* Top Risks + Suggested Actions side-by-side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <TopRisksPanel orgId={orgId} />
+        <SuggestedActionsPanel orgId={orgId} />
+      </div>
+
+      {/* 7-day delta strip */}
+      <ChangesStrip orgId={orgId} />
+
+      {/* Compliance posture mini-grid */}
+      <CompliancePosture orgId={orgId} />
+
       {/* Headline strip */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
         <KpiCard
@@ -247,10 +380,11 @@ function Dashboard({ data, orgId, onRatingRecomputed }: { data: DashboardData; o
           delta={null}
           sub={`${data.cases.overdue} overdue`}
           tone={data.cases.overdue > 0 ? "warning" : "neutral"}
+          href="/cases"
         />
         <KpiCard
           icon={ShieldAlert}
-          label="Active exposures"
+          label="Active cases"
           value={
             (data.cases.by_severity?.critical ?? 0) +
             (data.cases.by_severity?.high ?? 0) +
@@ -258,8 +392,9 @@ function Dashboard({ data, orgId, onRatingRecomputed }: { data: DashboardData; o
           }
           sub={`${data.cases.by_severity?.critical ?? 0} crit · ${
             data.cases.by_severity?.high ?? 0
-          } high`}
+          } high · ${data.cases.by_severity?.medium ?? 0} med`}
           tone={(data.cases.by_severity?.critical ?? 0) > 0 ? "error" : "neutral"}
+          href="/cases"
         />
         <KpiCard
           icon={Globe2}
@@ -267,6 +402,7 @@ function Dashboard({ data, orgId, onRatingRecomputed }: { data: DashboardData; o
           value={totalSuspects}
           sub="open + investigation"
           tone="neutral"
+          href="/brand"
         />
         <KpiCard
           icon={UserX}
@@ -274,6 +410,7 @@ function Dashboard({ data, orgId, onRatingRecomputed }: { data: DashboardData; o
           value={totalImpersonations}
           sub="across 11 platforms"
           tone="neutral"
+          href="/brand#impersonations"
         />
         <KpiCard
           icon={Smartphone}
@@ -281,6 +418,7 @@ function Dashboard({ data, orgId, onRatingRecomputed }: { data: DashboardData; o
           value={totalMobileApps}
           sub="Google Play + iOS"
           tone="neutral"
+          href="/brand#mobile-apps"
         />
         <KpiCard
           icon={AlertTriangle}
@@ -288,6 +426,7 @@ function Dashboard({ data, orgId, onRatingRecomputed }: { data: DashboardData; o
           value={totalFraud}
           sub="crypto / scam / shill"
           tone={totalFraud > 0 ? "warning" : "neutral"}
+          href="/brand#fraud"
         />
       </div>
 
@@ -374,6 +513,598 @@ function Dashboard({ data, orgId, onRatingRecomputed }: { data: DashboardData; o
   );
 }
 
+// ────────────────────────────────────────────────────────────────────
+// CIO Briefing — LLM-generated headline + narrative + 3 actions.
+// Backed by POST /api/v1/exec/briefing. Cached 1h server-side; the
+// "Regenerate" button forces a fresh LLM call.
+// ────────────────────────────────────────────────────────────────────
+
+function CioBriefing({ orgId }: { orgId: string }) {
+  const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const [data, setData] = useState<ExecBriefingResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [openAction, setOpenAction] = useState<{
+    playbookId: string;
+    actionIndex: number;
+    params: Record<string, unknown>;
+  } | null>(null);
+
+  const load = useCallback(async (force: boolean) => {
+    if (!orgId) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await api.exec.briefing({
+        organization_id: orgId,
+        force_refresh: force,
+      });
+      setData(r);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Briefing generation failed";
+      setError(msg);
+      if (force) toast("error", msg);
+    } finally {
+      setLoading(false);
+    }
+  }, [orgId, toast]);
+
+  useEffect(() => {
+    if (orgId) void load(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId]);
+
+  const postureMeta = (() => {
+    const p = data?.posture_change;
+    if (p === "improving") return { label: "Posture improving", color: "var(--color-success-dark)", bg: "rgba(34,197,94,0.1)", Icon: TrendingUp };
+    if (p === "deteriorating") return { label: "Posture deteriorating", color: "#B71D18", bg: "rgba(255,86,48,0.1)", Icon: TrendingDown };
+    return { label: "Posture stable", color: "var(--color-muted)", bg: "var(--color-surface-muted)", Icon: Minus };
+  })();
+  const PostureIcon = postureMeta.Icon;
+
+  return (
+    <Section>
+      <div
+        className="px-5 py-4 flex items-start justify-between gap-3"
+        style={{ borderBottom: "1px solid var(--color-border)" }}
+      >
+        <div className="flex items-center gap-2">
+          <Sparkles className="w-4 h-4" style={{ color: "var(--color-accent)" }} />
+          <h3 className="text-[13px] font-bold" style={{ color: "var(--color-ink)" }}>
+            AI Executive Briefing
+          </h3>
+          {data && (
+            <span
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.6px]"
+              style={{ background: postureMeta.bg, color: postureMeta.color, borderRadius: 3 }}
+            >
+              <PostureIcon className="w-2.5 h-2.5" />
+              {postureMeta.label}
+            </span>
+          )}
+          {data && (
+            <span className="text-[11px]" style={{ color: "var(--color-muted)" }}>
+              confidence {Math.round((data.confidence ?? 0) * 100)}%
+              {data.cached && " · cached"}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => void load(true)}
+          disabled={loading || !orgId}
+          className="inline-flex items-center gap-1.5 h-7 px-3 text-[11.5px] font-semibold disabled:opacity-50"
+          style={{
+            borderRadius: 4,
+            border: "1px solid var(--color-border)",
+            background: "var(--color-canvas)",
+            color: "var(--color-body)",
+            cursor: "pointer",
+          }}
+          title="Regenerate from current data — bypasses 1h cache"
+        >
+          {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+          Regenerate
+        </button>
+      </div>
+
+      <div className="p-5">
+        {loading && !data && (
+          <div className="flex items-center gap-2 text-[12.5px]" style={{ color: "var(--color-muted)" }}>
+            <Loader2 className="w-4 h-4 animate-spin" />
+            Drafting briefing…
+          </div>
+        )}
+        {error && !loading && (
+          <div className="text-[12.5px]" style={{ color: "var(--color-error-dark)" }}>
+            <AlertTriangle className="inline w-3.5 h-3.5 mr-1" />
+            {error}
+            <button
+              onClick={() => void load(true)}
+              className="ml-2 underline"
+              style={{ background: "transparent", border: "none", color: "var(--color-accent)", cursor: "pointer" }}
+            >
+              retry
+            </button>
+          </div>
+        )}
+        {data && (
+          <div className="space-y-3">
+            <h2
+              className="text-[18px] font-semibold leading-snug tracking-[-0.01em]"
+              style={{ color: "var(--color-ink)" }}
+            >
+              {data.headline}
+            </h2>
+            <div
+              className="text-[13px] leading-relaxed whitespace-pre-line"
+              style={{ color: "var(--color-body)" }}
+            >
+              {data.narrative}
+            </div>
+            {data.top_actions && data.top_actions.length > 0 && (
+              <div className="space-y-1.5 pt-2">
+                <div
+                  className="text-[10.5px] font-bold uppercase tracking-[0.7px]"
+                  style={{ color: "var(--color-muted)" }}
+                >
+                  Recommended actions
+                </div>
+                {data.top_actions.map((a, i) => (
+                  <div
+                    key={i}
+                    className="flex items-start gap-3 p-2.5"
+                    style={{
+                      background: "var(--color-surface)",
+                      border: "1px solid var(--color-border)",
+                      borderRadius: 4,
+                    }}
+                  >
+                    <span
+                      className="inline-flex items-center justify-center w-5 h-5 text-[11px] font-bold shrink-0"
+                      style={{
+                        background: "var(--color-accent)",
+                        color: "var(--color-on-dark)",
+                        borderRadius: 3,
+                      }}
+                    >
+                      {i + 1}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-[12.5px] font-semibold" style={{ color: "var(--color-ink)" }}>
+                        {a.title}
+                      </div>
+                      <div className="text-[11.5px] mt-0.5" style={{ color: "var(--color-muted)" }}>
+                        {a.rationale}
+                      </div>
+                    </div>
+                    {a.playbook_id && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setOpenAction({
+                            playbookId: a.playbook_id,
+                            actionIndex: i,
+                            params: (a.params as Record<string, unknown>) || {},
+                          })
+                        }
+                        className="inline-flex items-center text-[11.5px] font-semibold whitespace-nowrap"
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: "var(--color-accent)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Open →
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="text-[10.5px] pt-1" style={{ color: "var(--color-muted)" }}>
+              Generated {new Date(data.generated_at).toLocaleString()}
+              {data.rubric_grade && ` · grade ${data.rubric_grade} (${Math.round(data.rubric_score ?? 0)}/100)`}
+            </div>
+          </div>
+        )}
+      </div>
+      {openAction && (
+        <ActionDrawer
+          playbookId={openAction.playbookId}
+          orgId={orgId}
+          briefingActionIndex={openAction.actionIndex}
+          briefingParams={openAction.params}
+          isAdmin={isAdmin}
+          onClose={() => setOpenAction(null)}
+          onStateChanged={() => {
+            // Briefing references the snapshot fields; if a playbook
+            // changed those (e.g. queued takedowns), the next briefing
+            // fetch will reflect new numbers. Silent re-fetch.
+            void load(false);
+          }}
+        />
+      )}
+    </Section>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Top Risks panel — ranked list scored by severity × age × confirmation.
+// ────────────────────────────────────────────────────────────────────
+
+function TopRisksPanel({ orgId }: { orgId: string }) {
+  const [data, setData] = useState<ExecTopRisksResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!orgId) return;
+    let alive = true;
+    setLoading(true);
+    api.exec.topRisks({ organization_id: orgId, limit: 10 })
+      .then((r) => { if (alive) setData(r); })
+      .catch(() => { if (alive) setData({ items: [], generated_at: "" }); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [orgId]);
+
+  return (
+    <Section>
+      <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid var(--color-border)" }}>
+        <div className="flex items-center gap-2">
+          <ShieldAlert className="w-4 h-4" style={{ color: "var(--color-accent)" }} />
+          <h3 className="text-[13px] font-bold" style={{ color: "var(--color-ink)" }}>
+            Top risks
+          </h3>
+        </div>
+        <span className="text-[11px]" style={{ color: "var(--color-muted)" }}>
+          severity × age × confirmation
+        </span>
+      </div>
+      <div className="p-4 space-y-1.5">
+        {loading && (
+          <div className="flex items-center gap-2 text-[12px]" style={{ color: "var(--color-muted)" }}>
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Ranking…
+          </div>
+        )}
+        {!loading && (!data || data.items.length === 0) && (
+          <div className="text-[12.5px]" style={{ color: "var(--color-muted)" }}>
+            No active risks detected. The triage agent will surface new ones here as they emerge.
+          </div>
+        )}
+        {!loading && data && data.items.map((r) => (
+          <Link
+            key={r.id}
+            href={r.link}
+            className="flex items-center gap-3 px-2.5 py-2"
+            style={{
+              background: "var(--color-canvas)",
+              border: "1px solid var(--color-border)",
+              borderRadius: 4,
+              textDecoration: "none",
+            }}
+          >
+            <div
+              className="font-mono tabular-nums text-[13px] font-bold w-12 text-right"
+              style={{ color: severityColor(r.severity) }}
+            >
+              {r.score.toFixed(0)}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[12.5px] font-semibold truncate" style={{ color: "var(--color-ink)" }}>
+                {r.title}
+              </div>
+              <div className="text-[11px] truncate" style={{ color: "var(--color-muted)" }}>
+                <span className="uppercase tracking-[0.5px] font-bold">{r.kind.replace("_", " ")}</span>
+                {r.severity && <> · {r.severity}</>}
+                {r.age_days > 0 && <> · {r.age_days}d old</>}
+                {r.evidence && <> · {r.evidence}</>}
+              </div>
+            </div>
+          </Link>
+        ))}
+      </div>
+    </Section>
+  );
+}
+
+function severityColor(sev: string | null | undefined): string {
+  switch ((sev || "").toLowerCase()) {
+    case "critical": return "#B71D18";
+    case "high": return "var(--color-accent)";
+    case "medium": return "#B76E00";
+    case "low": return "var(--color-muted)";
+    default: return "var(--color-body)";
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Suggested actions — operator nudges from intel_setup gaps.
+// ────────────────────────────────────────────────────────────────────
+
+function SuggestedActionsPanel({ orgId }: { orgId: string }) {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const [data, setData] = useState<ExecSuggestedActionsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [refreshTick, setRefreshTick] = useState(0);
+  // Action drawer state — shared with the AI Briefing pattern. When a
+  // suggested action carries a playbook_id we open the in-page drawer
+  // instead of navigating to a generic /admin or /crawlers page.
+  const [drawerAction, setDrawerAction] = useState<
+    { playbookId: string; params: Record<string, unknown> } | null
+  >(null);
+
+  useEffect(() => {
+    if (!orgId) return;
+    let alive = true;
+    setLoading(true);
+    api.exec.suggestedActions({ organization_id: orgId })
+      .then((r) => { if (alive) setData(r); })
+      .catch(() => { if (alive) setData({ actions: [], generated_at: "" }); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, [orgId, refreshTick]);
+
+  return (
+    <Section>
+      <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: "1px solid var(--color-border)" }}>
+        <div className="flex items-center gap-2">
+          <Zap className="w-4 h-4" style={{ color: "var(--color-accent)" }} />
+          <h3 className="text-[13px] font-bold" style={{ color: "var(--color-ink)" }}>
+            Suggested actions
+          </h3>
+        </div>
+        <span className="text-[11px]" style={{ color: "var(--color-muted)" }}>
+          operator nudges
+        </span>
+      </div>
+      <div className="p-4 space-y-1.5">
+        {loading && (
+          <div className="flex items-center gap-2 text-[12px]" style={{ color: "var(--color-muted)" }}>
+            <Loader2 className="w-3.5 h-3.5 animate-spin" /> Computing…
+          </div>
+        )}
+        {!loading && (!data || data.actions.length === 0) && (
+          <div className="flex items-center gap-2 text-[12.5px]" style={{ color: "var(--color-success-dark)" }}>
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            All scaffolding tasks complete. No nudges right now.
+          </div>
+        )}
+        {!loading && data && data.actions.map((a, i) => {
+          const pri = a.priority;
+          const priColor = pri === "high" ? "#B71D18" : pri === "medium" ? "var(--color-accent)" : "var(--color-muted)";
+          const priBg = pri === "high" ? "rgba(255,86,48,0.1)" : pri === "medium" ? "rgba(255,79,0,0.08)" : "var(--color-surface-muted)";
+          return (
+            <div
+              key={i}
+              className="px-2.5 py-2"
+              style={{
+                background: "var(--color-canvas)",
+                border: "1px solid var(--color-border)",
+                borderRadius: 4,
+              }}
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span
+                  className="text-[10px] font-bold uppercase tracking-[0.6px] px-1.5 py-0.5"
+                  style={{ background: priBg, color: priColor, borderRadius: 3 }}
+                >
+                  {pri}
+                </span>
+                <span className="text-[12.5px] font-semibold flex-1" style={{ color: "var(--color-ink)" }}>
+                  {a.title}
+                </span>
+                {a.playbook_id ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setDrawerAction({
+                        playbookId: a.playbook_id!,
+                        params: (a.params as Record<string, unknown>) || {},
+                      })
+                    }
+                    className="text-[11.5px] font-semibold whitespace-nowrap"
+                    style={{
+                      background: "transparent",
+                      border: "none",
+                      color: "var(--color-accent)",
+                      cursor: "pointer",
+                    }}
+                  >
+                    Open →
+                  </button>
+                ) : a.link ? (
+                  <Link
+                    href={a.link}
+                    className="text-[11.5px] font-semibold whitespace-nowrap"
+                    style={{ color: "var(--color-accent)" }}
+                  >
+                    Open →
+                  </Link>
+                ) : null}
+              </div>
+              <div className="text-[11.5px]" style={{ color: "var(--color-muted)" }}>
+                {a.detail}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {drawerAction && (
+        <ActionDrawer
+          playbookId={drawerAction.playbookId}
+          orgId={orgId}
+          briefingParams={drawerAction.params}
+          isAdmin={isAdmin}
+          onClose={() => setDrawerAction(null)}
+          onStateChanged={() => {
+            // After a playbook completes, the gap that triggered the
+            // suggestion is closed — re-fetch so the suggestion drops
+            // off without a hard refresh.
+            setRefreshTick((n) => n + 1);
+          }}
+        />
+      )}
+    </Section>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// 7-day delta strip.
+// ────────────────────────────────────────────────────────────────────
+
+function ChangesStrip({ orgId }: { orgId: string }) {
+  const [data, setData] = useState<ExecChangesResponse | null>(null);
+
+  useEffect(() => {
+    if (!orgId) return;
+    let alive = true;
+    api.exec.changes({ organization_id: orgId, window_days: 7 })
+      .then((r) => { if (alive) setData(r); })
+      .catch(() => { if (alive) setData(null); });
+    return () => { alive = false; };
+  }, [orgId]);
+
+  if (!data || data.metrics.length === 0) return null;
+  return (
+    <Section>
+      <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: "1px solid var(--color-border)" }}>
+        <Activity className="w-4 h-4" style={{ color: "var(--color-muted)" }} />
+        <h3 className="text-[13px] font-bold" style={{ color: "var(--color-ink)" }}>
+          What changed in the last {data.window_days} days
+        </h3>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3 p-4">
+        {data.metrics.map((m, i) => {
+          const isUp = m.direction === "up";
+          const isDown = m.direction === "down";
+          const goodColor = "var(--color-success-dark)";
+          const badColor = "#B71D18";
+          const arrowColor =
+            m.interpretation === "good" ? goodColor :
+            m.interpretation === "bad" ? badColor :
+            "var(--color-muted)";
+          const Icon = isUp ? ArrowUp : isDown ? ArrowDown : Minus;
+          return (
+            <div
+              key={i}
+              className="p-3"
+              style={{
+                background: "var(--color-canvas)",
+                border: "1px solid var(--color-border)",
+                borderRadius: 4,
+              }}
+            >
+              <div className="text-[10.5px] font-bold uppercase tracking-[0.6px]" style={{ color: "var(--color-muted)" }}>
+                {m.label}
+              </div>
+              <div className="flex items-baseline gap-2 mt-1">
+                <span
+                  className="font-mono tabular-nums text-[20px] font-bold"
+                  style={{ color: arrowColor }}
+                >
+                  <Icon className="inline w-4 h-4" />
+                  {Math.abs(m.delta).toLocaleString()}
+                </span>
+                <span className="text-[11px]" style={{ color: "var(--color-muted)" }}>
+                  now {m.current.toLocaleString()}
+                </span>
+              </div>
+              {m.note && (
+                <div className="text-[11px] mt-1" style={{ color: "var(--color-muted)" }}>
+                  {m.note}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Section>
+  );
+}
+
+// ────────────────────────────────────────────────────────────────────
+// Compliance posture mini-grid.
+// ────────────────────────────────────────────────────────────────────
+
+function CompliancePosture({ orgId }: { orgId: string }) {
+  const [data, setData] = useState<ExecComplianceResponse | null>(null);
+
+  useEffect(() => {
+    if (!orgId) return;
+    let alive = true;
+    api.exec.compliance({ organization_id: orgId })
+      .then((r) => { if (alive) setData(r); })
+      .catch(() => { if (alive) setData(null); });
+    return () => { alive = false; };
+  }, [orgId]);
+
+  if (!data) return null;
+  return (
+    <Section>
+      <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: "1px solid var(--color-border)" }}>
+        <ShieldCheck className="w-4 h-4" style={{ color: "var(--color-muted)" }} />
+        <h3 className="text-[13px] font-bold" style={{ color: "var(--color-ink)" }}>
+          Compliance posture
+        </h3>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 p-4">
+        {data.metrics.map((m) => {
+          const meta = (() => {
+            switch (m.status) {
+              case "ok": return { color: "var(--color-success-dark)", bg: "rgba(34,197,94,0.08)", border: "rgba(34,197,94,0.3)", Icon: CheckCircle };
+              case "warn": return { color: "#B76E00", bg: "rgba(255,171,0,0.08)", border: "rgba(255,171,0,0.3)", Icon: AlertTriangle };
+              case "fail": return { color: "#B71D18", bg: "rgba(255,86,48,0.06)", border: "rgba(255,86,48,0.3)", Icon: AlertTriangle };
+              default: return { color: "var(--color-muted)", bg: "var(--color-surface-muted)", border: "var(--color-border)", Icon: CircleSlash };
+            }
+          })();
+          const StatusIcon = meta.Icon;
+          const formatted = (() => {
+            const v = m.value;
+            if (typeof v === "number") {
+              // Heuristic: 0–1 floats are pass-rates → render as percent.
+              if (v > 0 && v <= 1) return `${(v * 100).toFixed(1)}%`;
+              return v.toLocaleString();
+            }
+            return String(v);
+          })();
+          return (
+            <div
+              key={m.key}
+              className="p-3"
+              style={{
+                background: meta.bg,
+                border: `1px solid ${meta.border}`,
+                borderRadius: 4,
+              }}
+              title={m.note ?? ""}
+            >
+              <div className="flex items-center gap-1.5">
+                <StatusIcon className="w-3 h-3" style={{ color: meta.color }} />
+                <span className="text-[10.5px] font-bold uppercase tracking-[0.6px]" style={{ color: meta.color }}>
+                  {m.label}
+                </span>
+              </div>
+              <div className="font-mono tabular-nums text-[18px] font-bold mt-1" style={{ color: meta.color }}>
+                {formatted}
+              </div>
+              {m.note && (
+                <div className="text-[10.5px] mt-1 truncate" style={{ color: "var(--color-muted)" }}>
+                  {m.note}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </Section>
+  );
+}
+
+
 function KpiCard({
   icon: Icon,
   label,
@@ -381,6 +1112,7 @@ function KpiCard({
   delta,
   sub,
   tone = "neutral",
+  href,
 }: {
   icon: React.ElementType;
   label: string;
@@ -388,10 +1120,13 @@ function KpiCard({
   delta?: number | null;
   sub?: string;
   tone?: "neutral" | "warning" | "error";
+  // Each KPI tile links into the page that owns that signal — operators
+  // expect to be able to click into a number to see the underlying rows.
+  href?: string;
 }) {
   const valueColor = tone === "error" ? "#FF5630" : tone === "warning" ? "#B76E00" : "var(--color-ink)";
-  return (
-    <div className="p-4" style={{ borderRadius: "5px", border: "1px solid var(--color-border)", background: "var(--color-canvas)" }}>
+  const inner = (
+    <>
       <div className="flex items-center justify-between" style={{ color: "var(--color-muted)" }}>
         <div className="flex items-center gap-1.5 text-[10.5px] font-bold uppercase tracking-[0.12em]">
           <Icon className="w-3.5 h-3.5" />
@@ -416,6 +1151,38 @@ function KpiCard({
       {sub ? (
         <div className="text-[11px] mt-1.5" style={{ color: "var(--color-muted)" }}>{sub}</div>
       ) : null}
+    </>
+  );
+
+  const tileStyle: React.CSSProperties = {
+    borderRadius: "5px",
+    border: "1px solid var(--color-border)",
+    background: "var(--color-canvas)",
+    transition: "border-color 120ms, background 120ms",
+  };
+
+  if (href) {
+    return (
+      <Link
+        href={href}
+        className="p-4 block"
+        style={tileStyle}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.borderColor = "var(--color-accent)";
+          e.currentTarget.style.background = "var(--color-surface)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.borderColor = "var(--color-border)";
+          e.currentTarget.style.background = "var(--color-canvas)";
+        }}
+      >
+        {inner}
+      </Link>
+    );
+  }
+  return (
+    <div className="p-4" style={tileStyle}>
+      {inner}
     </div>
   );
 }

@@ -62,7 +62,14 @@ _logger = logging.getLogger(__name__)
 PHISHTANK_DEFAULT_URL = (
     "http://data.phishtank.com/data/online-valid.json"
 )
-OPENPHISH_DEFAULT_URL = "https://openphish.com/feed.txt"
+# OpenPhish moved their canonical free feed in 2025 from
+# ``openphish.com/feed.txt`` (now a 302 redirect) to a static raw file
+# on GitHub. We point at the GitHub source directly so we don't rely
+# on the redirect surviving — no extra network hop, no silent failure
+# if they retire the redirect.
+OPENPHISH_DEFAULT_URL = (
+    "https://raw.githubusercontent.com/openphish/public_feed/refs/heads/main/feed.txt"
+)
 URLHAUS_DEFAULT_URL = "https://urlhaus.abuse.ch/downloads/csv_recent/"
 
 # Apple/Google/MS hosts that show up in feeds when an attacker hosts

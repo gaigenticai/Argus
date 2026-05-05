@@ -32,7 +32,7 @@ class TorForumCrawler(BaseCrawler):
     custom forum software commonly found on .onion sites).
     """
 
-    name = "tor_forum_crawler"
+    name = "tor_forum"
     source_type = SourceType.TOR_FORUM
 
     def __init__(self, forum_configs: list[dict] | None = None):
@@ -129,7 +129,7 @@ class TorForumCrawler(BaseCrawler):
 class TorMarketplaceCrawler(BaseCrawler):
     """Crawls Tor marketplace listings for stolen data, credentials, and exploits."""
 
-    name = "tor_marketplace_crawler"
+    name = "tor_marketplace"
     source_type = SourceType.TOR_MARKETPLACE
 
     def __init__(self, marketplace_configs: list[dict] | None = None):

@@ -20,6 +20,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     Enum,
@@ -41,6 +42,13 @@ class TakedownPartner(str, enum.Enum):
     GROUP_IB = "group_ib"
     INTERNAL_LEGAL = "internal_legal"
     MANUAL = "manual"
+    # Free / self-service partners. None require a sales conversation;
+    # all three skip the SMTP-only mailbox model and either hit a real
+    # free REST API (URLhaus, ThreatFox) or do the work locally
+    # (DirectRegistrarAbuse — WHOIS + email).
+    URLHAUS = "urlhaus"
+    THREATFOX = "threatfox"
+    DIRECT_REGISTRAR = "direct_registrar"
 
 
 class TakedownState(str, enum.Enum):
@@ -101,6 +109,16 @@ class TakedownTicket(Base, UUIDMixin, TimestampMixin):
 
     partner_reference: Mapped[str | None] = mapped_column(String(255))
     partner_url: Mapped[str | None] = mapped_column(String(500))
+    # Set when the sync endpoint receives a partner_state we don't
+    # recognise. The ticket's main ``state`` column doesn't change
+    # (no legal mapping), but the dashboard surfaces a yellow
+    # "needs review" badge and the analyst opens the partner UI to
+    # decide what the ticket should move to. Cleared automatically
+    # on the next sync that returns a recognised state.
+    needs_review: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default="false",
+    )
+    last_partner_state: Mapped[str | None] = mapped_column(String(64))
     submitted_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
@@ -150,10 +168,22 @@ def is_takedown_transition_allowed(from_state: str, to_state: str) -> bool:
     return to_state in _ALLOWED_TRANSITIONS.get(from_state, set())
 
 
+def allowed_next_states(from_state: str) -> list[str]:
+    """Sorted list of states reachable from ``from_state``.
+
+    Used by ``TakedownResponse.allowed_next`` so the dashboard
+    TransitionModal renders only legal options instead of letting
+    the analyst pick anything (which then 422s on the backend).
+    Stable order is convenient for UI tests.
+    """
+    return sorted(_ALLOWED_TRANSITIONS.get(from_state, set()))
+
+
 __all__ = [
     "TakedownPartner",
     "TakedownState",
     "TakedownTargetKind",
     "TakedownTicket",
+    "allowed_next_states",
     "is_takedown_transition_allowed",
 ]

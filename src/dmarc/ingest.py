@@ -28,9 +28,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.dmarc import DmarcReport, DmarcReportKind, DmarcReportRecord
+from src.models.dmarc_forensic import DmarcForensicReport
 from src.models.threat import Asset
 
-from .parser import parse_aggregate, ParsedDmarcReport
+from .parser import (
+    ParsedDmarcReport,
+    ParsedForensic,
+    parse_aggregate,
+    parse_forensic,
+)
 
 
 async def ingest_aggregate(
@@ -151,7 +157,131 @@ async def ingest_aggregate(
         asset.last_change_at = datetime.now(timezone.utc)
 
     await db.flush()
+
+    # Fan out RCA agents for every misaligned record (cap so a noisy
+    # report doesn't bloat the queue).
+    try:
+        await _enqueue_alignment_rca(db, organization_id, report.id, parsed.records)
+    except Exception:  # noqa: BLE001 — never fail ingest because the queue is wedged
+        pass
+
     return report, len(parsed.records)
 
 
-__all__ = ["ingest_aggregate"]
+async def _enqueue_alignment_rca(
+    db: AsyncSession,
+    organization_id: uuid.UUID,
+    report_id: uuid.UUID,
+    records: list,
+    *,
+    cap: int = 50,
+) -> None:
+    from src.llm.agent_queue import enqueue
+
+    failing = [
+        r for r in records if (r.spf_aligned is False or r.dkim_aligned is False)
+    ]
+    for rec in failing[:cap]:
+        await enqueue(
+            db,
+            kind="dmarc_alignment_rca",
+            payload={
+                "report_id": str(report_id),
+                "source_ip": rec.source_ip,
+                "header_from": rec.header_from,
+                "envelope_from": rec.envelope_from,
+                "spf_result": rec.spf_result,
+                "dkim_result": rec.dkim_result,
+                "spf_aligned": rec.spf_aligned,
+                "dkim_aligned": rec.dkim_aligned,
+                "count": rec.count,
+            },
+            organization_id=organization_id,
+            dedup_key=f"rca:{report_id}:{rec.source_ip}",
+            priority=6,
+        )
+
+
+async def ingest_forensic(
+    db: AsyncSession,
+    organization_id: uuid.UUID,
+    blob: bytes,
+) -> tuple[list[DmarcForensicReport], int]:
+    """Idempotently insert RUF rows and enqueue lookalike-detect agents.
+
+    Returns ``(rows, inserted_count)``. We dedup on
+    (organization_id, source_ip, reported_domain, arrival_date,
+    original_mail_from) — DMARC RUFs from the same incident often get
+    re-sent by the receiver.
+    """
+    parsed_list = parse_forensic(blob)
+    inserted: list[DmarcForensicReport] = []
+    skipped = 0
+    for p in parsed_list:
+        domain = (p.reported_domain or "").lower() or "unknown"
+        # Best-effort idempotency
+        existing_q = select(DmarcForensicReport).where(
+            and_(
+                DmarcForensicReport.organization_id == organization_id,
+                DmarcForensicReport.domain == domain,
+                DmarcForensicReport.source_ip == p.source_ip,
+                DmarcForensicReport.original_mail_from == p.original_mail_from,
+                DmarcForensicReport.arrival_date == p.arrival_date,
+            )
+        )
+        existing = (await db.execute(existing_q)).scalar_one_or_none()
+        if existing is not None:
+            skipped += 1
+            inserted.append(existing)
+            continue
+
+        row = DmarcForensicReport(
+            organization_id=organization_id,
+            domain=domain,
+            feedback_type=p.feedback_type,
+            arrival_date=p.arrival_date,
+            source_ip=p.source_ip,
+            reported_domain=p.reported_domain,
+            original_envelope_from=p.original_envelope_from,
+            original_envelope_to=p.original_envelope_to,
+            original_mail_from=p.original_mail_from,
+            original_rcpt_to=p.original_rcpt_to,
+            auth_failure=p.auth_failure,
+            delivery_result=p.delivery_result,
+            raw_headers=p.raw_headers,
+            dkim_domain=p.dkim_domain,
+            dkim_selector=p.dkim_selector,
+            spf_domain=p.spf_domain,
+            extras=p.extras or {},
+        )
+        db.add(row)
+        await db.flush()
+        inserted.append(row)
+
+        # Enqueue lookalike detection — cheap dedup so the same spoof
+        # source doesn't multiply.
+        try:
+            from src.llm.agent_queue import enqueue
+
+            await enqueue(
+                db,
+                kind="dmarc_lookalike_detect",
+                payload={
+                    "forensic_id": str(row.id),
+                    "domain": domain,
+                    "source_ip": p.source_ip,
+                    "original_mail_from": p.original_mail_from,
+                    "spf_domain": p.spf_domain,
+                    "dkim_domain": p.dkim_domain,
+                },
+                organization_id=organization_id,
+                dedup_key=f"lookalike:{row.id}",
+                priority=5,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    return inserted, len(inserted) - skipped
+
+
+__all__ = ["ingest_aggregate", "ingest_forensic"]

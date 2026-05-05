@@ -41,6 +41,7 @@ scheduler trigger on HIGH/CRITICAL alerts) is a follow-up.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import uuid
@@ -343,6 +344,10 @@ class TraceStep:
     tool: str | None
     tool_args: dict | None
     tool_result: Any
+    # Wall-clock start of the iteration + duration for tool-call steps.
+    # Both nullable for legacy persistence / forced-finalise paths.
+    started_at: datetime | None = None
+    duration_ms: int | None = None
 
 
 @dataclass
@@ -355,6 +360,21 @@ class InvestigationReport:
     correlated_actors: list[str] = field(default_factory=list)
     recommended_actions: list[str] = field(default_factory=list)
     trace: list[TraceStep] = field(default_factory=list)
+    # Why the loop terminated (T48).
+    stop_reason: str = "high_confidence"
+    # Agent's self-reported confidence in the verdict (0..1). When the
+    # model omits it we default to 0.5 — neutral.
+    final_confidence: float = 0.5
+    # LLM token totals (T50). Null when the provider didn't surface
+    # them on any iteration. Provider-agnostic — every backend
+    # (Anthropic, OpenAI, Ollama, Bridge) populates these consistently
+    # when the upstream API exposes usage data.
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    # Model id reported by the last provider call. Whichever backend
+    # (Anthropic / OpenAI / Ollama / Bridge) — they all stash it under
+    # ``provider.last_model_id`` after each ``call``.
+    model_id: str | None = None
 
     def markdown_summary(self) -> str:
         lines = [
@@ -438,6 +458,18 @@ Only output JSON. No prose around it.
 """
 
 
+class PlanApprovalRequired(Exception):
+    """Raised when the agent has emitted a plan but the org requires
+    operator approval before tool calls run. The persistence layer
+    catches this, stores the plan + flips status to
+    ``awaiting_plan_approval``, and lets the operator review via
+    POST /investigations/{id}/approve-plan."""
+
+    def __init__(self, plan: list[dict[str, Any]]):
+        self.plan = plan
+        super().__init__(f"plan approval required ({len(plan)} steps)")
+
+
 class InvestigationAgent:
     """Runs a tool-calling loop on top of whatever LLM is configured."""
 
@@ -446,31 +478,130 @@ class InvestigationAgent:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def propose_plan(self, alert_id: str) -> list[dict[str, Any]]:
+        """Single LLM call that returns the agent's intended tool
+        sequence. No tool execution, no DB writes — just a planning
+        sketch for the operator to review.
+
+        Output format::
+            [{"tool": "lookup_alert", "rationale": "..."}, ...]
+        """
+        from src.agents.triage_agent import TriageAgent
+
+        triage = TriageAgent()
+        catalogue = ", ".join(t.name for t in _TOOLS.values())
+        prompt = (
+            f"You are about to investigate alert {alert_id}. "
+            f"Available tools: {catalogue}. "
+            "Return a JSON list of up to 4 steps you intend to call, "
+            'each {"tool": "<name>", "rationale": "<one short line>"}. '
+            "Only output JSON."
+        )
+        try:
+            raw = await triage._call_llm(SYSTEM_PROMPT, prompt)
+        except Exception:  # noqa: BLE001
+            # Failed plan proposal isn't fatal — fall back to a
+            # generic plan that doesn't constrain the agent.
+            return [{"tool": "lookup_alert", "rationale": "Read the alert first."}]
+        try:
+            text = raw.strip()
+            if text.startswith("```"):
+                parts = text.split("```")
+                if len(parts) >= 3:
+                    text = parts[1]
+                    if text.startswith("json"):
+                        text = text[4:]
+            start = text.find("[")
+            end = text.rfind("]")
+            if start < 0 or end < 0 or end <= start:
+                return [{"tool": "lookup_alert", "rationale": "Read the alert first."}]
+            plan = json.loads(text[start : end + 1])
+            if not isinstance(plan, list):
+                return [{"tool": "lookup_alert", "rationale": "Read the alert first."}]
+            cleaned: list[dict[str, Any]] = []
+            for step in plan[:4]:
+                if not isinstance(step, dict):
+                    continue
+                tool = step.get("tool")
+                if not isinstance(tool, str) or tool not in _TOOLS:
+                    continue
+                rat = step.get("rationale") or ""
+                cleaned.append({"tool": tool, "rationale": str(rat)[:200]})
+            return cleaned or [
+                {"tool": "lookup_alert", "rationale": "Read the alert first."}
+            ]
+        except (json.JSONDecodeError, ValueError):
+            return [{"tool": "lookup_alert", "rationale": "Read the alert first."}]
+
     # -- public entrypoint ------------------------------------------
 
-    async def investigate(self, alert_id: str) -> InvestigationReport:
+    async def investigate(
+        self,
+        alert_id: str,
+        *,
+        investigation_id: uuid.UUID | None = None,
+        approved_plan: list[dict[str, Any]] | None = None,
+    ) -> InvestigationReport:
         from src.agents.triage_agent import (
             LLMNotConfigured,
             LLMTransportError,
-            TriageAgent,
         )
+        from src.llm.providers import get_provider
 
         if not settings.llm.is_configured:
             raise LLMNotConfigured(
                 "Investigation agent requires a configured LLM provider."
             )
 
-        # Reuse TriageAgent's _call_llm so we share the bridge / openai /
-        # anthropic / ollama transport. The agent body itself is provider-
-        # agnostic — we send JSON, expect JSON back.
-        triage = TriageAgent()
-        call_llm = triage._call_llm
+        # Use the provider directly (rather than going through
+        # TriageAgent._call_llm) so we can read per-call token counts
+        # off the provider instance after each ``await provider.call(...)``.
+        # The provider interface is the same regardless of backend
+        # (Anthropic / OpenAI / Ollama / Bridge), so the agent body
+        # stays provider-agnostic.
+        provider = get_provider(settings.llm)
+        call_llm = provider.call
+        # Per-run token accumulators. Each ``call_llm`` populates
+        # ``provider.last_input_tokens`` / ``last_output_tokens`` if the
+        # upstream API surfaces them; we sum into these and stamp the
+        # totals onto the report. ``None`` means no provider call ever
+        # surfaced a token count — distinguish from zero.
+        total_input_tokens: int | None = None
+        total_output_tokens: int | None = None
 
+        def _accumulate_tokens() -> None:
+            nonlocal total_input_tokens, total_output_tokens
+            ti = provider.last_input_tokens
+            to = provider.last_output_tokens
+            if isinstance(ti, int):
+                total_input_tokens = (total_input_tokens or 0) + ti
+            if isinstance(to, int):
+                total_output_tokens = (total_output_tokens or 0) + to
+
+        # Compose the seed turn. When the operator approved (or
+        # supplied) a plan, surface it as an analyst hint — the agent
+        # is encouraged to follow it but free to deviate when the
+        # evidence calls for it.
+        seed = f"Begin the investigation. Seed alert id: {alert_id}."
+        if approved_plan:
+            # Both shapes are accepted: [{"tool":..,"rationale":..}]
+            # (plan-gate proposals) and [{"kind":"extra_context","text":...}]
+            # (rerun extra_context). Render whichever is present.
+            hint_lines: list[str] = []
+            for step in approved_plan:
+                if not isinstance(step, dict):
+                    continue
+                if step.get("kind") == "extra_context" and step.get("text"):
+                    hint_lines.append(f"Analyst note: {step['text']}")
+                elif step.get("tool"):
+                    rat = step.get("rationale") or ""
+                    hint_lines.append(
+                        f"  - {step['tool']}: {rat}" if rat else f"  - {step['tool']}"
+                    )
+            if hint_lines:
+                seed += "\n\nAnalyst-approved hint (follow when sensible):\n" + "\n".join(hint_lines)
         history: list[dict[str, str]] = [
-            {
-                "role": "user",
-                "content": f"Begin the investigation. Seed alert id: {alert_id}.",
-            }
+            {"role": "user", "content": seed}
         ]
         trace: list[TraceStep] = []
 
@@ -489,26 +620,90 @@ class InvestigationAgent:
         )
         system = SYSTEM_PROMPT + "\n\n## Tools\n" + catalogue
 
+        # Track per-iteration evidence so we can stop early when three
+        # iterations in a row return nothing new — saves LLM calls and
+        # gives the analyst a meaningful ``no_new_evidence`` stop reason.
+        seen_results_hashes: set[str] = set()
+        no_new_streak = 0
+
+        # Live event bus — emits each step over SSE so the dashboard
+        # can render the trace as it happens. No-op when no subscriber
+        # is listening; the persistence layer remains the source of
+        # truth for the final view.
+        from src.core.investigation_events import bus as _ev_bus
+        async def _emit(payload: dict[str, Any]) -> None:
+            if investigation_id is None:
+                return
+            try:
+                await _ev_bus.emit(investigation_id, payload)
+            except Exception:  # noqa: BLE001
+                logger.debug("[investigate] sse emit failed", exc_info=True)
+
         for i in range(1, self.MAX_ITERATIONS + 1):
+            iter_started = datetime.now(timezone.utc)
             user_blob = self._render_history(history)
             try:
                 raw = await call_llm(system, user_blob)
-            except (LLMNotConfigured, LLMTransportError) as exc:
-                # Bubble up — caller logs / records as a degraded run.
+            except LLMNotConfigured:
+                # Misconfiguration — never retry, the second call would
+                # fail identically. Bubble up.
                 raise
+            except LLMTransportError as exc:
+                # Bridge / API transient failure (timeout, connection
+                # reset, rate limit). Retry ONCE — the bridge worker
+                # may have been mid-rebuild, the upstream API may have
+                # rate-limited a single call, etc. A second consecutive
+                # failure is a real outage and we surface it.
+                logger.warning(
+                    "[investigate] iter=%d transport error, retrying once: %s",
+                    i, exc,
+                )
+                try:
+                    raw = await call_llm(system, user_blob)
+                except LLMTransportError:
+                    raise
+            _accumulate_tokens()
             decision = self._parse_decision(raw)
             thought = decision.get("thought") or ""
 
             if decision.get("finalise"):
-                trace.append(
-                    TraceStep(
-                        iteration=i,
-                        thought=thought,
-                        tool=None,
-                        tool_args=None,
-                        tool_result=None,
-                    )
+                step = TraceStep(
+                    iteration=i,
+                    thought=thought,
+                    tool=None,
+                    tool_args=None,
+                    tool_result=None,
+                    started_at=iter_started,
+                    duration_ms=int(
+                        (datetime.now(timezone.utc) - iter_started).total_seconds() * 1000
+                    ),
                 )
+                trace.append(step)
+                await _emit({
+                    "kind": "step",
+                    "iteration": step.iteration,
+                    "tool": step.tool,
+                    "thought": step.thought,
+                    "args": step.tool_args,
+                    "result": step.tool_result,
+                    "duration_ms": step.duration_ms,
+                })
+                # Confidence: prefer the model's self-report when it
+                # offers a number in [0,1]; else infer from severity.
+                fc = decision.get("final_confidence")
+                try:
+                    final_confidence = float(fc)
+                    if not (0.0 <= final_confidence <= 1.0):
+                        raise ValueError
+                except (TypeError, ValueError):
+                    # Soft inference from severity + presence of evidence.
+                    sev = (decision.get("severity_assessment") or "medium").lower()
+                    base = {"critical": 0.85, "high": 0.75, "medium": 0.55, "low": 0.4, "informational": 0.3}.get(sev, 0.5)
+                    has_evidence = bool(
+                        decision.get("correlated_iocs")
+                        or decision.get("correlated_actors")
+                    )
+                    final_confidence = min(1.0, base + (0.05 if has_evidence else 0.0))
                 return InvestigationReport(
                     alert_id=alert_id,
                     iterations=i,
@@ -520,6 +715,11 @@ class InvestigationAgent:
                         decision.get("recommended_actions") or []
                     ),
                     trace=trace,
+                    stop_reason="high_confidence",
+                    final_confidence=final_confidence,
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    model_id=getattr(provider, "last_model_id", None),
                 )
 
             tool_name = decision.get("tool")
@@ -535,17 +735,30 @@ class InvestigationAgent:
                         ),
                     }
                 )
-                trace.append(
-                    TraceStep(
-                        iteration=i,
-                        thought=thought,
-                        tool=tool_name,
-                        tool_args=tool_args,
-                        tool_result={"error": "unknown_tool"},
-                    )
+                step = TraceStep(
+                    iteration=i,
+                    thought=thought,
+                    tool=tool_name,
+                    tool_args=tool_args,
+                    tool_result={"error": "unknown_tool"},
+                    started_at=iter_started,
+                    duration_ms=int(
+                        (datetime.now(timezone.utc) - iter_started).total_seconds() * 1000
+                    ),
                 )
+                trace.append(step)
+                await _emit({
+                    "kind": "step",
+                    "iteration": step.iteration,
+                    "tool": step.tool,
+                    "thought": step.thought,
+                    "args": step.tool_args,
+                    "result": step.tool_result,
+                    "duration_ms": step.duration_ms,
+                })
                 continue
 
+            tool_started = datetime.now(timezone.utc)
             try:
                 tool_result = await _TOOLS[tool_name].runner(self.session, **tool_args)
             except TypeError as exc:
@@ -554,15 +767,43 @@ class InvestigationAgent:
                 logger.exception("[investigate] tool %s crashed", tool_name)
                 tool_result = {"error": f"{type(exc).__name__}: {exc}"}
 
-            trace.append(
-                TraceStep(
-                    iteration=i,
-                    thought=thought,
-                    tool=tool_name,
-                    tool_args=tool_args,
-                    tool_result=tool_result,
-                )
+            # No-new-evidence detection: hash the result and bump a
+            # streak when the agent gets a payload it has seen before.
+            # Three in a row → break early with stop_reason=no_new_evidence.
+            try:
+                rh = hashlib.sha256(
+                    json.dumps(tool_result, sort_keys=True, default=str).encode()
+                ).hexdigest()
+            except Exception:  # noqa: BLE001 — hashing must never crash
+                rh = ""
+            if rh and rh in seen_results_hashes:
+                no_new_streak += 1
+            else:
+                no_new_streak = 0
+                if rh:
+                    seen_results_hashes.add(rh)
+
+            step = TraceStep(
+                iteration=i,
+                thought=thought,
+                tool=tool_name,
+                tool_args=tool_args,
+                tool_result=tool_result,
+                started_at=tool_started,
+                duration_ms=int(
+                    (datetime.now(timezone.utc) - tool_started).total_seconds() * 1000
+                ),
             )
+            trace.append(step)
+            await _emit({
+                "kind": "step",
+                "iteration": step.iteration,
+                "tool": step.tool,
+                "thought": step.thought,
+                "args": step.tool_args,
+                "result": step.tool_result,
+                "duration_ms": step.duration_ms,
+            })
             history.append(
                 {
                     "role": "assistant",
@@ -578,6 +819,32 @@ class InvestigationAgent:
                 }
             )
 
+            # Stop early when the agent is spinning on duplicate evidence.
+            if no_new_streak >= 3:
+                logger.info(
+                    "[investigate] alert=%s stopping early: no_new_evidence (streak=%d)",
+                    alert_id, no_new_streak,
+                )
+                return InvestigationReport(
+                    alert_id=alert_id,
+                    iterations=i,
+                    final_assessment=(
+                        "Investigation stopped early: three consecutive tool "
+                        "calls returned the same evidence the agent had "
+                        "already seen. Forwarding the partial trace."
+                    ),
+                    severity_assessment="medium",
+                    recommended_actions=[
+                        "Have an analyst review the trace below.",
+                    ],
+                    trace=trace,
+                    stop_reason="no_new_evidence",
+                    final_confidence=0.4,
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    model_id=getattr(provider, "last_model_id", None),
+                )
+
         # Fell off the end of MAX_ITERATIONS — synthesise a forced finalise.
         return InvestigationReport(
             alert_id=alert_id,
@@ -589,6 +856,11 @@ class InvestigationAgent:
             severity_assessment="medium",
             recommended_actions=["Have an analyst review the trace below."],
             trace=trace,
+            stop_reason="max_iterations",
+            final_confidence=0.45,
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            model_id=getattr(provider, "last_model_id", None),
         )
 
     # -- helpers ----------------------------------------------------
@@ -668,7 +940,11 @@ async def run_and_persist(
     NEVER from inside an HTTP request handler (the agent loop can take
     many seconds).
     """
-    from src.models.investigations import Investigation, InvestigationStatus
+    from src.models.investigations import (
+        Investigation,
+        InvestigationStatus,
+        InvestigationStopReason,
+    )
     from src.agents.triage_agent import LLMNotConfigured, LLMTransportError
     import time
 
@@ -691,21 +967,66 @@ async def run_and_persist(
             )
         ).scalar_one()
         inv.status = InvestigationStatus.RUNNING.value
-        inv.started_at = datetime.now(timezone.utc)
+        if not inv.started_at:
+            inv.started_at = datetime.now(timezone.utc)
     await session.commit()
+
+    # Plan-then-act gate (T57). Org-opted-in installs pause AFTER the
+    # agent emits a plan, so the operator can review tool choices
+    # before any tool runs. Skipped on resume — when the row already
+    # has a plan we treat that as the approved plan.
+    org_settings = await _get_org_agent_settings(session, organization_id)
+    plan_gate = bool(
+        org_settings is not None
+        and getattr(org_settings, "investigation_plan_approval", False)
+    )
+    if plan_gate and not inv.plan:
+        try:
+            plan = await InvestigationAgent(session).propose_plan(str(alert_id))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[investigate] plan proposal failed: %s", exc)
+            plan = [{"tool": "lookup_alert", "rationale": "fallback plan"}]
+        inv.plan = plan
+        inv.status = InvestigationStatus.AWAITING_PLAN_APPROVAL.value
+        await session.commit()
+        try:
+            from src.core.investigation_events import bus as _ev_bus
+            await _ev_bus.emit(
+                investigation_id,
+                {"kind": "plan", "status": inv.status, "plan": plan},
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        logger.info(
+            "[investigate] paused for plan approval inv=%s plan=%s",
+            inv.id, [s.get("tool") for s in plan],
+        )
+        return investigation_id
 
     started = time.monotonic()
     agent = InvestigationAgent(session)
+    # Lifecycle "started" event so SSE subscribers get a clean
+    # marker even if the agent crashes before the first step.
+    from src.core.investigation_events import bus as _ev_bus
     try:
-        report = await agent.investigate(str(alert_id))
-        # Surface the model id of the last call (TriageAgent stores it on
-        # its bridge singleton; we copy through agent.last_model_id when
-        # we wire that path. For now best-effort.)
-        try:
-            from src.llm.providers import BridgeProvider
-            model_id = getattr(BridgeProvider._singleton, "last_model_id", None)
-        except Exception:  # noqa: BLE001
-            model_id = None
+        await _ev_bus.emit(investigation_id, {"kind": "started", "status": "running"})
+    except Exception:  # noqa: BLE001
+        pass
+    # Approved plan (post-gate or rerun extra_context) is surfaced to
+    # the agent as an analyst hint in the seed turn. Honoured-but-not-
+    # enforced — the agent retains discretion to deviate.
+    approved_plan = inv.plan if isinstance(inv.plan, list) else None
+    try:
+        report = await agent.investigate(
+            str(alert_id),
+            investigation_id=investigation_id,
+            approved_plan=approved_plan,
+        )
+        # Provider-agnostic model id: the agent now records the provider's
+        # ``last_model_id`` on the report directly, so we don't need to
+        # peek at the BridgeProvider singleton (which only worked for
+        # bridge-backed runs and was None for direct Anthropic/OpenAI).
+        model_id = report.model_id
 
         inv.status = InvestigationStatus.COMPLETED.value
         inv.final_assessment = report.final_assessment
@@ -714,6 +1035,9 @@ async def run_and_persist(
         inv.correlated_actors = report.correlated_actors
         inv.recommended_actions = report.recommended_actions
         inv.iterations = report.iterations
+        # Persist per-step timing + (later) tokens so the dashboard can
+        # render duration / cost without re-running anything. Legacy
+        # tools without timing get null fields and degrade gracefully.
         inv.trace = [
             {
                 "iteration": s.iteration,
@@ -721,63 +1045,112 @@ async def run_and_persist(
                 "tool": s.tool,
                 "args": s.tool_args,
                 "result": s.tool_result,
+                "started_at": s.started_at.isoformat() if s.started_at else None,
+                "duration_ms": s.duration_ms,
             }
             for s in report.trace
         ]
         inv.model_id = model_id
         inv.duration_ms = int((time.monotonic() - started) * 1000)
         inv.finished_at = datetime.now(timezone.utc)
+        inv.stop_reason = report.stop_reason
+        inv.final_confidence = report.final_confidence
+        # Deduped, ordered tool list — first-occurrence order so the
+        # dashboard chips read like a timeline ("lookup_alert →
+        # search_iocs → lookup_threat_actor"). Filter out None which
+        # represents the finalise-only step.
+        seen: set[str] = set()
+        ordered_tools: list[str] = []
+        for s in report.trace:
+            if s.tool and s.tool not in seen:
+                seen.add(s.tool)
+                ordered_tools.append(s.tool)
+        inv.tools_used = ordered_tools
+        inv.input_tokens = report.input_tokens
+        inv.output_tokens = report.output_tokens
     except (LLMNotConfigured, LLMTransportError) as exc:
         inv.status = InvestigationStatus.FAILED.value
         inv.error_message = f"{type(exc).__name__}: {exc}"
         inv.duration_ms = int((time.monotonic() - started) * 1000)
         inv.finished_at = datetime.now(timezone.utc)
+        inv.stop_reason = InvestigationStopReason.LLM_ERROR.value
         logger.warning("[investigate] failed for alert=%s: %s", alert_id, exc)
     except Exception as exc:  # noqa: BLE001 — never crash the worker
         inv.status = InvestigationStatus.FAILED.value
         inv.error_message = f"{type(exc).__name__}: {exc}"[:500]
         inv.duration_ms = int((time.monotonic() - started) * 1000)
         inv.finished_at = datetime.now(timezone.utc)
+        inv.stop_reason = InvestigationStopReason.LLM_ERROR.value
         logger.exception("[investigate] crashed for alert=%s", alert_id)
 
     await session.commit()
 
-    # Auto-promote — gated behind the human-in-the-loop guard. Default
-    # behaviour on a fresh install is "do nothing"; an analyst sees the
-    # completed investigation in the dashboard and clicks "Promote to
-    # Case". An operator who explicitly opted out of the master guard
-    # AND set ARGUS_AGENT_AUTO_PROMOTE gets the bypass — every bypass
-    # call writes an audit row.
+    try:
+        await _ev_bus.emit(
+            investigation_id,
+            {
+                "kind": "stopped",
+                "status": inv.status,
+                "stop_reason": inv.stop_reason,
+                "final_confidence": inv.final_confidence,
+                "iterations": inv.iterations,
+                "duration_ms": inv.duration_ms,
+                "error_message": inv.error_message,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+    # Auto-promote — runs through TWO gates layered:
+    #   1. Per-org ``auto_promote_critical`` setting (default off). The
+    #      operator opts in via Settings → Agents.
+    #   2. The global HIL guard (``ARGUS_AGENT_HUMAN_IN_LOOP_REQUIRED`` +
+    #      ``ARGUS_AGENT_AUTO_PROMOTE``). Even with the per-org flag on,
+    #      the master guard wins and the auto-promote is skipped.
+    #
+    # An additional substantive filter: we only auto-promote when the
+    # investigation surfaced at least one correlated actor (otherwise
+    # "critical" is just an LLM rating with no anchor — analyst should
+    # eyeball before a Case opens).
     if (
         inv.status == InvestigationStatus.COMPLETED.value
         and (inv.severity_assessment or "").lower() in _AUTO_PROMOTE_SEVERITIES
+        and inv.correlated_actors
     ):
-        from src.core.agent_guard import AutoActionKind, allow_auto_action
+        org_settings = await _get_org_agent_settings(session, organization_id)
+        if org_settings is not None and not org_settings.auto_promote_critical:
+            logger.info(
+                "[investigate] auto-promote skipped (org %s opt-out) for inv=%s",
+                organization_id, inv.id,
+            )
+        else:
+            from src.core.agent_guard import AutoActionKind, allow_auto_action
 
-        decision = await allow_auto_action(
-            session,
-            kind=AutoActionKind.AUTO_PROMOTE,
-            reason=(
-                f"investigation={inv.id} severity={inv.severity_assessment} "
-                f"iterations={inv.iterations}"
-            ),
-        )
-        if decision.allowed:
-            try:
-                case_id = await promote_to_case(
-                    session,
-                    investigation_id=inv.id,
-                    user_id=None,  # bot-promoted
-                )
-                await session.commit()
-                logger.warning(
-                    "[investigate] HIL-bypass auto-promoted investigation=%s → case=%s",
-                    inv.id, case_id,
-                )
-            except PromoteError as exc:
-                logger.warning(
-                    "[investigate] auto-promote skipped for %s: %s", inv.id, exc
-                )
+            decision = await allow_auto_action(
+                session,
+                kind=AutoActionKind.AUTO_PROMOTE,
+                reason=(
+                    f"investigation={inv.id} severity={inv.severity_assessment} "
+                    f"iterations={inv.iterations} actors={len(inv.correlated_actors)}"
+                ),
+            )
+            if decision.allowed:
+                try:
+                    case_id = await promote_to_case(
+                        session,
+                        investigation_id=inv.id,
+                        user_id=None,  # bot-promoted
+                    )
+                    await session.commit()
+                    logger.warning(
+                        "[investigate] auto-promoted investigation=%s → case=%s "
+                        "(org=%s, actors=%s)",
+                        inv.id, case_id, organization_id, inv.correlated_actors,
+                    )
+                except PromoteError as exc:
+                    logger.warning(
+                        "[investigate] auto-promote skipped for %s: %s", inv.id, exc
+                    )
 
     # Internal routing — chain to a Threat Hunter run when this
     # investigation surfaced a critical actor cluster. This is NOT an

@@ -237,6 +237,238 @@ ALLOWED_ENTITY_TYPES: tuple[str, ...] = (
 )
 
 
+class MitreGroup(Base, UUIDMixin, TimestampMixin):
+    """ATT&CK intrusion-set (G####).
+
+    Auto-imported from the STIX bundle. Powers /actors auto-seed and the
+    technique→groups pivot on /mitre + /threat-hunter.
+    """
+
+    __tablename__ = "mitre_groups"
+
+    matrix: Mapped[str] = mapped_column(String(20), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(20), nullable=False)  # G0096
+    name: Mapped[str] = mapped_column(String(300), nullable=False)
+    aliases: Mapped[list] = mapped_column(ARRAY(String), default=list, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    country_codes: Mapped[list] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
+    sectors_targeted: Mapped[list] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
+    regions_targeted: Mapped[list] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
+    references: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    first_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deprecated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    url: Mapped[str | None] = mapped_column(String(500))
+    sync_version: Mapped[str | None] = mapped_column(String(50))
+    raw: Mapped[dict | None] = mapped_column(JSONB)
+
+    __table_args__ = (
+        UniqueConstraint("matrix", "external_id", name="uq_mitre_group_matrix_id"),
+        Index("ix_mitre_group_external_id", "external_id"),
+        Index("ix_mitre_group_aliases", "aliases", postgresql_using="gin"),
+        Index("ix_mitre_group_sectors", "sectors_targeted", postgresql_using="gin"),
+        Index("ix_mitre_group_regions", "regions_targeted", postgresql_using="gin"),
+    )
+
+
+class MitreSoftware(Base, UUIDMixin, TimestampMixin):
+    """ATT&CK software (S####) — malware + tools."""
+
+    __tablename__ = "mitre_software"
+
+    matrix: Mapped[str] = mapped_column(String(20), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(20), nullable=False)  # S0001
+    name: Mapped[str] = mapped_column(String(300), nullable=False)
+    aliases: Mapped[list] = mapped_column(ARRAY(String), default=list, nullable=False)
+    software_type: Mapped[str] = mapped_column(String(20), nullable=False)  # malware|tool
+    description: Mapped[str | None] = mapped_column(Text)
+    platforms: Mapped[list] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
+    labels: Mapped[list] = mapped_column(ARRAY(String), default=list, nullable=False)
+    references: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    deprecated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    url: Mapped[str | None] = mapped_column(String(500))
+    sync_version: Mapped[str | None] = mapped_column(String(50))
+    raw: Mapped[dict | None] = mapped_column(JSONB)
+
+    __table_args__ = (
+        UniqueConstraint("matrix", "external_id", name="uq_mitre_software_matrix_id"),
+        Index("ix_mitre_software_external_id", "external_id"),
+        Index("ix_mitre_software_name", "name"),
+        Index("ix_mitre_software_aliases", "aliases", postgresql_using="gin"),
+    )
+
+
+class MitreDataSource(Base, UUIDMixin, TimestampMixin):
+    """ATT&CK data source (DS####) with data components."""
+
+    __tablename__ = "mitre_data_sources"
+
+    matrix: Mapped[str] = mapped_column(String(20), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(20), nullable=False)  # DS0009
+    name: Mapped[str] = mapped_column(String(300), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    platforms: Mapped[list] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
+    collection_layers: Mapped[list] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
+    data_components: Mapped[list] = mapped_column(
+        JSONB, default=list, nullable=False
+    )
+    url: Mapped[str | None] = mapped_column(String(500))
+    sync_version: Mapped[str | None] = mapped_column(String(50))
+    raw: Mapped[dict | None] = mapped_column(JSONB)
+
+    __table_args__ = (
+        UniqueConstraint("matrix", "external_id", name="uq_mitre_ds_matrix_id"),
+    )
+
+
+class MitreCampaign(Base, UUIDMixin, TimestampMixin):
+    """ATT&CK campaign (C####)."""
+
+    __tablename__ = "mitre_campaigns"
+
+    matrix: Mapped[str] = mapped_column(String(20), nullable=False)
+    external_id: Mapped[str] = mapped_column(String(20), nullable=False)  # C0001
+    name: Mapped[str] = mapped_column(String(300), nullable=False)
+    aliases: Mapped[list] = mapped_column(ARRAY(String), default=list, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    first_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    references: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    url: Mapped[str | None] = mapped_column(String(500))
+    sync_version: Mapped[str | None] = mapped_column(String(50))
+    raw: Mapped[dict | None] = mapped_column(JSONB)
+
+    __table_args__ = (
+        UniqueConstraint("matrix", "external_id", name="uq_mitre_camp_matrix_id"),
+    )
+
+
+class MitreRelationship(Base, UUIDMixin, TimestampMixin):
+    """Unified STIX relationship junction across the ATT&CK graph.
+
+    `relationship_type` examples (STIX-canonical): uses, mitigates,
+    detects, attributed-to, subtechnique-of, revoked-by.
+
+    `source_type` / `target_type` examples: technique, group, software,
+    mitigation, data-source, data-component, campaign.
+    """
+
+    __tablename__ = "mitre_relationships"
+
+    matrix: Mapped[str] = mapped_column(String(20), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    source_external_id: Mapped[str] = mapped_column(String(20), nullable=False)
+    relationship_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    target_type: Mapped[str] = mapped_column(String(40), nullable=False)
+    target_external_id: Mapped[str] = mapped_column(String(20), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    references: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    sync_version: Mapped[str | None] = mapped_column(String(50))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "matrix",
+            "source_type",
+            "source_external_id",
+            "relationship_type",
+            "target_type",
+            "target_external_id",
+            name="uq_mitre_rel_full",
+        ),
+        Index("ix_mitre_rel_source", "source_type", "source_external_id"),
+        Index("ix_mitre_rel_target", "target_type", "target_external_id"),
+        Index("ix_mitre_rel_type", "relationship_type"),
+    )
+
+
+class MitreLayer(Base, UUIDMixin, TimestampMixin):
+    """Saved Navigator-style coverage layer.
+
+    `technique_scores` is a {T#### -> int 0..100} map. Exported as
+    standard ATT&CK Navigator JSON v4.5 by the API.
+    """
+
+    __tablename__ = "mitre_layers"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    matrix: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=MitreMatrix.ENTERPRISE.value
+    )
+    technique_scores: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    color_palette: Mapped[dict] = mapped_column(
+        JSONB,
+        default=lambda: {"low": "#FFE0B2", "med": "#FFAB00", "high": "#FF5630"},
+        nullable=False,
+    )
+    created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+    __table_args__ = (Index("ix_mitre_layers_org", "organization_id"),)
+
+
+class MitreTechniqueCoverage(Base, UUIDMixin, TimestampMixin):
+    """Per-org coverage state per technique — what detects it, how strongly.
+
+    Used to render the "you cover X% of MITRE Top 20" comparison view +
+    the green/amber/red heatmap on /mitre.
+    """
+
+    __tablename__ = "mitre_technique_coverage"
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    matrix: Mapped[str] = mapped_column(
+        String(20), nullable=False, default=MitreMatrix.ENTERPRISE.value
+    )
+    technique_external_id: Mapped[str] = mapped_column(String(20), nullable=False)
+    covered_by: Mapped[list] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )  # ["sigma", "yara", "edr", "manual"]
+    score: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # 0..100
+    notes: Mapped[str | None] = mapped_column(Text)
+    updated_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id",
+            "matrix",
+            "technique_external_id",
+            name="uq_mitre_coverage_org_tech",
+        ),
+        Index(
+            "ix_mitre_coverage_org_tech",
+            "organization_id",
+            "technique_external_id",
+        ),
+    )
+
+
 __all__ = [
     "MitreMatrix",
     "AttachmentSource",
@@ -245,5 +477,12 @@ __all__ = [
     "MitreMitigation",
     "MitreSync",
     "AttackTechniqueAttachment",
+    "MitreGroup",
+    "MitreSoftware",
+    "MitreDataSource",
+    "MitreCampaign",
+    "MitreRelationship",
+    "MitreLayer",
+    "MitreTechniqueCoverage",
     "ALLOWED_ENTITY_TYPES",
 ]

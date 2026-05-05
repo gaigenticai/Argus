@@ -226,6 +226,34 @@ async def scan_text(
         await db.flush()
         new += 1
 
+        # Bridge-LLM agentic enqueues (classifier + cross-org correlator).
+        # Wrapped in try/except so an LLM-side hiccup never rolls back the
+        # detection. Same pattern used in src/leakage/dlp.py.
+        try:
+            from src.llm.agent_queue import enqueue as _enqueue
+
+            await _enqueue(
+                db,
+                kind="leakage_classify",
+                payload={"finding_id": str(finding.id), "kind": "card"},
+                organization_id=organization_id,
+                dedup_key=f"classify:card:{finding.id}",
+                priority=5,
+            )
+            await _enqueue(
+                db,
+                kind="leakage_correlate_cross_org",
+                payload={"finding_id": str(finding.id), "kind": "card"},
+                organization_id=organization_id,
+                dedup_key=f"correlate:card:{finding.id}",
+                priority=6,
+            )
+        except Exception:  # noqa: BLE001
+            import logging as _logging
+            _logging.getLogger(__name__).exception(
+                "card-leakage agent enqueue failed for finding %s", finding.id
+            )
+
         # Audit D12 + D13 — banks always want to know about a card leak.
         # Treat every new CardLeakageFinding as HIGH severity for the
         # purposes of auto-casing and notification dispatch.

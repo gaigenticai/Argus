@@ -71,6 +71,10 @@ _IRANIAN: list[CuratedChannel] = [
         ),
         actor_link="cyber_avengers",
         region_focus=["IL", "GCC"],
+        # Probed 2026-05-02: t.me/s/ 302s to join page → preview
+        # disabled by Telegram (likely policy action). Kept in catalog
+        # as historical reference; collector skips defunct status.
+        status="defunct",
     ),
     CuratedChannel(
         handle="predatory_sparrow",
@@ -95,6 +99,7 @@ _IRANIAN: list[CuratedChannel] = [
         ),
         actor_link="moses_staff",
         region_focus=["IL", "GCC"],
+        status="defunct",  # probed 2026-05-02: preview disabled
     ),
     CuratedChannel(
         handle="muddywater_log",
@@ -127,6 +132,7 @@ _ARABIC: list[CuratedChannel] = [
         ),
         actor_link="anonghost",
         region_focus=["IL", "GCC", "EG"],
+        status="defunct",  # probed 2026-05-02
     ),
     CuratedChannel(
         handle="yemeni_cyber_army",
@@ -139,6 +145,7 @@ _ARABIC: list[CuratedChannel] = [
         ),
         actor_link="yemeni_cyber_army",
         region_focus=["SA", "AE"],
+        status="defunct",  # probed 2026-05-02
     ),
     CuratedChannel(
         handle="arab_carding_lounge",
@@ -150,6 +157,7 @@ _ARABIC: list[CuratedChannel] = [
             "stolen-card BIN sweeps for GCC issuers."
         ),
         region_focus=["SA", "AE", "EG", "JO"],
+        status="defunct",  # probed 2026-05-02
     ),
     CuratedChannel(
         handle="arab_breach_archive",
@@ -161,6 +169,43 @@ _ARABIC: list[CuratedChannel] = [
             "before the Western community catches them."
         ),
         region_focus=["SA", "AE", "QA", "KW"],
+        status="defunct",  # probed 2026-05-02
+    ),
+]
+
+
+# ── English-language threat-intel aggregators (broad scope, currently
+# active). These are catch-all reachable channels — not GCC-specific —
+# but they post enough about ENBD-class targets that a brand-term
+# substring match will catch the relevant ones, and they let the
+# collector show non-zero results during evaluation while the curated
+# regional channels rotate through their usual defunct/private cycle.
+
+
+_TI_AGGREGATORS: list[CuratedChannel] = [
+    CuratedChannel(
+        handle="DarkfeedNews",
+        cluster="ti-aggregator",
+        language="en",
+        rationale=(
+            "Darkfeed.io public mirror — ransomware-group leak posts "
+            "(Lockbit, ALPHV/BlackCat, Cl0p, RansomHub, Akira), broker "
+            "ads, and named-victim claims across all sectors. High "
+            "noise but routinely surfaces GCC banking sector hits."
+        ),
+        region_focus=["GLOBAL"],
+    ),
+    CuratedChannel(
+        handle="CyberSecurityNews",
+        cluster="ti-aggregator",
+        language="en",
+        rationale=(
+            "Editorial threat-intel aggregator — CVEs, named-target "
+            "phishing campaigns, exploit-of-the-day. Catches "
+            "ENBD-class brand mentions when they make incident "
+            "reporting circuits."
+        ),
+        region_focus=["GLOBAL"],
     ),
 ]
 
@@ -199,7 +244,7 @@ _RANSOMWARE: list[CuratedChannel] = [
 
 def list_curated_channels() -> list[CuratedChannel]:
     """Every curated channel across all clusters, active or not."""
-    return list(_IRANIAN) + list(_ARABIC) + list(_RANSOMWARE)
+    return list(_IRANIAN) + list(_ARABIC) + list(_RANSOMWARE) + list(_TI_AGGREGATORS)
 
 
 def list_iranian_channels() -> list[CuratedChannel]:

@@ -150,7 +150,7 @@ class ForumCrawler(BaseCrawler):
         }
     """
 
-    name = "forum_crawler"
+    name = "forum"
     source_type = SourceType.FORUM_UNDERGROUND
 
     def __init__(

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   Activity,
   Bot,
@@ -21,8 +22,7 @@ import {
   Radio,
 } from "lucide-react";
 import { Select } from "@/components/shared/select";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api/v1";
+import { SSE_BASE } from "@/lib/api";
 
 interface ActivityEvent {
   id: string;
@@ -65,10 +65,14 @@ function formatTimeFull(iso: string): string {
 }
 
 export default function ActivityPage() {
+  // ``/activity?q=<text>`` deep-link — pre-populates the search filter
+  // so cross-page links (e.g. "View activity" on a Crawler card) land
+  // here already scoped to the relevant agent or crawler kind.
+  const searchParams = useSearchParams();
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const [paused, setPaused] = useState(false);
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useState(() => searchParams?.get("q") ?? "");
   const [agentFilter, setAgentFilter] = useState<string>("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [autoScroll, setAutoScroll] = useState(true);
@@ -77,7 +81,7 @@ export default function ActivityPage() {
   const pausedEventsRef = useRef<ActivityEvent[]>([]);
 
   useEffect(() => {
-    const es = new EventSource(`${API_BASE}/activity/stream`);
+    const es = new EventSource(`${SSE_BASE}/activity/stream`);
     eventSourceRef.current = es;
     es.onopen = () => setConnected(true);
     es.onmessage = (msg) => {

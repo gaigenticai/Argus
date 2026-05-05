@@ -9,11 +9,25 @@ and downgraded — the unknown publishers are the rogue-app signal.
 
 Sources
 -------
-- **Google Play**: ``google-play-scraper`` (pure-Python, no key).
+- **Google Play**: native aiohttp scraper. Was on the third-party
+  ``google-play-scraper`` library which does brittle deep-DOM
+  traversal (``dataset["ds:4"][0][1][0][23][16]``) that returns None
+  for short queries — silently dropping coverage. We now hit the
+  search page ourselves, extract package IDs with a stable regex
+  (``/store/apps/details?id=PKG`` URLs are part of the public
+  contract), then fetch each app's detail page and parse Open Graph
+  meta tags (``og:title``, ``og:description``) plus the developer
+  link. Open Graph is a public web standard — Google can change its
+  internal JSON shape without breaking this scraper.
 - **Apple App Store**: Apple's public iTunes Search API
   (``itunes.apple.com/search``) hit directly with aiohttp. No SDK
-  required — the third-party ``app-store-scraper`` is broken on Python
-  3.13 and the official endpoint is well-documented.
+  required — the third-party ``app-store-scraper`` is broken on
+  Python 3.13 and the official endpoint is well-documented.
+- **Feed Health**: every per-store call records a ``feed_health`` row
+  via :mod:`src.core.feed_health` so silent degradation (Google
+  blocks us, Apple changes a field name, library DOM mismatch) is
+  visible in the dashboard's Feed Health panel before findings dry
+  up.
 
 Both calls happen in parallel per term and per store. Network errors
 short-circuit the affected store but never crash the scan.
@@ -22,11 +36,15 @@ short-circuit the affected store but never crash the scan.
 from __future__ import annotations
 
 import asyncio
+import html as html_module
+import json
 import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Iterable
+from urllib.parse import quote_plus
 
 import aiohttp
 from rapidfuzz import fuzz
@@ -34,6 +52,8 @@ from sqlalchemy import and_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core import feed_health
+from src.models.admin import FeedHealthStatus
 from src.models.brand import BrandTerm, BrandTermKind
 from src.models.social import (
     MobileAppFinding,
@@ -96,38 +116,182 @@ class ScanReport:
 # --- Store adapters -----------------------------------------------------
 
 
-def _google_play_search(query: str, limit: int) -> list[AppCandidate]:
-    """Synchronous google-play-scraper call. Caller wraps in to_thread.
+GOOGLE_PLAY_BASE = "https://play.google.com"
+GOOGLE_PLAY_SEARCH_URL = GOOGLE_PLAY_BASE + "/store/search"
+GOOGLE_PLAY_DETAIL_URL = GOOGLE_PLAY_BASE + "/store/apps/details"
+GOOGLE_PLAY_DETAIL_CONCURRENCY = 8
 
-    We import lazily so a missing/broken dependency doesn't crash the
-    whole module — the worker tick just logs and moves on.
-    """
+# Browser-flavoured UA so Google returns the same HTML mobile/desktop
+# users see (some experiments serve a stripped-down page to bare
+# requests/aiohttp UA strings).
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) "
+        "AppleWebKit/605.1.15 (KHTML, like Gecko) "
+        "Version/17.0 Safari/605.1.15"
+    ),
+    "Accept-Language": "en-US,en;q=0.8",
+}
+
+
+# Search-page link → Android package id. Stable: every Play Store app
+# is reachable at /store/apps/details?id=<package> and that URL is in
+# the public crawl contract Google publishes for SEO.
+_GP_PACKAGE_RE = re.compile(r'/store/apps/details\?id=([A-Za-z0-9_.]+)')
+
+# Tags we extract from a /store/apps/details?id=X page. Open Graph is
+# a documented standard (https://ogp.me) — Google can rearrange its
+# internal JSON without breaking these.
+_OG_TITLE_RE = re.compile(
+    r'<meta\s+property="og:title"\s+content="([^"]*)"', re.IGNORECASE
+)
+_OG_DESC_RE = re.compile(
+    r'<meta\s+property="og:description"\s+content="([^"]*)"', re.IGNORECASE
+)
+_OG_IMAGE_RE = re.compile(
+    r'<meta\s+property="og:image"\s+content="([^"]*)"', re.IGNORECASE
+)
+# Developer link sits under /store/apps/dev?id=<num>|<name>. Capture
+# both id and visible label.
+_DEV_LINK_RE = re.compile(
+    r'<a[^>]+href="/store/apps/dev\?id=([^"]+)"[^>]*>([^<]+)</a>',
+    re.IGNORECASE,
+)
+# Free-text install count line. Best-effort — Google often hides it.
+_INSTALL_COUNT_RE = re.compile(
+    r'>\s*([\d,.+KMB]+)\s+downloads?\b', re.IGNORECASE
+)
+
+
+async def _gp_fetch(
+    session: aiohttp.ClientSession, url: str, *, timeout: float = 10.0
+) -> str | None:
     try:
-        from google_play_scraper import search as gp_search
-    except ImportError:
+        async with session.get(
+            url,
+            headers=_BROWSER_HEADERS,
+            timeout=aiohttp.ClientTimeout(total=timeout),
+            allow_redirects=True,
+        ) as resp:
+            if resp.status != 200:
+                _logger.warning(
+                    "google_play GET %s → HTTP %d", url, resp.status
+                )
+                return None
+            return await resp.text()
+    except aiohttp.ClientError as exc:
+        _logger.warning("google_play GET %s → network: %s", url, exc)
+        return None
+    except asyncio.TimeoutError:
+        _logger.warning("google_play GET %s → timeout", url)
+        return None
+
+
+def _gp_parse_detail(html: str, package_id: str) -> AppCandidate | None:
+    """Parse a single /store/apps/details page for OG-meta fields.
+
+    Anything we can't extract cleanly is left as None; a missing title
+    causes us to drop the candidate (a Google Play page without a
+    title is either a stale package or an experiment HTML response).
+    """
+    title_m = _OG_TITLE_RE.search(html)
+    if not title_m:
+        return None
+    title = html_module.unescape(title_m.group(1)).strip()
+    # Title often looks like "App Name - Apps on Google Play" — strip
+    # the marketing suffix.
+    for suffix in (" - Apps on Google Play", " - Google Play"):
+        if title.endswith(suffix):
+            title = title[: -len(suffix)]
+            break
+    if not title:
+        return None
+
+    desc_m = _OG_DESC_RE.search(html)
+    description = html_module.unescape(desc_m.group(1)).strip() if desc_m else None
+
+    dev_m = _DEV_LINK_RE.search(html)
+    publisher = (
+        html_module.unescape(dev_m.group(2)).strip() if dev_m else None
+    )
+
+    icon_m = _OG_IMAGE_RE.search(html)
+    icon_url = icon_m.group(1) if icon_m else None
+
+    install_m = _INSTALL_COUNT_RE.search(html)
+    install_estimate = (
+        html_module.unescape(install_m.group(1)).strip()
+        if install_m
+        else None
+    )
+
+    return AppCandidate(
+        store=MobileAppStore.GOOGLE_PLAY,
+        app_id=package_id,
+        title=title,
+        publisher=publisher,
+        description=description,
+        url=f"{GOOGLE_PLAY_DETAIL_URL}?id={package_id}",
+        rating=None,  # rating is rendered client-side via JS; not in static HTML
+        install_estimate=install_estimate,
+        raw={"icon_url": icon_url, "package_id": package_id},
+    )
+
+
+async def _google_play_search(
+    session: aiohttp.ClientSession, query: str, *, limit: int
+) -> list[AppCandidate]:
+    """Native Play Store search via aiohttp + HTML parse.
+
+    Two-stage: (1) fetch the search results page, regex-extract package
+    IDs from ``/store/apps/details?id=...`` links, (2) fetch each
+    detail page in parallel and parse Open Graph metadata.
+
+    Two-stage is unavoidable: the search-results HTML carries package
+    IDs but no clean title / publisher per row (those live in a JSON
+    blob whose shape Google rotates). Detail pages carry stable OG
+    meta. We bound concurrency so we don't get rate-limited.
+    """
+    if not query:
+        return []
+    search_url = (
+        f"{GOOGLE_PLAY_SEARCH_URL}?q={quote_plus(query)}&c=apps&hl=en&gl=us"
+    )
+    search_html = await _gp_fetch(session, search_url)
+    if search_html is None:
         return []
 
-    results = gp_search(query, n_hits=limit, lang="en", country="us")
-    out: list[AppCandidate] = []
-    for r in results or []:
-        app_id = r.get("appId") or r.get("app_id")
-        title = r.get("title")
-        if not app_id or not title:
+    seen: set[str] = set()
+    package_ids: list[str] = []
+    for m in _GP_PACKAGE_RE.finditer(search_html):
+        pkg = m.group(1)
+        if pkg in seen:
             continue
-        out.append(
-            AppCandidate(
-                store=MobileAppStore.GOOGLE_PLAY,
-                app_id=app_id,
-                title=title,
-                publisher=r.get("developer"),
-                description=r.get("description"),
-                url=r.get("url"),
-                rating=r.get("score"),
-                install_estimate=r.get("installs"),
-                raw={k: v for k, v in r.items() if isinstance(v, (str, int, float, bool, type(None)))},
-            )
-        )
-    return out
+        seen.add(pkg)
+        package_ids.append(pkg)
+        if len(package_ids) >= limit:
+            break
+    if not package_ids:
+        return []
+
+    sem = asyncio.Semaphore(GOOGLE_PLAY_DETAIL_CONCURRENCY)
+
+    async def _one(pkg: str) -> AppCandidate | None:
+        async with sem:
+            url = f"{GOOGLE_PLAY_DETAIL_URL}?id={pkg}&hl=en&gl=us"
+            html = await _gp_fetch(session, url)
+            if html is None:
+                return None
+            try:
+                return _gp_parse_detail(html, pkg)
+            except Exception as exc:  # noqa: BLE001 — one bad page shouldn't break scan
+                _logger.warning(
+                    "google_play parse failed for %s: %s", pkg, exc
+                )
+                return None
+
+    results = await asyncio.gather(*[_one(p) for p in package_ids])
+    return [r for r in results if r is not None]
 
 
 async def _itunes_search(
@@ -140,7 +304,15 @@ async def _itunes_search(
     """Apple's public iTunes Search API — no key, no SDK.
 
     Docs: https://performance-partners.apple.com/search-api
+
+    Hardened in the same shape as the native Google Play scraper:
+    typed exception catches (we know exactly which structural failures
+    can occur — Apple sometimes returns ``resultCount`` only with no
+    ``results`` key on edge queries), and explicit per-row validation
+    so a malformed entry is dropped instead of crashing the parse.
     """
+    if not query:
+        return []
     params = {
         "term": query,
         "country": country,
@@ -150,31 +322,59 @@ async def _itunes_search(
     }
     try:
         async with session.get(
-            ITUNES_SEARCH_URL, params=params, timeout=aiohttp.ClientTimeout(total=10)
+            ITUNES_SEARCH_URL,
+            params=params,
+            headers=_BROWSER_HEADERS,
+            timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
             if resp.status != 200:
+                _logger.warning(
+                    "itunes search %r → HTTP %d", query, resp.status
+                )
                 return []
             payload = await resp.json(content_type=None)
-    except Exception as e:  # noqa: BLE001 — store outage shouldn't break scan
-        _logger.warning("itunes search failed for %r: %s", query, e)
+    except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+        _logger.warning("itunes search %r → network: %s", query, exc)
+        return []
+    except (json.JSONDecodeError, ValueError) as exc:
+        _logger.warning("itunes search %r → JSON parse: %s", query, exc)
+        return []
+    except Exception as exc:  # noqa: BLE001 — keep scan alive
+        _logger.warning("itunes search %r → unexpected: %s", query, exc)
         return []
 
-    results = payload.get("results") or []
+    if not isinstance(payload, dict):
+        _logger.warning(
+            "itunes search %r → unexpected payload type %s",
+            query, type(payload).__name__,
+        )
+        return []
+    results = payload.get("results")
+    if not isinstance(results, list):
+        return []
     out: list[AppCandidate] = []
     for r in results:
+        if not isinstance(r, dict):
+            continue
         app_id = r.get("trackId")
         title = r.get("trackName")
         if not app_id or not title:
             continue
+        # Numeric fields are sometimes returned as strings on edge
+        # queries; coerce defensively.
+        try:
+            rating = float(r["averageUserRating"]) if r.get("averageUserRating") is not None else None
+        except (TypeError, ValueError):
+            rating = None
         out.append(
             AppCandidate(
                 store=MobileAppStore.APPLE,
                 app_id=str(app_id),
-                title=title,
+                title=str(title),
                 publisher=r.get("sellerName") or r.get("artistName"),
                 description=r.get("description"),
                 url=r.get("trackViewUrl"),
-                rating=r.get("averageUserRating"),
+                rating=rating,
                 install_estimate=None,  # Apple doesn't publish install counts
                 raw={
                     k: v for k, v in r.items()
@@ -224,6 +424,58 @@ def _is_official_publisher(
 
 
 # --- Scan orchestration -------------------------------------------------
+
+
+async def _record_store_health(
+    db: AsyncSession,
+    *,
+    store_label: str,
+    brand: str,
+    hits: list[AppCandidate] | BaseException,
+    organization_id: uuid.UUID,
+) -> None:
+    """Record one feed_health row per (store, term) attempt.
+
+    Called by scan_organization after every gather() so a sustained
+    parse failure (Google ToS-blocking us, Apple changing a field
+    name, our regex going stale) becomes visible in the dashboard
+    Feed Health panel instead of presenting as silent zero-findings.
+
+    Status is classified as:
+    * ``ok`` — adapter returned a list, even an empty one (queries
+      legitimately have zero hits).
+    * ``parse_error`` — adapter raised. Detail string carries the
+      exception type + message so operators can triage from the UI.
+    """
+    feed_name = f"mobile_apps.{store_label}"
+    if isinstance(hits, BaseException):
+        try:
+            await feed_health.mark_failure(
+                db,
+                feed_name=feed_name,
+                organization_id=organization_id,
+                error=hits,
+                duration_ms=None,
+                classify=FeedHealthStatus.PARSE_ERROR.value,
+            )
+        except Exception:
+            _logger.exception(
+                "feed_health record failed for %s/%s", feed_name, brand,
+            )
+        return
+    try:
+        await feed_health.mark_ok(
+            db,
+            feed_name=feed_name,
+            organization_id=organization_id,
+            rows_ingested=len(hits),
+            duration_ms=None,
+            detail=f"brand={brand}",
+        )
+    except Exception:
+        _logger.exception(
+            "feed_health record failed for %s/%s", feed_name, brand,
+        )
 
 
 async def scan_organization(
@@ -278,9 +530,9 @@ async def scan_organization(
         for term in name_terms:
             brand = term.value
             try:
-                gp_task = asyncio.to_thread(
-                    google_play_search, brand, GOOGLE_PLAY_RESULT_LIMIT
-                )
+                # Both adapters are now async-native (Google Play
+                # switched off the third-party sync lib in this commit).
+                gp_task = google_play_search(http, brand, limit=GOOGLE_PLAY_RESULT_LIMIT)
                 ios_task = itunes_search(http, brand)
                 gp_hits, ios_hits = await asyncio.gather(
                     gp_task, ios_task, return_exceptions=True
@@ -288,6 +540,19 @@ async def scan_organization(
             except Exception as e:  # noqa: BLE001
                 errors.append(f"{brand}: {type(e).__name__}: {e}")
                 continue
+
+            # Per-store Feed Health snapshot. We record once per
+            # (term, store) so a sustained failure for one term shows
+            # up immediately in /feeds rather than waiting for an
+            # operator to wonder why findings stopped landing.
+            await _record_store_health(
+                db, store_label="google_play", brand=brand,
+                hits=gp_hits, organization_id=organization_id,
+            )
+            await _record_store_health(
+                db, store_label="apple", brand=brand,
+                hits=ios_hits, organization_id=organization_id,
+            )
 
             for store_hits, label in (
                 (gp_hits, "google_play"),

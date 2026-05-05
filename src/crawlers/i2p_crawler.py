@@ -63,7 +63,7 @@ class I2PEepsiteCrawler(BaseCrawler):
     Eepsite targets are configured per-deployment by the customer.
     """
 
-    name = "i2p_eepsite_crawler"
+    name = "i2p_eepsite"
     source_type = SourceType.I2P
 
     def __init__(

@@ -14,10 +14,8 @@ import {
   Crosshair,
   Settings,
   LogOut,
-  Database,
   Shield,
   Rss,
-  Puzzle,
   Sparkles,
   Briefcase,
   Bell,
@@ -34,11 +32,11 @@ import {
   ClipboardList,
   SlidersHorizontal,
   Layers,
-  Plug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/auth/auth-provider";
 import { ArgusLogo } from "@/components/shared/argus-logo";
+import { useCoverage, isPageCovered } from "@/lib/use-coverage";
 
 const NAV_OVERVIEW = [
   { label: "Dashboard", href: "/", icon: LayoutDashboard },
@@ -48,14 +46,16 @@ const NAV_OVERVIEW = [
 
 const NAV_RESPONSE = [
   { label: "Cases", href: "/cases", icon: Briefcase },
+  { label: "Playbooks", href: "/playbooks", icon: ClipboardList },
   { label: "Takedowns", href: "/takedowns", icon: Workflow },
   { label: "Alerts", href: "/alerts", icon: AlertTriangle },
   { label: "Investigations", href: "/investigations", icon: Sparkles },
 ];
 
 const NAV_BRAND = [
+  // Brand Defender lives as a sub-tab under /brand (?tab=defender),
+  // so the standalone /brand-defender entry was a duplicate.
   { label: "Brand Protection", href: "/brand", icon: ShieldCheck },
-  { label: "Brand Defender", href: "/brand-defender", icon: Sparkles },
   { label: "Exposures", href: "/exposures", icon: ShieldAlert },
   { label: "Attack Surface", href: "/surface", icon: Globe },
   { label: "TPRM", href: "/tprm", icon: Network },
@@ -66,7 +66,7 @@ const NAV_INTEL = [
   { label: "Threat Actors", href: "/actors", icon: Shield },
   { label: "Threat Hunter", href: "/threat-hunter", icon: Sparkles },
   { label: "MITRE ATT&CK", href: "/mitre", icon: Layers },
-  { label: "CVE / KEV", href: "/intel", icon: Eye },
+  { label: "Intel", href: "/intel", icon: Eye },
   { label: "Advisories", href: "/advisories", icon: Megaphone },
   { label: "News", href: "/news", icon: Newspaper },
 ];
@@ -83,13 +83,12 @@ const NAV_OPS = [
   { label: "Organizations", href: "/organizations", icon: Building2 },
   { label: "Onboarding", href: "/onboarding", icon: Sparkles },
   { label: "Feeds", href: "/feeds", icon: Rss },
-  { label: "Sources", href: "/sources", icon: Database },
   { label: "Crawlers", href: "/crawlers", icon: Bot },
   { label: "Activity", href: "/activity", icon: Activity },
   { label: "Reports", href: "/reports", icon: FileText },
   { label: "Compliance", href: "/compliance", icon: ClipboardList },
-  { label: "Integrations", href: "/integrations", icon: Puzzle },
-  { label: "Connectors", href: "/connectors", icon: Plug },
+  // Connectors page removed — folded into Settings → Services where
+  // env-var entry, install actions, AND health probes now coexist.
   { label: "Feed subscriptions", href: "/feed-subscriptions", icon: Bell },
   { label: "TAXII feed", href: "/taxii", icon: Rss },
 ];
@@ -103,6 +102,16 @@ const NAV_ADMIN = [
 
 function NavGroup({ label, items }: { label: string; items: typeof NAV_OVERVIEW }) {
   const pathname = usePathname();
+  const coverage = useCoverage();
+
+  // Auto-hide nav entries whose backing services are all unconfigured.
+  // Pages without any catalogued service producer (UI-only pages like
+  // /settings, /admin) stay visible — see lib/use-coverage.ts.
+  const visibleItems = items.filter((item) => isPageCovered(coverage, item.href));
+
+  // Whole group hides if every item filtered out — keeps the section
+  // header from looking like a stray label.
+  if (visibleItems.length === 0) return null;
 
   return (
     <div>
@@ -115,7 +124,7 @@ function NavGroup({ label, items }: { label: string; items: typeof NAV_OVERVIEW 
         </span>
       </div>
       <div className="px-2 space-y-px">
-        {items.map((item) => {
+        {visibleItems.map((item) => {
           const isActive =
             item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
           const Icon = item.icon;
@@ -191,7 +200,7 @@ export function Sidebar() {
             className="text-[16px] font-semibold tracking-[-0.02em]"
             style={{ color: "var(--color-ink)" }}
           >
-            Argus
+            Marsad
           </h1>
           <p
             className="text-[9px] tracking-[1.2px] uppercase mt-0.5 font-semibold"
@@ -267,7 +276,7 @@ export function Sidebar() {
             className="text-[11px] font-medium"
             style={{ color: "var(--color-muted)" }}
           >
-            Argus v0.1.0
+            Marsad v0.1.0
           </div>
         )}
       </div>

@@ -98,45 +98,42 @@ class Runner(abc.ABC):
     ) -> RunnerOutput: ...
 
 
-# --- Subfinder (subdomain enumeration) ---------------------------------
+# --- Subfinder + Amass + crt.sh + certspotter (multi-source enum) ------
 
 
 class SubfinderRunner(Runner):
-    """ProjectDiscovery subfinder. JSON-lines output."""
+    """ProjectDiscovery subfinder. JSON-lines output.
+
+    On every run we ALSO interleave passive-source results from amass,
+    crt.sh, and certspotter so a missing binary in one source doesn't
+    leave the operator blind. The first available primary source seeds
+    the result; supplemental sources are unioned. Errors per-source are
+    captured so the worker can surface partial-success.
+    """
 
     kind = "subdomain_enum"
 
-    def __init__(self, binary: str = "subfinder", extra_args: Iterable[str] = ()):
+    def __init__(
+        self,
+        binary: str = "subfinder",
+        amass_binary: str = "amass",
+        extra_args: Iterable[str] = (),
+    ):
         self.binary = binary
+        self.amass_binary = amass_binary
         self.extra_args = list(extra_args)
 
-    async def run(self, target, parameters=None):
-        params = parameters or {}
-        cmd = [self.binary, "-d", target, "-silent", "-oJ"]
-        cmd += list(self.extra_args)
-        if params.get("all_sources"):
-            cmd.append("-all")
+    async def _run_subfinder(self, target: str, timeout: float) -> tuple[bool, list[dict[str, Any]], str | None]:
+        cmd = [self.binary, "-d", target, "-silent", "-oJ"] + list(self.extra_args)
         try:
-            import time as _t
-
-            t0 = _t.perf_counter()
-            rc, out, err = await _exec(cmd, timeout=float(params.get("timeout", 300)))
-            dt = int((_t.perf_counter() - t0) * 1000)
+            rc, out, _ = await _exec(cmd, timeout=timeout)
         except FileNotFoundError as e:
-            return RunnerOutput(succeeded=False, error_message=str(e))
+            return False, [], f"subfinder binary missing: {e}"
         except asyncio.TimeoutError:
-            return RunnerOutput(succeeded=False, error_message="subfinder timed out")
-
+            return False, [], "subfinder timed out"
         if rc != 0:
-            return RunnerOutput(
-                succeeded=False,
-                raw_stdout=out,
-                raw_stderr=err,
-                duration_ms=dt,
-                error_message=f"subfinder exit code {rc}",
-            )
-
-        items = []
+            return False, [], f"subfinder exit {rc}"
+        items: list[dict[str, Any]] = []
         for line in out.splitlines():
             line = line.strip()
             if not line:
@@ -144,7 +141,6 @@ class SubfinderRunner(Runner):
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError:
-                # Older subfinder versions emit one host per line in -silent
                 items.append({"host": line, "source": "subfinder"})
                 continue
             host = obj.get("host") or obj.get("name")
@@ -155,7 +151,158 @@ class SubfinderRunner(Runner):
                         "source": obj.get("source") or "subfinder",
                     }
                 )
-        return RunnerOutput(succeeded=True, items=items, raw_stdout=out, duration_ms=dt)
+        return True, items, None
+
+    async def _run_amass(self, target: str, timeout: float) -> tuple[bool, list[dict[str, Any]], str | None]:
+        # Amass intel passive mode — much deeper than subfinder for some
+        # targets, but slower. Cap timeout aggressively.
+        cmd = [self.amass_binary, "enum", "-passive", "-d", target, "-json", "-"]
+        try:
+            rc, out, _ = await _exec(cmd, timeout=timeout)
+        except FileNotFoundError as e:
+            return False, [], f"amass binary missing: {e}"
+        except asyncio.TimeoutError:
+            return False, [], "amass timed out"
+        if rc != 0 and not out.strip():
+            return False, [], f"amass exit {rc}"
+        items: list[dict[str, Any]] = []
+        for line in out.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                items.append({"host": line, "source": "amass"})
+                continue
+            host = obj.get("name") or obj.get("host")
+            if host:
+                items.append({"host": host.lower().rstrip("."), "source": "amass"})
+        return True, items, None
+
+    async def _run_crtsh(self, target: str, timeout: float) -> tuple[bool, list[dict[str, Any]], str | None]:
+        """crt.sh JSON endpoint — free, no auth, no rate limits worth
+        worrying about for periodic runs. Already used by the on-demand
+        ``SurfaceScanner`` but we duplicate here so this runner alone is
+        a complete passive sweep."""
+        import aiohttp
+        url = f"https://crt.sh/?q=%25.{target}&output=json"
+        timeout_cfg = aiohttp.ClientTimeout(total=timeout)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout_cfg) as sess:
+                async with sess.get(url) as resp:
+                    if resp.status != 200:
+                        return False, [], f"crt.sh HTTP {resp.status}"
+                    data = await resp.json(content_type=None)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            return False, [], f"crt.sh: {e}"
+        items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for entry in data or []:
+            name_value = entry.get("name_value") or ""
+            for name in name_value.split("\n"):
+                name = name.strip().lower().lstrip("*.").rstrip(".")
+                if not name or "*" in name:
+                    continue
+                if not name.endswith(target.lower()):
+                    continue
+                if name in seen:
+                    continue
+                seen.add(name)
+                items.append({"host": name, "source": "crt.sh"})
+        return True, items, None
+
+    async def _run_certspotter(self, target: str, timeout: float) -> tuple[bool, list[dict[str, Any]], str | None]:
+        """SSLMate certspotter free API — supplements crt.sh by catching
+        certs the crt.sh log mirror sometimes lags on. Free tier: 100
+        req/hr per IP.
+        """
+        import aiohttp
+        url = (
+            f"https://api.certspotter.com/v1/issuances?domain={target}"
+            "&include_subdomains=true&expand=dns_names"
+        )
+        timeout_cfg = aiohttp.ClientTimeout(total=timeout)
+        try:
+            async with aiohttp.ClientSession(timeout=timeout_cfg) as sess:
+                async with sess.get(url) as resp:
+                    if resp.status == 429:
+                        return False, [], "certspotter: rate-limited"
+                    if resp.status != 200:
+                        return False, [], f"certspotter HTTP {resp.status}"
+                    data = await resp.json(content_type=None)
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            return False, [], f"certspotter: {e}"
+        items: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for cert in data or []:
+            for name in cert.get("dns_names") or []:
+                name = name.strip().lower().lstrip("*.").rstrip(".")
+                if not name or "*" in name or not name.endswith(target.lower()):
+                    continue
+                if name in seen:
+                    continue
+                seen.add(name)
+                items.append({"host": name, "source": "certspotter"})
+        return True, items, None
+
+    async def run(self, target, parameters=None):
+        params = parameters or {}
+        per_source_timeout = float(params.get("timeout", 300))
+        import time as _t
+
+        t0 = _t.perf_counter()
+        # Run all four sources concurrently. Each returns (ok, items, err).
+        results = await asyncio.gather(
+            self._run_subfinder(target, per_source_timeout),
+            self._run_amass(target, per_source_timeout),
+            self._run_crtsh(target, per_source_timeout),
+            self._run_certspotter(target, per_source_timeout),
+            return_exceptions=False,
+        )
+        dt = int((_t.perf_counter() - t0) * 1000)
+
+        all_items: list[dict[str, Any]] = []
+        errors: list[str] = []
+        successes: list[str] = []
+        for label, (ok, items, err) in zip(
+            ("subfinder", "amass", "crt.sh", "certspotter"), results
+        ):
+            if err and not ok:
+                errors.append(f"{label}: {err}")
+            if ok:
+                successes.append(label)
+                all_items.extend(items)
+
+        # Dedup by host across sources, preferring the most authoritative
+        # source label so the operator can see provenance.
+        priority = {"subfinder": 0, "amass": 1, "crt.sh": 2, "certspotter": 3}
+        by_host: dict[str, dict[str, Any]] = {}
+        for it in all_items:
+            host = (it.get("host") or "").lower().rstrip(".")
+            if not host:
+                continue
+            existing = by_host.get(host)
+            if existing is None or priority.get(it.get("source", ""), 99) < priority.get(existing.get("source", ""), 99):
+                by_host[host] = {"host": host, "source": it.get("source")}
+        deduped = sorted(by_host.values(), key=lambda x: x["host"])
+
+        if not successes:
+            # Every source failed — this is a hard failure.
+            return RunnerOutput(
+                succeeded=False,
+                error_message="; ".join(errors)[:500],
+                duration_ms=dt,
+            )
+        # Partial-success is still ``succeeded=True`` but errors are
+        # surfaced via raw_stderr so the worker can attach them.
+        return RunnerOutput(
+            succeeded=True,
+            items=deduped,
+            raw_stderr="\n".join(errors) if errors else None,
+            raw_stdout=f"sources_ok={','.join(successes)} sources_failed={len(errors)}",
+            duration_ms=dt,
+        )
 
 
 # --- httpx (HTTP probe) ------------------------------------------------
@@ -665,6 +812,194 @@ class TestSslRunner(Runner):
         return RunnerOutput(succeeded=True, items=items, raw_stdout=out, duration_ms=dt)
 
 
+# --- gowitness (visual screenshots) -----------------------------------
+
+
+class GowitnessRunner(Runner):
+    """sensepost gowitness — captures a PNG screenshot of a target URL.
+
+    We use the ``single`` subcommand which writes the PNG into the
+    sandboxed ``--screenshot-path`` and prints a JSON line with the
+    capture metadata. The PNG is then base64-encoded and returned in the
+    items list so the worker can persist it (operators can wire S3/MinIO
+    storage as a follow-up — for now the raw bytes ride in the worker
+    response).
+    """
+
+    kind = "screenshot"
+
+    def __init__(
+        self, binary: str = "gowitness", extra_args: Iterable[str] = ()
+    ):
+        self.binary = binary
+        self.extra_args = list(extra_args)
+
+    async def run(self, target, parameters=None):
+        import base64
+        import os
+        import tempfile
+
+        params = parameters or {}
+        # gowitness needs a writable directory for screenshots.
+        tmpdir = tempfile.mkdtemp(prefix="argus-gowitness-")
+        url = target if "://" in target else f"https://{target}"
+        cmd = [
+            self.binary,
+            "single",
+            "--url",
+            url,
+            "--screenshot-path",
+            tmpdir,
+            "--no-http",  # disable internal http server
+        ] + list(self.extra_args)
+        import time as _t
+
+        t0 = _t.perf_counter()
+        try:
+            rc, out, err = await _exec(
+                cmd, timeout=float(params.get("timeout", 120))
+            )
+        except FileNotFoundError as e:
+            return RunnerOutput(succeeded=False, error_message=str(e))
+        except asyncio.TimeoutError:
+            return RunnerOutput(
+                succeeded=False, error_message="gowitness timed out"
+            )
+        dt = int((_t.perf_counter() - t0) * 1000)
+
+        # Find the produced PNG (gowitness names it after the URL hash).
+        png_paths = [
+            os.path.join(tmpdir, f)
+            for f in os.listdir(tmpdir)
+            if f.endswith(".png")
+        ]
+        if rc != 0 and not png_paths:
+            return RunnerOutput(
+                succeeded=False,
+                raw_stdout=out,
+                raw_stderr=err,
+                duration_ms=dt,
+                error_message=f"gowitness exit {rc}",
+            )
+
+        items: list[dict[str, Any]] = []
+        for path in png_paths[:1]:  # one capture per run
+            try:
+                with open(path, "rb") as f:
+                    png_bytes = f.read()
+                items.append(
+                    {
+                        "url": url,
+                        "host": target,
+                        "screenshot_b64": base64.b64encode(png_bytes).decode(),
+                        "size_bytes": len(png_bytes),
+                        "captured_at": datetime_now_iso(),
+                    }
+                )
+            finally:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+        try:
+            os.rmdir(tmpdir)
+        except OSError:
+            pass
+
+        return RunnerOutput(
+            succeeded=True, items=items, raw_stdout=out, duration_ms=dt
+        )
+
+
+# --- dnsx (bulk DNS w/ DNSSEC) ----------------------------------------
+
+
+class DnsxRunner(Runner):
+    """ProjectDiscovery dnsx — same DNS surface as DnsRefreshRunner but
+    much faster on bulk lookups and reports DNSSEC chain validity. We
+    keep DnsRefreshRunner as the fallback when dnsx isn't installed —
+    this runner is opt-in via the ``dns_detail`` job kind.
+    """
+
+    kind = "dns_detail"
+
+    def __init__(self, binary: str = "dnsx", extra_args: Iterable[str] = ()):
+        self.binary = binary
+        self.extra_args = list(extra_args)
+
+    async def run(self, target, parameters=None):
+        params = parameters or {}
+        cmd = [
+            self.binary,
+            "-silent",
+            "-json",
+            "-a",
+            "-aaaa",
+            "-cname",
+            "-mx",
+            "-ns",
+            "-txt",
+            "-soa",
+            "-ptr",
+            "-resp",
+            "-no-color",
+        ] + list(self.extra_args)
+        stdin = f"{target}\n"
+        import time as _t
+
+        t0 = _t.perf_counter()
+        try:
+            rc, out, err = await _exec(
+                cmd,
+                stdin=stdin,
+                timeout=float(params.get("timeout", 60)),
+            )
+        except FileNotFoundError as e:
+            return RunnerOutput(succeeded=False, error_message=str(e))
+        dt = int((_t.perf_counter() - t0) * 1000)
+        if rc != 0 and not out.strip():
+            return RunnerOutput(
+                succeeded=False,
+                raw_stdout=out,
+                raw_stderr=err,
+                duration_ms=dt,
+                error_message=f"dnsx exit {rc}",
+            )
+        items: list[dict[str, Any]] = []
+        for line in out.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            items.append(
+                {
+                    "domain": (obj.get("host") or target).lower().rstrip("."),
+                    "a": obj.get("a") or [],
+                    "aaaa": obj.get("aaaa") or [],
+                    "cname": obj.get("cname") or [],
+                    "mx": obj.get("mx") or [],
+                    "ns": obj.get("ns") or [],
+                    "txt": obj.get("txt") or [],
+                    "soa": obj.get("soa") or [],
+                    "ptr": obj.get("ptr") or [],
+                    "dnssec": obj.get("dnssec"),
+                    "raw": obj,
+                }
+            )
+        return RunnerOutput(
+            succeeded=True, items=items, raw_stdout=out, duration_ms=dt
+        )
+
+
+def datetime_now_iso() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).isoformat()
+
+
 # --- Registry ----------------------------------------------------------
 
 
@@ -677,6 +1012,8 @@ _REGISTRY: dict[str, Runner] = {
     "vuln_scan": NucleiRunner(),
     "service_version": NmapServiceVersionRunner(),
     "tls_audit": TestSslRunner(),
+    "screenshot": GowitnessRunner(),
+    "dns_detail": DnsxRunner(),
 }
 
 
@@ -701,6 +1038,8 @@ def reset_runner_registry() -> None:
             "vuln_scan": NucleiRunner(),
             "service_version": NmapServiceVersionRunner(),
             "tls_audit": TestSslRunner(),
+            "screenshot": GowitnessRunner(),
+            "dns_detail": DnsxRunner(),
         }
     )
 
@@ -716,6 +1055,8 @@ __all__ = [
     "NucleiRunner",
     "NmapServiceVersionRunner",
     "TestSslRunner",
+    "GowitnessRunner",
+    "DnsxRunner",
     "get_runner_registry",
     "set_runner_registry",
     "reset_runner_registry",

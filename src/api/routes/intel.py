@@ -1050,6 +1050,190 @@ async def breach_search_email(
     }
 
 
+@router.get("/enrich/abuseipdb/{ip}")
+async def abuseipdb_check(
+    ip: str,
+    analyst: AnalystUser,
+    use_cache: bool = True,
+    max_age_days: int = 90,
+):
+    """Per-IP AbuseIPDB lookup. Cached 24h in Redis. Free tier
+    handles 1,000 of these per day vs. 5/day for the bulk
+    /blacklist endpoint we previously used."""
+    from src.enrichment.abuseipdb import check_ip
+    res = await check_ip(ip, max_age_days=max_age_days, use_cache=use_cache)
+    return res.to_dict()
+
+
+@router.get("/enrich/greynoise/{ip}")
+async def greynoise_community_check(
+    ip: str,
+    analyst: AnalystUser,
+    use_cache: bool = True,
+):
+    """Per-IP GreyNoise Community lookup. Cached 24h in Redis.
+
+    Wired here (and not in the GreyNoiseFeed bulk poll) because the
+    Community tier API key gates the per-IP ``/v3/community/{ip}``
+    endpoint, NOT the bulk GNQL search the feed uses. Operators with
+    a free Community key get usable enrichment without paying for
+    the Enterprise tier."""
+    from src.enrichment.greynoise import check_ip
+    res = await check_ip(ip, use_cache=use_cache)
+    return res.to_dict()
+
+
+@router.get("/enrich/team-cymru/{ip}")
+async def team_cymru_check(
+    ip: str,
+    analyst: AnalystUser,
+    use_cache: bool = True,
+):
+    """Per-IP Team Cymru WHOIS lookup. Free, no key, no rate limit
+    (within fair-use). Returns ASN + BGP prefix + country + registry.
+    Cached 7d. For bulk enrichment use lookup_bulk() directly to
+    batch many IPs into a single TCP session."""
+    from src.enrichment.team_cymru import lookup
+    res = await lookup(ip, use_cache=use_cache)
+    return res.to_dict()
+
+
+@router.get("/enrich/ipinfo-lite/{ip}")
+async def ipinfo_lite_check(
+    ip: str,
+    analyst: AnalystUser,
+    use_cache: bool = True,
+):
+    """Per-IP ipinfo.io Lite lookup. Free tier — country + ASN data,
+    no monthly cap. Requires ARGUS_IPINFO_LITE_TOKEN (free at
+    ipinfo.io)."""
+    from src.enrichment.ipinfo_lite import lookup
+    res = await lookup(ip, use_cache=use_cache)
+    return res.to_dict()
+
+
+@router.get("/enrich/xforce/{ip}")
+async def xforce_check(
+    ip: str,
+    analyst: AnalystUser,
+    use_cache: bool = True,
+):
+    """Per-IP IBM X-Force Exchange lookup. Free-tier API; requires
+    BYOK ARGUS_XFORCE_API_KEY + ARGUS_XFORCE_API_PASSWORD (generate
+    both as a pair in the X-Force settings UI). Cached 24h."""
+    from src.enrichment.xforce import check_ip
+    res = await check_ip(ip, use_cache=use_cache)
+    return res.to_dict()
+
+
+@router.get("/enrich/pulsedive/{indicator}")
+async def pulsedive_check(
+    indicator: str,
+    analyst: AnalystUser,
+    use_cache: bool = True,
+):
+    """Per-indicator Pulsedive lookup. Pulsedive aggregates 45+ OSINT
+    feeds and returns the recommended risk score plus contributing
+    feeds + threats. Free anonymous tier works (low rate limit); set
+    ARGUS_PULSEDIVE_API_KEY for higher quota."""
+    from src.enrichment.pulsedive import lookup
+    res = await lookup(indicator, use_cache=use_cache)
+    return res.to_dict()
+
+
+@router.get("/enrich/shodan-internetdb/{ip}")
+async def shodan_internetdb_check(
+    ip: str,
+    analyst: AnalystUser,
+    use_cache: bool = True,
+):
+    """Per-IP Shodan InternetDB lookup. Free, no key, returns open
+    ports + CPEs + CVE IDs + hostnames + Shodan tags. Cached 24h in
+    Redis; the upstream snapshot only refreshes weekly so a single
+    /iocs page render won't burn the upstream."""
+    from src.enrichment.shodan_internetdb import check_ip
+    res = await check_ip(ip, use_cache=use_cache)
+    return res.to_dict()
+
+
+@router.get("/enrich/hashlookup/{file_hash}")
+async def hashlookup_check(
+    file_hash: str,
+    analyst: AnalystUser,
+):
+    """Per-hash CIRCL hashlookup classification (NSRL + curated good/bad).
+    Free public service, no key. Returns known-good / known-bad / unknown
+    plus source provenance and any human-readable filename hints CIRCL
+    knows for the hash. Useful triage: if a file we sandboxed comes back
+    as NSRL-known-good, the analyst can de-prioritise it before running
+    a full CAPEv2 detonation.
+
+    Accepts md5 / sha1 / sha256; the adapter detects the kind."""
+    from src.enrichment.circl import hashlookup
+    res = await hashlookup(file_hash)
+    if res is None:
+        return {"hash": file_hash, "known": None, "evidence": "lookup unavailable"}
+    return {
+        "hash": res.hash,
+        "hash_kind": res.hash_kind,
+        "known": res.known,            # "good" | "bad" | "unknown"
+        "source": res.source,
+        "filename_hint": res.filename_hint,
+        "extra": res.extra,
+    }
+
+
+class ReconHarvestRequest(BaseModel):
+    domain: str
+    sources: list[str] | None = None  # default = curated free sources
+    timeout_s: int = 180
+
+
+@router.post("/recon/harvest")
+async def recon_harvest(
+    body: ReconHarvestRequest,
+    analyst: AnalystUser,
+):
+    """theHarvester-powered passive recon: emails + subdomains + IPs
+    associated with a domain, scraped from public OSINT sources
+    (search engines, CT logs, GitHub, threat feeds). Used for
+    onboarding asset discovery and exec-email seeding."""
+    from src.integrations.osint.the_harvester import harvest
+
+    report = await harvest(
+        body.domain, sources=body.sources, timeout_s=body.timeout_s,
+    )
+    return report.to_dict()
+
+
+class EmailExposureRequest(BaseModel):
+    email: str
+    full: bool = False  # True = run all ~120 holehe checkers, default = curated subset
+    timeout_s: float = 8.0
+
+
+@router.post("/leakage/email-exposure")
+async def email_exposure(
+    body: EmailExposureRequest,
+    analyst: AnalystUser,
+):
+    """Holehe-powered "where is this email registered?" exposure surface.
+
+    Complements the breach providers: where ``/breach/search/email``
+    answers "was this email leaked?", this endpoint answers "where is
+    this email REGISTERED at all?" — the raw exposure surface that
+    expands an attacker's phishing + ATO target list.
+
+    Curated default checks ~50 high-signal services; ``full=true``
+    runs all ~120 holehe modules (slower, noisier)."""
+    from src.integrations.osint.holehe import check_email
+
+    report = await check_email(
+        body.email, full=body.full, timeout_s=body.timeout_s,
+    )
+    return report.to_dict()
+
+
 class BreachSearchPasswordRequest(BaseModel):
     sha1_hash: str  # 40-char hex SHA-1 of the candidate password
 
@@ -1790,3 +1974,145 @@ async def telegram_health(admin: AdminUser):
     from src.integrations.telegram_collector import health_check
     r = await health_check()
     return r.to_dict()
+
+
+# --- Saved searches + digests --------------------------------------
+
+from src.models.saved_searches import IntelDigestDelivery, SavedSearch  # noqa: E402
+
+
+class SavedSearchCreate(BaseModel):
+    organization_id: uuid.UUID
+    name: str = Field(min_length=1, max_length=255)
+    scope: str = Field(pattern=r"^(cve|article|advisory)$")
+    filters: dict = Field(default_factory=dict)
+    digest_frequency: str = "daily"  # off | daily | weekly
+    digest_email: str | None = None
+    active: bool = True
+
+
+class SavedSearchResponse(BaseModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    user_id: uuid.UUID | None
+    name: str
+    scope: str
+    filters: dict
+    digest_frequency: str
+    digest_email: str | None
+    last_run_at: datetime | None
+    active: bool
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+@router.post("/saved-searches", response_model=SavedSearchResponse, status_code=201)
+async def create_saved_search(
+    body: SavedSearchCreate,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    s = SavedSearch(
+        organization_id=body.organization_id,
+        user_id=getattr(analyst, "id", None),
+        name=body.name.strip(),
+        scope=body.scope,
+        filters=body.filters or {},
+        digest_frequency=body.digest_frequency,
+        digest_email=body.digest_email,
+        active=body.active,
+    )
+    db.add(s)
+    await db.commit()
+    await db.refresh(s)
+    return s
+
+
+@router.get("/saved-searches", response_model=list[SavedSearchResponse])
+async def list_saved_searches(
+    organization_id: uuid.UUID,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    rows = (
+        await db.execute(
+            select(SavedSearch)
+            .where(SavedSearch.organization_id == organization_id)
+            .order_by(SavedSearch.created_at.desc())
+        )
+    ).scalars().all()
+    return list(rows)
+
+
+@router.delete("/saved-searches/{search_id}", status_code=204)
+async def delete_saved_search(
+    search_id: uuid.UUID,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    s = await db.get(SavedSearch, search_id)
+    if not s:
+        raise HTTPException(404, "Search not found")
+    await db.delete(s)
+    await db.commit()
+
+
+@router.post("/saved-searches/{search_id}/run", response_model=dict)
+async def run_saved_search_endpoint(
+    search_id: uuid.UUID,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """Run one search now; persist a digest delivery."""
+    from src.intel.digest_runner import run_saved_search
+
+    s = await db.get(SavedSearch, search_id)
+    if not s:
+        raise HTTPException(404, "Search not found")
+    d = await run_saved_search(db, s)
+    if d is None:
+        return {"created": False, "match_count": 0}
+    return {"created": True, "delivery_id": str(d.id), "match_count": d.match_count}
+
+
+@router.post("/saved-searches/run-due", response_model=dict)
+async def run_due_digests_endpoint(
+    admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """Cron-friendly: render digests for every search whose interval elapsed."""
+    from src.intel.digest_runner import run_due_digests
+
+    return await run_due_digests(db)
+
+
+@router.get("/digests", response_model=list[dict])
+async def list_digests(
+    organization_id: uuid.UUID,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+    limit: int = 20,
+):
+    rows = (
+        await db.execute(
+            select(IntelDigestDelivery, SavedSearch)
+            .join(SavedSearch, SavedSearch.id == IntelDigestDelivery.saved_search_id)
+            .where(SavedSearch.organization_id == organization_id)
+            .order_by(IntelDigestDelivery.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    return [
+        {
+            "id": str(d.id),
+            "saved_search": s.name,
+            "scope": s.scope,
+            "match_count": d.match_count,
+            "delivered": d.delivered,
+            "created_at": d.created_at.isoformat(),
+            "preview": (d.body_markdown or "")[:600],
+        }
+        for d, s in rows
+    ]

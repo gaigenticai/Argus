@@ -27,8 +27,13 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.mitre import (
+    MitreCampaign,
+    MitreDataSource,
+    MitreGroup,
     MitreMatrix,
     MitreMitigation,
+    MitreRelationship,
+    MitreSoftware,
     MitreSync,
     MitreTactic,
     MitreTechnique,
@@ -64,6 +69,11 @@ class SyncReport:
     techniques: int = 0
     subtechniques: int = 0
     mitigations: int = 0
+    groups: int = 0
+    software: int = 0
+    data_sources: int = 0
+    campaigns: int = 0
+    relationships: int = 0
     deprecated: int = 0
     succeeded: bool = False
     error: str | None = None
@@ -127,6 +137,110 @@ def _is_tactic(o: dict[str, Any]) -> bool:
 
 def _is_mitigation(o: dict[str, Any]) -> bool:
     return o.get("type") == "course-of-action" and bool(_external_id(o))
+
+
+def _is_group(o: dict[str, Any]) -> bool:
+    return o.get("type") == "intrusion-set" and bool(_external_id(o))
+
+
+def _is_malware(o: dict[str, Any]) -> bool:
+    return o.get("type") == "malware" and bool(_external_id(o))
+
+
+def _is_tool(o: dict[str, Any]) -> bool:
+    return o.get("type") == "tool" and bool(_external_id(o))
+
+
+def _is_data_source(o: dict[str, Any]) -> bool:
+    return o.get("type") == "x-mitre-data-source" and bool(_external_id(o))
+
+
+def _is_data_component(o: dict[str, Any]) -> bool:
+    return o.get("type") == "x-mitre-data-component"
+
+
+def _is_campaign(o: dict[str, Any]) -> bool:
+    return o.get("type") == "campaign" and bool(_external_id(o))
+
+
+def _is_relationship(o: dict[str, Any]) -> bool:
+    return o.get("type") == "relationship"
+
+
+def _all_external_refs(stix_obj: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return external references with non-MITRE source-name first.
+
+    Used to capture published research backing (papers, blogs) for
+    actors/groups, since /actors UI surfaces these as the "Reading list".
+    """
+    out: list[dict[str, Any]] = []
+    for ref in stix_obj.get("external_references", []) or []:
+        sn = ref.get("source_name") or ""
+        if sn.startswith("mitre-attack"):
+            continue
+        url = ref.get("url")
+        if not url:
+            continue
+        out.append(
+            {
+                "source_name": sn,
+                "description": ref.get("description"),
+                "url": url,
+                "external_id": ref.get("external_id"),
+            }
+        )
+    return out
+
+
+def _extract_country_codes(description: str | None) -> list[str]:
+    """Heuristic country tag from a MITRE Group description.
+
+    Matches "X-nexus / X-aligned / based in X / believed to be X" against a
+    short country dictionary; never makes a hard attribution claim — used
+    only as a default tag that analysts can override on the actor record.
+    """
+    if not description:
+        return []
+    text = description.lower()
+    # Map country / region keyword → ISO 3166 alpha-2
+    mapping = {
+        "iran": "IR",
+        "iranian": "IR",
+        "russia": "RU",
+        "russian": "RU",
+        "china": "CN",
+        "chinese": "CN",
+        "north korea": "KP",
+        "north korean": "KP",
+        "dprk": "KP",
+        "south korea": "KR",
+        "ukraine": "UA",
+        "ukrainian": "UA",
+        "belarus": "BY",
+        "belarusian": "BY",
+        "syria": "SY",
+        "syrian": "SY",
+        "lebanon": "LB",
+        "vietnam": "VN",
+        "vietnamese": "VN",
+        "pakistan": "PK",
+        "pakistani": "PK",
+        "india": "IN",
+        "indian": "IN",
+        "turkey": "TR",
+        "turkish": "TR",
+        "israel": "IL",
+        "israeli": "IL",
+        "united states": "US",
+        "u.s.": "US",
+        "brazil": "BR",
+        "brazilian": "BR",
+    }
+    found: list[str] = []
+    for kw, code in mapping.items():
+        if kw in text and code not in found:
+            found.append(code)
+    return found
 
 
 _VERSION_RE = re.compile(r"^v?\d+(\.\d+)*$")
@@ -296,6 +410,242 @@ async def sync_matrix(
             db.add(row)
             report.mitigations += 1
 
+        # ----- Groups (intrusion-set, G####) -----
+        existing_groups = {
+            g.external_id: g
+            for g in (
+                await db.execute(
+                    select(MitreGroup).where(MitreGroup.matrix == matrix.value)
+                )
+            ).scalars()
+        }
+        for o in objects:
+            if not _is_group(o):
+                continue
+            ext_id = _external_id(o)
+            aliases = sorted(set(o.get("aliases") or []))
+            row = existing_groups.get(ext_id) or MitreGroup(
+                matrix=matrix.value,
+                external_id=ext_id,
+                name=o.get("name") or ext_id,
+            )
+            row.matrix = matrix.value
+            row.name = o.get("name") or ext_id
+            row.aliases = aliases
+            row.description = o.get("description")
+            row.country_codes = _extract_country_codes(o.get("description"))
+            row.references = _all_external_refs(o)
+            row.deprecated = bool(o.get("x_mitre_deprecated"))
+            row.revoked = bool(o.get("revoked"))
+            row.url = _external_url(o)
+            row.sync_version = sync_version
+            row.raw = o
+            db.add(row)
+            report.groups += 1
+
+        # ----- Software (malware + tool, S####) -----
+        existing_sw = {
+            s.external_id: s
+            for s in (
+                await db.execute(
+                    select(MitreSoftware).where(MitreSoftware.matrix == matrix.value)
+                )
+            ).scalars()
+        }
+        for o in objects:
+            if not (_is_malware(o) or _is_tool(o)):
+                continue
+            ext_id = _external_id(o)
+            aliases = sorted(
+                set(o.get("aliases") or o.get("x_mitre_aliases") or [])
+            )
+            row = existing_sw.get(ext_id) or MitreSoftware(
+                matrix=matrix.value,
+                external_id=ext_id,
+                name=o.get("name") or ext_id,
+                software_type="malware" if _is_malware(o) else "tool",
+            )
+            row.matrix = matrix.value
+            row.name = o.get("name") or ext_id
+            row.aliases = aliases
+            row.software_type = "malware" if _is_malware(o) else "tool"
+            row.description = o.get("description")
+            row.platforms = sorted(set(o.get("x_mitre_platforms") or []))
+            row.labels = sorted(set(o.get("labels") or []))
+            row.references = _all_external_refs(o)
+            row.deprecated = bool(o.get("x_mitre_deprecated"))
+            row.revoked = bool(o.get("revoked"))
+            row.url = _external_url(o)
+            row.sync_version = sync_version
+            row.raw = o
+            db.add(row)
+            report.software += 1
+
+        # ----- Data sources + components (DS####) -----
+        # Components are children of a data source via x_mitre_data_source_ref.
+        # We collapse them into the data source's data_components JSONB so
+        # the catalog stays one row per DS (matches MITRE Navigator's model).
+        components_by_source: dict[str, list[dict[str, Any]]] = {}
+        ds_id_to_external: dict[str, str] = {
+            o.get("id"): _external_id(o) for o in objects if _is_data_source(o)
+        }
+        for o in objects:
+            if not _is_data_component(o):
+                continue
+            parent_stix_id = o.get("x_mitre_data_source_ref")
+            parent_ext = ds_id_to_external.get(parent_stix_id)
+            if not parent_ext:
+                continue
+            components_by_source.setdefault(parent_ext, []).append(
+                {
+                    "name": o.get("name"),
+                    "description": o.get("description"),
+                    "stix_id": o.get("id"),
+                }
+            )
+
+        existing_ds = {
+            d.external_id: d
+            for d in (
+                await db.execute(
+                    select(MitreDataSource).where(
+                        MitreDataSource.matrix == matrix.value
+                    )
+                )
+            ).scalars()
+        }
+        for o in objects:
+            if not _is_data_source(o):
+                continue
+            ext_id = _external_id(o)
+            row = existing_ds.get(ext_id) or MitreDataSource(
+                matrix=matrix.value,
+                external_id=ext_id,
+                name=o.get("name") or ext_id,
+            )
+            row.matrix = matrix.value
+            row.name = o.get("name") or ext_id
+            row.description = o.get("description")
+            row.platforms = sorted(set(o.get("x_mitre_platforms") or []))
+            row.collection_layers = sorted(
+                set(o.get("x_mitre_collection_layers") or [])
+            )
+            row.data_components = components_by_source.get(ext_id, [])
+            row.url = _external_url(o)
+            row.sync_version = sync_version
+            row.raw = o
+            db.add(row)
+            report.data_sources += 1
+
+        # ----- Campaigns (C####) -----
+        existing_camp = {
+            c.external_id: c
+            for c in (
+                await db.execute(
+                    select(MitreCampaign).where(MitreCampaign.matrix == matrix.value)
+                )
+            ).scalars()
+        }
+        for o in objects:
+            if not _is_campaign(o):
+                continue
+            ext_id = _external_id(o)
+            row = existing_camp.get(ext_id) or MitreCampaign(
+                matrix=matrix.value,
+                external_id=ext_id,
+                name=o.get("name") or ext_id,
+            )
+            row.matrix = matrix.value
+            row.name = o.get("name") or ext_id
+            row.aliases = sorted(set(o.get("aliases") or []))
+            row.description = o.get("description")
+            from datetime import datetime as _dt
+
+            def _parse(ts: str | None):
+                if not ts:
+                    return None
+                try:
+                    return _dt.fromisoformat(ts.replace("Z", "+00:00"))
+                except Exception:  # noqa: BLE001
+                    return None
+
+            row.first_seen = _parse(o.get("first_seen"))
+            row.last_seen = _parse(o.get("last_seen"))
+            row.references = _all_external_refs(o)
+            row.url = _external_url(o)
+            row.sync_version = sync_version
+            row.raw = o
+            db.add(row)
+            report.campaigns += 1
+
+        # ----- Relationships (technique↔group↔software↔mitigation) -----
+        # STIX object IDs → (type, external_id) lookup so we can resolve
+        # relationship endpoints without a second pass.
+        stix_id_index: dict[str, tuple[str, str]] = {}
+        for o in objects:
+            ext = _external_id(o)
+            if not ext:
+                continue
+            t = o.get("type")
+            sid = o.get("id")
+            if t == "intrusion-set":
+                stix_id_index[sid] = ("group", ext)
+            elif t == "attack-pattern":
+                stix_id_index[sid] = ("technique", ext)
+            elif t == "malware":
+                stix_id_index[sid] = ("software", ext)
+            elif t == "tool":
+                stix_id_index[sid] = ("software", ext)
+            elif t == "course-of-action":
+                stix_id_index[sid] = ("mitigation", ext)
+            elif t == "x-mitre-data-source":
+                stix_id_index[sid] = ("data-source", ext)
+            elif t == "campaign":
+                stix_id_index[sid] = ("campaign", ext)
+            elif t == "x-mitre-tactic":
+                stix_id_index[sid] = ("tactic", ext)
+
+        # Pre-load existing relationships to avoid N inserts per sync.
+        existing_rels = {
+            (
+                r.source_type,
+                r.source_external_id,
+                r.relationship_type,
+                r.target_type,
+                r.target_external_id,
+            ): r
+            for r in (
+                await db.execute(
+                    select(MitreRelationship).where(
+                        MitreRelationship.matrix == matrix.value
+                    )
+                )
+            ).scalars()
+        }
+        for o in objects:
+            if not _is_relationship(o):
+                continue
+            src_pair = stix_id_index.get(o.get("source_ref"))
+            tgt_pair = stix_id_index.get(o.get("target_ref"))
+            if not src_pair or not tgt_pair:
+                continue
+            rel_type = o.get("relationship_type") or "related-to"
+            key = (src_pair[0], src_pair[1], rel_type, tgt_pair[0], tgt_pair[1])
+            row = existing_rels.get(key) or MitreRelationship(
+                matrix=matrix.value,
+                source_type=src_pair[0],
+                source_external_id=src_pair[1],
+                relationship_type=rel_type,
+                target_type=tgt_pair[0],
+                target_external_id=tgt_pair[1],
+            )
+            row.matrix = matrix.value
+            row.description = o.get("description")
+            row.references = _all_external_refs(o)
+            row.sync_version = sync_version
+            db.add(row)
+            report.relationships += 1
+
         report.succeeded = True
     except Exception as e:  # noqa: BLE001
         await db.rollback()
@@ -327,9 +677,115 @@ async def _record_sync(
     await db.commit()
 
 
+# --- Cross-sync derived data: import MITRE Groups → ThreatActor table ----
+
+async def upsert_actors_from_groups(
+    db: AsyncSession,
+    *,
+    organization_id=None,  # accepted for API symmetry; ThreatActor is global
+) -> int:
+    """Auto-create / update ThreatActor rows from MitreGroup rows.
+
+    Idempotent. Matches on `mitre_group_id` first, then by
+    case-insensitive `primary_alias`. Pulls aliases, country/sector
+    tags, references, malware families (via relationships) into the
+    actor profile so /actors becomes a real Group encyclopedia.
+
+    Note: ThreatActor is a global catalog; ``organization_id`` is
+    accepted but not used as a filter — every org sees the same
+    catalog and can layer per-org overrides via separate tables.
+    """
+    from datetime import datetime, timezone
+
+    from src.models.intel import ThreatActor
+
+    groups = (
+        await db.execute(
+            select(MitreGroup).where(
+                MitreGroup.deprecated.is_(False), MitreGroup.revoked.is_(False)
+            )
+        )
+    ).scalars().all()
+
+    # Per-group: pull techniques, software, campaigns it's linked to.
+    rels = (
+        await db.execute(
+            select(MitreRelationship).where(
+                MitreRelationship.source_type == "group"
+            )
+        )
+    ).scalars().all()
+    by_group: dict[str, dict[str, list[str]]] = {}
+    for r in rels:
+        bucket = by_group.setdefault(
+            r.source_external_id, {"techniques": [], "software": [], "campaigns": []}
+        )
+        if r.relationship_type == "uses" and r.target_type == "technique":
+            bucket["techniques"].append(r.target_external_id)
+        elif r.relationship_type == "uses" and r.target_type == "software":
+            bucket["software"].append(r.target_external_id)
+        elif r.relationship_type == "attributed-to" and r.target_type == "campaign":
+            bucket["campaigns"].append(r.target_external_id)
+
+    # Software ext_id → name for the malware_families list on the actor.
+    sw_rows = (await db.execute(select(MitreSoftware))).scalars().all()
+    sw_name = {s.external_id: s.name for s in sw_rows}
+
+    existing_actors_by_group_id = {}
+    existing_actors_by_alias: dict[str, ThreatActor] = {}
+    actor_rows = (
+        await db.execute(select(ThreatActor))
+    ).scalars().all()
+    for a in actor_rows:
+        if a.mitre_group_id:
+            existing_actors_by_group_id[a.mitre_group_id] = a
+        if a.primary_alias:
+            existing_actors_by_alias[a.primary_alias.lower()] = a
+
+    now = datetime.now(timezone.utc)
+    written = 0
+    for g in groups:
+        actor = existing_actors_by_group_id.get(g.external_id)
+        if actor is None:
+            actor = existing_actors_by_alias.get((g.name or "").lower())
+        if actor is None:
+            actor = ThreatActor(
+                primary_alias=g.name,
+                first_seen=now,
+                last_seen=now,
+                aliases=g.aliases or [],
+            )
+        actor.mitre_group_id = g.external_id
+        actor.primary_alias = actor.primary_alias or g.name
+        actor.description = g.description or actor.description
+        # Merge aliases without losing analyst-added ones.
+        merged_aliases = sorted(set((actor.aliases or []) + (g.aliases or [])))
+        actor.aliases = merged_aliases
+        actor.country_codes = g.country_codes or []
+        actor.references = g.references or []
+        actor.confidence = max(actor.confidence or 0.7, 0.85)
+        # Backfill techniques + malware from relationships.
+        bucket = by_group.get(g.external_id) or {}
+        techs = sorted(set((actor.known_ttps or []) + (bucket.get("techniques") or [])))
+        actor.known_ttps = techs
+        malware_names = sorted(
+            {sw_name[s] for s in (bucket.get("software") or []) if s in sw_name}
+        )
+        if malware_names:
+            actor.malware_families = sorted(
+                set((actor.malware_families or []) + malware_names)
+            )
+        actor.last_seen = now
+        db.add(actor)
+        written += 1
+    await db.commit()
+    return written
+
+
 __all__ = [
     "SyncReport",
     "DEFAULT_BUNDLE_URLS",
     "load_bundle",
     "sync_matrix",
+    "upsert_actors_from_groups",
 ]

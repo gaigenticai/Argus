@@ -35,9 +35,10 @@ from src.crawlers.stealer_crawler import StealerLogCrawler
 from src.crawlers.ransomware_crawler import RansomwareLeakCrawler
 from src.crawlers.forum_crawler import ForumCrawler
 from src.crawlers.matrix_crawler import MatrixCrawler
+from src.crawlers.custom_http_crawler import CustomHttpCrawler
 from src.ingestion.pipeline import IngestionPipeline
 from src.models.admin import CrawlerKind, CrawlerTarget
-from src.storage.database import async_session_factory
+from src.storage import database as _db_module
 
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,11 @@ _CRAWLER_REGISTRY: dict[CrawlerKind, tuple[type, str, int]] = {
     CrawlerKind.RANSOMWARE_LEAK_GROUP: (RansomwareLeakCrawler, "group_configs", 20),
     CrawlerKind.FORUM: (ForumCrawler, "forum_configs", 30),
     CrawlerKind.MATRIX_ROOM: (MatrixCrawler, "room_configs", 30),
+    # Operator-configured generic poller — covers RSS / JSON / HTML
+    # CSS so adding "monitor https://X" doesn't need a new Python
+    # crawler class. Targets carry the URL + parser + selectors in
+    # their ``config`` JSON.
+    CrawlerKind.CUSTOM_HTTP: (CustomHttpCrawler, "targets", 30),
 }
 
 
@@ -230,7 +236,10 @@ class Scheduler:
         kwarg_name: str,
         feed_name: str,
     ) -> None:
-        async with async_session_factory() as session:
+        if _db_module.async_session_factory is None:
+            from src.storage.database import init_db as _init_db
+            await _init_db()
+        async with _db_module.async_session_factory() as session:
             try:
                 org_id = await get_system_org_id(session)
             except SystemOrganizationMissing:
@@ -259,12 +268,19 @@ class Scheduler:
                 await session.commit()
                 return
 
-            kwargs = {kwarg_name: _wrap_targets(targets)}
+            # Most crawlers want dicts (forum_configs, group_configs,
+            # etc.); the Telegram crawler wants bare ``channels:
+            # list[str]``. Shape per-kind so the scheduler can dispatch
+            # uniformly without each crawler having to accept both.
+            wrapped = _wrap_targets(targets)
+            if kind == CrawlerKind.TELEGRAM_CHANNEL:
+                wrapped = [w["identifier"] for w in wrapped]
+            kwargs = {kwarg_name: wrapped}
             crawler = crawler_class(**kwargs)
             started = time.monotonic()
             try:
                 pipeline = IngestionPipeline(session)
-                rows = await pipeline.ingest_from_crawler(crawler)
+                summary = await pipeline.ingest_from_crawler(crawler)
             except Exception as exc:  # noqa: BLE001
                 duration_ms = int((time.monotonic() - started) * 1000)
                 logger.exception(
@@ -287,23 +303,41 @@ class Scheduler:
                 return
 
             duration_ms = int((time.monotonic() - started) * 1000)
+            # ``rows_ingested`` on FeedHealth = items collected (fresh
+            # RawIntel rows). The alerts count goes into ``detail`` so
+            # the crawlers list endpoint can surface both — previously
+            # we stored alert_count under rows_ingested and the
+            # dashboard rendered "0 items collected" for any crawl
+            # that didn't fire alerts even when content was actually
+            # ingested.
             await feed_health_helper.mark_ok(
                 session,
                 feed_name=feed_name,
                 organization_id=org_id,
-                rows_ingested=int(rows or 0),
+                rows_ingested=summary.items_collected,
                 duration_ms=duration_ms,
-                detail=f"targets={len(targets)}",
+                detail=(
+                    f"targets={len(targets)} "
+                    f"alerts={summary.alerts_created}"
+                ),
             )
             for t in targets:
                 t.consecutive_failures = 0
                 t.last_run_at = datetime.now(timezone.utc)
                 t.last_run_status = "ok"
-                t.last_run_summary = {"rows_ingested": int(rows or 0)}
+                t.last_run_summary = {
+                    "items_collected": summary.items_collected,
+                    "alerts_created": summary.alerts_created,
+                    # Keep ``rows_ingested`` for backward compat with
+                    # any operator dashboards / scripts reading the
+                    # legacy key.
+                    "rows_ingested": summary.items_collected,
+                }
             await session.commit()
             logger.info(
-                "[scheduler] %s complete — %s rows in %dms",
-                feed_name, rows, duration_ms,
+                "[scheduler] %s complete — items=%d alerts=%d in %dms",
+                feed_name, summary.items_collected,
+                summary.alerts_created, duration_ms,
             )
 
     async def run_once(self, kind: CrawlerKind | None = None) -> None:

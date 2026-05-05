@@ -79,7 +79,24 @@ class BaseCrawler(ABC):
         if self._session is None or self._session.closed:
             connector = None
             if use_tor:
-                connector = ProxyConnector.from_url(settings.tor.socks_proxy)
+                # aiohttp_socks 0.11+ rejected the ``socks5h://`` scheme; the
+                # canonical way to request remote DNS resolution (essential
+                # for .onion addresses, since they aren't real DNS names)
+                # is ``socks5://`` plus ``rdns=True``. We rewrite a legacy
+                # ``socks5h://`` config to ``socks5://`` so existing .env
+                # files keep working.
+                from aiohttp_socks import ProxyType
+                proxy_url = settings.tor.socks_proxy.replace(
+                    "socks5h://", "socks5://", 1
+                )
+                from urllib.parse import urlparse
+                parsed = urlparse(proxy_url)
+                connector = ProxyConnector(
+                    proxy_type=ProxyType.SOCKS5,
+                    host=parsed.hostname,
+                    port=parsed.port,
+                    rdns=True,
+                )
 
             self._session = aiohttp.ClientSession(
                 connector=connector,

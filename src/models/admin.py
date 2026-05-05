@@ -79,6 +79,7 @@ class AppSettingCategory(str, enum.Enum):
     AUTO_CASE = "auto_case"
     CRAWLER = "crawler"
     GENERAL = "general"
+    INTEGRATIONS = "integrations"
 
 
 class AppSetting(Base, UUIDMixin, TimestampMixin):
@@ -144,6 +145,12 @@ class CrawlerKind(str, enum.Enum):
     FORUM = "forum"
     RANSOMWARE_LEAK_GROUP = "ransomware_leak_group"
     STEALER_MARKETPLACE = "stealer_marketplace"
+    # Generic HTTP/RSS/JSON poller — operator configures the URL +
+    # parser entirely from Settings → Crawlers UI. Covers the bulk of
+    # "I want a new crawler" requests where the source is just a
+    # public webpage / feed and doesn't need protocol-specific code
+    # (Tor circuits, Matrix federation, Telegram MTProto, etc.).
+    CUSTOM_HTTP = "custom_http"
 
 
 class CrawlerTarget(Base, UUIDMixin, TimestampMixin):
@@ -187,7 +194,7 @@ class CrawlerTarget(Base, UUIDMixin, TimestampMixin):
             "kind IN ("
             "'tor_forum','tor_marketplace','i2p_eepsite','lokinet_site',"
             "'telegram_channel','matrix_room','forum','ransomware_leak_group',"
-            "'stealer_marketplace')",
+            "'stealer_marketplace','custom_http')",
             name="ck_crawler_targets_kind",
         ),
     )

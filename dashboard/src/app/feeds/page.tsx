@@ -25,14 +25,16 @@ import {
   Fish,
   Skull,
   Loader2,
-  BarChart3,
-  TrendingUp,
 } from "lucide-react";
-import { api, type FeedInfo, type FeedSummary, type FeedbackStats } from "@/lib/api";
+import { api, type FeedInfo, type FeedSummary } from "@/lib/api";
 import { StatCard } from "@/components/shared/stat-card";
 import { useToast } from "@/components/shared/toast";
 import { timeAgo } from "@/lib/utils";
 
+import Link from "next/link";
+import { SourcesStrip } from "@/components/shared/sources-strip";
+import { CoverageGate } from "@/components/shared/coverage-gate";
+import { FeedDetailDrawer } from "@/components/feeds/feed-detail-drawer";
 const LAYER_ICONS: Record<string, typeof Rss> = {
   ransomware: Skull,
   botnet_c2: Radio,
@@ -63,21 +65,30 @@ const LAYER_LABELS: Record<string, string> = {
 
 export default function FeedsPage() {
   const [data, setData] = useState<FeedSummary | null>(null);
-  const [feedbackStats, setFeedbackStats] = useState<FeedbackStats | null>(null);
+  const [llmLabel, setLlmLabel] = useState<string>("the configured LLM");
   const [loading, setLoading] = useState(true);
   const [triggeringFeeds, setTriggeringFeeds] = useState<Set<string>>(new Set());
   const [triageRunning, setTriageRunning] = useState(false);
   const [backfillRunning, setBackfillRunning] = useState(false);
+  const [drawerFeed, setDrawerFeed] = useState<string | null>(null);
   const { toast } = useToast();
 
   const load = useCallback(async () => {
     try {
-      const [result, fbStats] = await Promise.all([
+      // Posture is fetched alongside feeds so the "Feed Triage"
+      // description can render the actual configured provider
+      // (Claude bridge / Anthropic / Gemma / etc.) instead of a
+      // hard-coded model name. ``allSettled`` keeps a posture failure
+      // from blanking the page.
+      const [result, posture] = await Promise.allSettled([
         api.getFeeds(),
-        api.feedback.stats(),
+        api.agents.posture(),
       ]);
-      setData(result);
-      setFeedbackStats(fbStats);
+      if (result.status === "fulfilled") setData(result.value);
+      if (posture.status === "fulfilled" && posture.value.llm?.label) {
+        setLlmLabel(posture.value.llm.label);
+      }
+      if (result.status === "rejected") throw result.reason;
     } catch {
       toast("error", "Failed to load feeds");
     } finally {
@@ -131,6 +142,7 @@ export default function FeedsPage() {
 
   if (loading) {
     return (
+    <CoverageGate pageSlug="feeds" pageLabel="Feeds">
       <div className="flex items-center justify-center h-[60vh]">
         <div className="flex flex-col items-center gap-3">
           <div
@@ -140,7 +152,8 @@ export default function FeedsPage() {
           <p className="text-[13px]" style={{ color: "var(--color-muted)" }}>Loading feeds...</p>
         </div>
       </div>
-    );
+        </CoverageGate>
+  );
   }
 
   const feeds = data?.feeds || [];
@@ -172,6 +185,7 @@ export default function FeedsPage() {
             Manage threat intelligence feeds and run AI triage
           </p>
         </div>
+      <SourcesStrip pageKey="feeds" />
         <div className="flex items-center gap-2">
           <button
             onClick={handleBackfill}
@@ -260,39 +274,6 @@ export default function FeedsPage() {
         />
       </div>
 
-      {/* Triage Accuracy Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard
-          title="Analyst Feedback"
-          value={feedbackStats?.total_feedback ?? 0}
-          subtitle="Total triage verdicts submitted"
-          icon={MessageCircle}
-          color="var(--color-accent)"
-          bgColor="rgba(255,79,0,0.08)"
-        />
-        <StatCard
-          title="True Positive Rate"
-          value={feedbackStats ? `${Math.round((feedbackStats.true_positive_rate || 0) * 100)}%` : "—"}
-          subtitle={`${feedbackStats?.true_positives ?? 0} TP / ${feedbackStats?.false_positives ?? 0} FP`}
-          icon={TrendingUp}
-          color="#00A76F"
-          bgColor="#D3FCD2"
-        />
-        {(() => {
-          const topCategory = feedbackStats?.category_accuracy?.sort((a, b) => b.accuracy - a.accuracy)[0];
-          return (
-            <StatCard
-              title="Top Category Accuracy"
-              value={topCategory ? topCategory.category : "—"}
-              subtitle={topCategory ? `${Math.round(topCategory.accuracy)}% accuracy` : "No feedback yet"}
-              icon={BarChart3}
-              color="#00BBD9"
-              bgColor="#CAFDF5"
-            />
-          );
-        })()}
-      </div>
-
       {/* Agent Actions Card */}
       <div
         className="p-6"
@@ -317,29 +298,40 @@ export default function FeedsPage() {
           </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
-          <div
-            className="p-4"
+          {/* Each card is now a deep-link into the relevant log so
+              the operator can audit what the agent actually did. */}
+          <Link
+            href="/agent-activity"
+            className="p-4 transition-colors block"
             style={{
               background: "rgba(255,254,251,0.04)",
               borderRadius: "5px",
               border: "1px solid rgba(255,254,251,0.06)",
             }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,254,251,0.08)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,254,251,0.04)")}
           >
             <div className="flex items-center gap-2 mb-1">
               <Zap className="w-4 h-4" style={{ color: "#FFAB00" }} />
               <span className="text-[10px] font-semibold uppercase tracking-[0.8px]" style={{ color: "rgba(255,254,251,0.4)" }}>Feed Triage</span>
             </div>
             <p className="text-[12px]" style={{ color: "rgba(255,254,251,0.6)" }}>
-              LLM analyzes new feed entries, classifies threats, determines severity using z.ai GLM-5
+              LLM analyzes new feed entries, classifies threats, determines severity using {llmLabel}
             </p>
-          </div>
-          <div
-            className="p-4"
+            <p className="text-[10.5px] mt-2 font-semibold uppercase tracking-[0.6px]" style={{ color: "var(--color-accent)" }}>
+              View triage runs →
+            </p>
+          </Link>
+          <Link
+            href="/iocs"
+            className="p-4 transition-colors block"
             style={{
               background: "rgba(255,254,251,0.04)",
               borderRadius: "5px",
               border: "1px solid rgba(255,254,251,0.06)",
             }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,254,251,0.08)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,254,251,0.04)")}
           >
             <div className="flex items-center gap-2 mb-1">
               <Target className="w-4 h-4" style={{ color: "#FF5630" }} />
@@ -348,14 +340,20 @@ export default function FeedsPage() {
             <p className="text-[12px]" style={{ color: "rgba(255,254,251,0.6)" }}>
               Auto-creates indicators of compromise from feeds — IPs, URLs, domains, hashes
             </p>
-          </div>
-          <div
-            className="p-4"
+            <p className="text-[10.5px] mt-2 font-semibold uppercase tracking-[0.6px]" style={{ color: "var(--color-accent)" }}>
+              View IOCs →
+            </p>
+          </Link>
+          <Link
+            href="/alerts"
+            className="p-4 transition-colors block"
             style={{
               background: "rgba(255,254,251,0.04)",
               borderRadius: "5px",
               border: "1px solid rgba(255,254,251,0.06)",
             }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(255,254,251,0.08)")}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255,254,251,0.04)")}
           >
             <div className="flex items-center gap-2 mb-1">
               <AlertTriangle className="w-4 h-4" style={{ color: "#00BBD9" }} />
@@ -364,7 +362,10 @@ export default function FeedsPage() {
             <p className="text-[12px]" style={{ color: "rgba(255,254,251,0.6)" }}>
               Generates contextualized alerts with reasoning, recommended actions, and INFOCON updates
             </p>
-          </div>
+            <p className="text-[10.5px] mt-2 font-semibold uppercase tracking-[0.6px]" style={{ color: "var(--color-accent)" }}>
+              View alerts →
+            </p>
+          </Link>
         </div>
       </div>
 
@@ -389,7 +390,7 @@ export default function FeedsPage() {
               No feeds configured
             </h3>
             <p className="text-[13px] mt-1.5" style={{ color: "var(--color-body)" }}>
-              Argus has no threat-intelligence feeds enabled yet. Most feeds
+              Marsad has no threat-intelligence feeds enabled yet. Most feeds
               (OTX, KEV, GreyNoise, abuse.ch) require API keys set as
               environment variables; others (PhishTank, BinaryEdge,
               MalwareBazaar) work out of the box.
@@ -438,10 +439,13 @@ export default function FeedsPage() {
                 borderRadius: "5px",
               }}
             >
-              {/* Layer header */}
-              <div
-                className="flex items-center gap-3 px-6 py-4"
+              {/* Layer header — clickable, navigates to layer detail. */}
+              <Link
+                href={`/feeds/layers/${encodeURIComponent(layer)}`}
+                className="flex items-center gap-3 px-6 py-4 transition-colors"
                 style={{ borderBottom: "1px solid var(--color-border)" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = "var(--color-surface)")}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
               >
                 <div
                   className="w-8 h-8 flex items-center justify-center"
@@ -450,8 +454,9 @@ export default function FeedsPage() {
                   <LayerIcon className="w-4 h-4" style={{ color: layerColor }} />
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-[14px] font-semibold" style={{ color: "var(--color-ink)" }}>
+                  <h3 className="text-[14px] font-semibold flex items-center gap-1.5" style={{ color: "var(--color-ink)" }}>
                     {LAYER_LABELS[layer] || layer.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase())}
+                    <span style={{ color: "var(--color-muted)", fontWeight: 400 }}>→</span>
                   </h3>
                   <p className="text-[12px]" style={{ color: "var(--color-muted)" }}>
                     {layerFeeds[0]?.description || `${layerFeeds.length} feed sources`}
@@ -463,7 +468,7 @@ export default function FeedsPage() {
                   </p>
                   <p className="text-[11px]" style={{ color: "var(--color-muted)" }}>active entries</p>
                 </div>
-              </div>
+              </Link>
 
               {/* Feed rows */}
               <div>
@@ -477,7 +482,16 @@ export default function FeedsPage() {
                   return (
                     <div
                       key={feed.feed_name}
-                      className="flex items-center gap-4 px-6 h-[60px] transition-colors"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setDrawerFeed(feed.feed_name)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          setDrawerFeed(feed.feed_name);
+                        }
+                      }}
+                      className="flex items-center gap-4 px-6 h-[60px] transition-colors cursor-pointer"
                       style={{ borderBottom: "1px solid var(--color-surface-muted)" }}
                       onMouseEnter={e => (e.currentTarget.style.background = "var(--color-surface)")}
                       onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
@@ -556,7 +570,7 @@ export default function FeedsPage() {
 
                       {/* Trigger button */}
                       <button
-                        onClick={() => handleTriggerFeed(feed.feed_name)}
+                        onClick={(e) => { e.stopPropagation(); handleTriggerFeed(feed.feed_name); }}
                         disabled={isTriggering || !feed.enabled}
                         className="p-2 transition-colors disabled:opacity-30 disabled:cursor-not-allowed shrink-0"
                         style={{ borderRadius: "4px" }}
@@ -585,6 +599,12 @@ export default function FeedsPage() {
             </div>
           );
         })}
+      <FeedDetailDrawer
+        feedName={drawerFeed}
+        onClose={() => { setDrawerFeed(null); load(); }}
+        onTrigger={async (name) => { await handleTriggerFeed(name); }}
+        triggering={drawerFeed ? triggeringFeeds.has(drawerFeed) : false}
+      />
     </div>
   );
 }

@@ -35,6 +35,8 @@ from src.core.auth import AnalystUser, audit_log
 from src.core.crypto import decrypt, encrypt
 from src.core.url_safety import UnsafeUrlError, assert_safe_url
 from src.models.auth import AuditAction
+from src.core.auth import CurrentUser
+from src.models.notification_inbox import NotificationInboxItem
 from src.models.notifications import (
     SEVERITY_ORDER,
     ChannelKind,
@@ -122,6 +124,10 @@ class RuleCreate(BaseModel):
     channel_ids: list[uuid.UUID]
     dedup_window_seconds: int = Field(default=300, ge=0, le=24 * 3600)
     description: str | None = None
+    # Quiet hours config — stored as ``description`` JSON tail so we
+    # don't need a new column. Format: {start:"22:00", end:"07:00",
+    # tz:"Asia/Dubai", except_severity:"critical"}
+    quiet_hours: dict[str, Any] | None = None
 
 
 class RuleUpdate(BaseModel):
@@ -135,6 +141,7 @@ class RuleUpdate(BaseModel):
     channel_ids: list[uuid.UUID] | None = None
     dedup_window_seconds: int | None = Field(default=None, ge=0, le=24 * 3600)
     description: str | None = None
+    quiet_hours: dict[str, Any] | None = None
 
 
 class RuleResponse(BaseModel):
@@ -150,6 +157,7 @@ class RuleResponse(BaseModel):
     channel_ids: list[uuid.UUID]
     dedup_window_seconds: int
     description: str | None
+    quiet_hours: dict[str, Any] | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -172,6 +180,9 @@ class DeliveryResponse(BaseModel):
     response_body: str | None
     error_message: str | None
     delivered_at: datetime | None
+    rendered_payload: dict | None = None
+    cluster_count: int | None = None
+    cluster_dedup_key: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -240,6 +251,56 @@ def _validate_channel_urls(kind: str, config: dict, secret: str | None) -> None:
             raise HTTPException(
                 status.HTTP_422_UNPROCESSABLE_CONTENT, f"unsafe url: {e}"
             )
+
+
+# Quiet hours are stored inline in `description` to avoid a schema
+# migration. The convention: ``description`` may end with a marker
+# line ``\n##QH##{json}`` carrying the quiet-hours config.
+import json as _json
+
+_QH_MARKER = "\n##QH##"
+
+
+def _split_qh(description: str | None) -> tuple[str | None, dict[str, Any] | None]:
+    if not description:
+        return description, None
+    idx = description.find(_QH_MARKER)
+    if idx < 0:
+        return description, None
+    head = description[:idx] or None
+    tail = description[idx + len(_QH_MARKER):]
+    try:
+        return head, _json.loads(tail)
+    except Exception:  # noqa: BLE001
+        return head, None
+
+
+def _join_qh(description: str | None, quiet_hours: dict[str, Any] | None) -> str | None:
+    base = description or ""
+    if quiet_hours:
+        base = f"{base}{_QH_MARKER}{_json.dumps(quiet_hours, separators=(',', ':'))}"
+    return base or None
+
+
+def _rule_to_response(rule: NotificationRule) -> RuleResponse:
+    head, qh = _split_qh(rule.description)
+    return RuleResponse(
+        id=rule.id,
+        organization_id=rule.organization_id,
+        name=rule.name,
+        enabled=rule.enabled,
+        event_kinds=list(rule.event_kinds or []),
+        min_severity=rule.min_severity,
+        asset_criticalities=list(rule.asset_criticalities or []),
+        asset_types=list(rule.asset_types or []),
+        tags_any=list(rule.tags_any or []),
+        channel_ids=list(rule.channel_ids or []),
+        dedup_window_seconds=rule.dedup_window_seconds,
+        description=head,
+        quiet_hours=qh,
+        created_at=rule.created_at,
+        updated_at=rule.updated_at,
+    )
 
 
 def _channel_to_response(ch: NotificationChannel) -> ChannelResponse:
@@ -549,7 +610,7 @@ async def create_rule(
         tags_any=body.tags_any,
         channel_ids=body.channel_ids,
         dedup_window_seconds=body.dedup_window_seconds,
-        description=body.description,
+        description=_join_qh(body.description, body.quiet_hours),
     )
     db.add(rule)
     await db.flush()
@@ -566,7 +627,7 @@ async def create_rule(
     )
     await db.commit()
     await db.refresh(rule)
-    return rule
+    return _rule_to_response(rule)
 
 
 @router.get("/rules", response_model=list[RuleResponse])
@@ -582,9 +643,8 @@ async def list_rules(
     )
     if enabled is not None:
         q = q.where(NotificationRule.enabled == enabled)
-    return list(
-        (await db.execute(q.order_by(NotificationRule.created_at.desc()))).scalars().all()
-    )
+    rows = (await db.execute(q.order_by(NotificationRule.created_at.desc()))).scalars().all()
+    return [_rule_to_response(r) for r in rows]
 
 
 @router.get("/rules/{rule_id}", response_model=RuleResponse)
@@ -596,7 +656,7 @@ async def get_rule(
     rule = await db.get(NotificationRule, rule_id)
     if not rule:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Rule not found")
-    return rule
+    return _rule_to_response(rule)
 
 
 @router.patch("/rules/{rule_id}", response_model=RuleResponse)
@@ -631,8 +691,12 @@ async def update_rule(
         rule.tags_any = body.tags_any
     if body.dedup_window_seconds is not None:
         rule.dedup_window_seconds = body.dedup_window_seconds
-    if body.description is not None:
-        rule.description = body.description
+    # description + quiet_hours roll into the same column.
+    if body.description is not None or body.quiet_hours is not None:
+        cur_desc, cur_qh = _split_qh(rule.description)
+        new_desc = body.description if body.description is not None else cur_desc
+        new_qh = body.quiet_hours if body.quiet_hours is not None else cur_qh
+        rule.description = _join_qh(new_desc, new_qh)
 
     ip, ua = _client_meta(request)
     await audit_log(
@@ -647,7 +711,7 @@ async def update_rule(
     )
     await db.commit()
     await db.refresh(rule)
-    return rule
+    return _rule_to_response(rule)
 
 
 @router.delete("/rules/{rule_id}", status_code=204)
@@ -753,3 +817,202 @@ async def dispatch_event(
     )
     await db.commit()
     return deliveries
+
+
+# --- Inbox --------------------------------------------------------------
+
+
+class InboxResponse(BaseModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    user_id: uuid.UUID | None
+    rule_id: uuid.UUID | None
+    delivery_id: uuid.UUID | None
+    event_kind: str
+    severity: str
+    title: str
+    summary: str | None
+    link_path: str | None
+    payload: dict
+    read_at: datetime | None
+    archived_at: datetime | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+@router.get("/inbox", response_model=list[InboxResponse])
+async def list_inbox(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_session),
+    unread_only: bool = False,
+    include_archived: bool = False,
+    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+):
+    q = select(NotificationInboxItem).where(
+        NotificationInboxItem.user_id == user.id
+    )
+    if unread_only:
+        q = q.where(NotificationInboxItem.read_at.is_(None))
+    if not include_archived:
+        q = q.where(NotificationInboxItem.archived_at.is_(None))
+    # Hide the synthetic preferences row.
+    q = q.where(NotificationInboxItem.event_kind != "user_pref")
+    q = q.order_by(NotificationInboxItem.created_at.desc()).limit(limit)
+    rows = (await db.execute(q)).scalars().all()
+    return list(rows)
+
+
+@router.get("/inbox/unread-count")
+async def inbox_unread_count(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_session),
+):
+    from sqlalchemy import func
+    res = await db.execute(
+        select(func.count(NotificationInboxItem.id)).where(
+            and_(
+                NotificationInboxItem.user_id == user.id,
+                NotificationInboxItem.read_at.is_(None),
+                NotificationInboxItem.archived_at.is_(None),
+                NotificationInboxItem.event_kind != "user_pref",
+            )
+        )
+    )
+    return {"unread": int(res.scalar_one() or 0)}
+
+
+@router.post("/inbox/{item_id}/read", response_model=InboxResponse)
+async def mark_inbox_read(
+    item_id: uuid.UUID,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_session),
+    unread: bool = False,
+):
+    from datetime import timezone as _tz
+    item = await db.get(NotificationInboxItem, item_id)
+    if not item or item.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Inbox item not found")
+    item.read_at = None if unread else datetime.now(_tz.utc)
+    await db.commit()
+    await db.refresh(item)
+    return item
+
+
+@router.post("/inbox/read-all")
+async def mark_inbox_read_all(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_session),
+):
+    from datetime import timezone as _tz
+    from sqlalchemy import update as sa_update
+    now = datetime.now(_tz.utc)
+    res = await db.execute(
+        sa_update(NotificationInboxItem)
+        .where(
+            and_(
+                NotificationInboxItem.user_id == user.id,
+                NotificationInboxItem.read_at.is_(None),
+                NotificationInboxItem.archived_at.is_(None),
+                NotificationInboxItem.event_kind != "user_pref",
+            )
+        )
+        .values(read_at=now)
+    )
+    await db.commit()
+    return {"updated": int(res.rowcount or 0)}
+
+
+@router.post("/inbox/{item_id}/archive", response_model=InboxResponse)
+async def archive_inbox(
+    item_id: uuid.UUID,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_session),
+    unarchive: bool = False,
+):
+    from datetime import timezone as _tz
+    item = await db.get(NotificationInboxItem, item_id)
+    if not item or item.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Inbox item not found")
+    item.archived_at = None if unarchive else datetime.now(_tz.utc)
+    await db.commit()
+    await db.refresh(item)
+    return item
+
+
+# --- Per-user preferences ----------------------------------------------
+#
+# We don't add a migration. Preferences are stored as a single
+# notification_inbox row per user with event_kind="user_pref" and the
+# preferences encoded in ``payload``. Read-time we look it up; write-
+# time we upsert. The list_inbox endpoint filters this row out.
+
+
+class PreferencesPayload(BaseModel):
+    """Per-user delivery preferences.
+
+    opt_out_channels        list of channel ids the user does not want pinged
+    max_per_rule_per_hour   simple frequency cap (0 = unlimited)
+    escalation_after_min    if alert unread for N minutes, repeat to escalation channel
+    do_not_disturb          fully mute everything until ``dnd_until`` ISO ts
+    dnd_until               ISO timestamp; null = indefinite when do_not_disturb=true
+    """
+
+    opt_out_channels: list[uuid.UUID] = Field(default_factory=list)
+    max_per_rule_per_hour: int = Field(default=0, ge=0, le=1000)
+    escalation_after_min: int = Field(default=0, ge=0, le=24 * 60)
+    do_not_disturb: bool = False
+    dnd_until: datetime | None = None
+
+
+async def _get_pref_row(
+    db: AsyncSession, user_id: uuid.UUID, organization_id: uuid.UUID | None = None
+) -> NotificationInboxItem | None:
+    q = select(NotificationInboxItem).where(
+        and_(
+            NotificationInboxItem.user_id == user_id,
+            NotificationInboxItem.event_kind == "user_pref",
+        )
+    )
+    return (await db.execute(q.limit(1))).scalar_one_or_none()
+
+
+@router.get("/preferences/me")
+async def get_my_preferences(
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_session),
+):
+    row = await _get_pref_row(db, user.id)
+    if row is None:
+        return PreferencesPayload().model_dump(mode="json")
+    return row.payload or PreferencesPayload().model_dump(mode="json")
+
+
+@router.put("/preferences/me")
+async def put_my_preferences(
+    body: PreferencesPayload,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_session),
+):
+    row = await _get_pref_row(db, user.id)
+    payload = body.model_dump(mode="json")
+    if row is None:
+        # Need an org id for the row. Use the first org the user can see;
+        # fall back to a NIL UUID — preferences are user-scoped anyway.
+        org_q = await db.execute(select(Organization).limit(1))
+        org = org_q.scalar_one_or_none()
+        org_id = org.id if org else uuid.UUID("00000000-0000-0000-0000-000000000000")
+        row = NotificationInboxItem(
+            organization_id=org_id,
+            user_id=user.id,
+            event_kind="user_pref",
+            severity="info",
+            title="user preferences",
+            summary=None,
+            payload=payload,
+        )
+        db.add(row)
+    else:
+        row.payload = payload
+    await db.commit()
+    return payload

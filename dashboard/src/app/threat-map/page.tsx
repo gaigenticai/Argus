@@ -17,6 +17,7 @@ import MapGL, {
   type MapLayerMouseEvent,
 } from "react-map-gl/maplibre";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { CoverageGate } from "@/components/shared/coverage-gate";
 import {
   Search,
   Layers,
@@ -43,13 +44,17 @@ import {
   Zap,
   ChevronDown,
   ChevronUp,
+  Info,
 } from "lucide-react";
+import { LayerInfoDrawer } from "@/components/threat-map/layer-info-drawer";
+import { FeedDetailDrawer } from "@/components/feeds/feed-detail-drawer";
 import {
   api,
   type ThreatMapLayer,
   type ThreatMapEntry,
   type ThreatMapEntryDetail,
   type GlobalThreatStats,
+  type DashboardExposure,
 } from "@/lib/api";
 
 // ---------------------------------------------------------------------------
@@ -338,7 +343,20 @@ export default function ThreatMapPage() {
   const [layers, setLayers] = useState<ThreatMapLayer[]>([]);
   const [entries, setEntries] = useState<ThreatMapEntry[]>([]);
   const [stats, setStats] = useState<GlobalThreatStats | null>(null);
+  const [exposure, setExposure] = useState<DashboardExposure | null>(null);
+  // View mode: ``global`` shows the upstream pipeline counts; ``org``
+  // shows the current organisation's exposure (CVEs hitting the
+  // declared tech stack, open alerts, tracked IOCs). Same data the
+  // dashboard's AI Triage Agent tile reads — exposed here so the
+  // operator on the threat map can answer "of all this, how much
+  // is mine?" without leaving the surface.
+  const [viewMode, setViewMode] = useState<"global" | "org">("global");
   const [activeLayers, setActiveLayers] = useState<Set<string>>(new Set());
+  // Layer info drawer (right-hand panel "i" button) — shows the
+  // same data as /feeds/layers/[layer] without leaving the map.
+  // Feed drawer is the cascading drill-down: layer → feed.
+  const [layerDrawer, setLayerDrawer] = useState<string | null>(null);
+  const [feedDrawer, setFeedDrawer] = useState<string | null>(null);
   const [selectedEntry, setSelectedEntry] = useState<ThreatMapEntryDetail | null>(
     null
   );
@@ -439,9 +457,10 @@ export default function ThreatMapPage() {
       setLoading(true);
       setError(null);
       try {
-        const [layerData, statsData] = await Promise.allSettled([
+        const [layerData, statsData, exposureData] = await Promise.allSettled([
           api.getThreatMapLayers(),
           api.getThreatMapStats(),
+          api.getDashboardExposure(),
         ]);
 
         if (cancelled) return;
@@ -452,6 +471,9 @@ export default function ThreatMapPage() {
         }
         if (statsData.status === "fulfilled") {
           setStats(statsData.value);
+        }
+        if (exposureData.status === "fulfilled") {
+          setExposure(exposureData.value);
         }
       } catch (err) {
         if (!cancelled) {
@@ -703,6 +725,7 @@ export default function ThreatMapPage() {
   }
 
   return (
+    <CoverageGate pageSlug="threat-map" pageLabel="Threat Map">
     <div className="relative h-screen w-full flex flex-col bg-grey-900 overflow-hidden">
       {/* ================================================================= */}
       {/* DEFCON-STYLE GLOBAL THREAT STATUS BAR                             */}
@@ -714,15 +737,64 @@ export default function ThreatMapPage() {
 
           <div className="w-px h-5 bg-white/[0.08]" />
 
-          {stats && (
+          {/* View-mode switch — Global pipeline vs My posture.
+              Identical numbers across tenants ("184k Active Threats")
+              were misleading customers in demos; the toggle lets the
+              operator flip to the org-scoped slice on the same surface. */}
+          <div
+            className="inline-flex items-center p-0.5"
+            style={{
+              background: "rgba(255,255,255,0.04)",
+              border: "1px solid rgba(255,255,255,0.08)",
+              borderRadius: 4,
+            }}
+            role="tablist"
+            aria-label="Threat map view mode"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === "global"}
+              onClick={() => setViewMode("global")}
+              className="px-2.5 h-6 text-[10.5px] font-semibold uppercase tracking-[0.6px] transition-colors"
+              style={{
+                background: viewMode === "global" ? "rgba(255,255,255,0.10)" : "transparent",
+                color: viewMode === "global" ? "#fffefb" : "#919EAB",
+                borderRadius: 3,
+                border: "none",
+                cursor: "pointer",
+              }}
+            >
+              Global pipeline
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === "org"}
+              onClick={() => setViewMode("org")}
+              className="px-2.5 h-6 text-[10.5px] font-semibold uppercase tracking-[0.6px] transition-colors"
+              style={{
+                background: viewMode === "org" ? "rgba(255,79,0,0.18)" : "transparent",
+                color: viewMode === "org" ? "#FF8B00" : "#919EAB",
+                borderRadius: 3,
+                border: "none",
+                cursor: "pointer",
+              }}
+              title={exposure ? `Posture for ${exposure.org_name}` : "Loading org posture…"}
+            >
+              My posture{exposure ? ` · ${exposure.org_name}` : ""}
+            </button>
+          </div>
+
+          {viewMode === "global" && stats && (
             <div className="flex items-center gap-2">
               <StatPill
-                label="Active Threats"
+                label="Pipeline entries"
                 value={stats.total_entries}
                 color="#DFE3E8"
               />
               <StatPill
-                label="C2 Servers"
+                label="C2 indicators"
                 value={stats.active_c2_servers}
                 color="#FF8B00"
               />
@@ -737,10 +809,43 @@ export default function ThreatMapPage() {
                 color="#FFAB00"
               />
               <StatPill
-                label="CVEs"
+                label="Exploited CVEs"
                 value={stats.exploited_cves_count}
                 color="#00BBD9"
               />
+            </div>
+          )}
+
+          {viewMode === "org" && (
+            <div className="flex items-center gap-2">
+              {exposure ? (
+                <>
+                  <StatPill
+                    label="CVEs affecting you"
+                    value={exposure.cves_affecting_you}
+                    color="#FF5630"
+                  />
+                  <StatPill
+                    label="Open alerts"
+                    value={exposure.open_alerts}
+                    color="#FF8B00"
+                  />
+                  <StatPill
+                    label="Tracked IOCs"
+                    value={exposure.tracked_iocs}
+                    color="#00BBD9"
+                  />
+                  <StatPill
+                    label="Stack components"
+                    value={exposure.declared_components}
+                    color="#919EAB"
+                  />
+                </>
+              ) : (
+                <span className="text-[10.5px] text-grey-500">
+                  Loading org posture…
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -1022,10 +1127,18 @@ export default function ThreatMapPage() {
                   const liveCount = layerEntryCounts[layer.name] || 0;
 
                   return (
-                    <button
+                    <div
                       key={layer.id}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => toggleLayer(layer.name)}
-                      className={`layer-item w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-left transition-all duration-150 group ${
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          toggleLayer(layer.name);
+                        }
+                      }}
+                      className={`layer-item w-full flex items-center gap-2.5 px-2.5 py-2 rounded-md text-left transition-all duration-150 group cursor-pointer ${
                         isActive
                           ? "bg-white/[0.05] layer-item-active"
                           : "bg-transparent hover:bg-white/[0.03] opacity-40 hover:opacity-60"
@@ -1080,7 +1193,30 @@ export default function ThreatMapPage() {
                           ? formatNumber(liveCount)
                           : formatNumber(layer.entry_count)}
                       </span>
-                    </button>
+
+                      {/* Info button — opens layer-detail drawer
+                          without toggling visibility. stopPropagation
+                          so the row's toggle handler doesn't fire. */}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLayerDrawer(layer.name);
+                        }}
+                        aria-label={`Details for ${layer.display_name}`}
+                        className="shrink-0 flex items-center justify-center w-5 h-5 transition-opacity opacity-50 hover:opacity-100"
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          color: isActive ? layer.color : "#454F5B",
+                          cursor: "pointer",
+                          borderRadius: 3,
+                        }}
+                        title="View layer details"
+                      >
+                        <Info className="w-3 h-3" />
+                      </button>
+                    </div>
                   );
                 })}
               </div>
@@ -1339,6 +1475,16 @@ export default function ThreatMapPage() {
           background: rgba(255, 255, 255, 0.15);
         }
       `}</style>
+      <LayerInfoDrawer
+        layerName={layerDrawer}
+        onClose={() => setLayerDrawer(null)}
+        onOpenFeed={(name) => { setLayerDrawer(null); setFeedDrawer(name); }}
+      />
+      <FeedDetailDrawer
+        feedName={feedDrawer}
+        onClose={() => setFeedDrawer(null)}
+      />
     </div>
+      </CoverageGate>
   );
 }

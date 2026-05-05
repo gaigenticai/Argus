@@ -6,7 +6,8 @@ import {
   Check,
   Globe2,
   Play,
-
+  Sparkles,
+  X,
 } from "lucide-react";
 import {
   api,
@@ -32,6 +33,8 @@ import {
 } from "@/components/shared/page-primitives";
 import { timeAgo } from "@/lib/utils";
 import { useBrandContext } from "./use-brand-context";
+import { SuspectDetailDrawer } from "./suspect-detail-drawer";
+import { ClustersCard } from "./clusters-card";
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
@@ -100,28 +103,47 @@ export function SuspectsTab() {
   const [transitionTarget, setTransitionTarget] =
     useState<SuspectDomainResponse | null>(null);
   const [probingId, setProbingId] = useState<string | null>(null);
+  const [defendingId, setDefendingId] = useState<string | null>(null);
+  // Click-to-open drawer with full suspect detail.
+  const [drawerSuspect, setDrawerSuspect] = useState<SuspectDomainResponse | null>(null);
+  // Bulk selection — Set<suspectId>. Floating action bar appears when
+  // at least one row is selected.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkDismissOpen, setBulkDismissOpen] = useState(false);
+  const toggleSelected = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+  // Wipe selection when org / filters change — stale selections across
+  // contexts cause confusion (and could bulk-dismiss the wrong ids).
+  useEffect(() => {
+    clearSelection();
+  }, [orgId, stateFilter, sourceFilter, clearSelection]);
 
   const load = useCallback(async () => {
     if (!orgId) return;
     setLoading(true);
     try {
+      // Backend search via ?q= now (T79). Replaces the previous
+      // client-side filter which only saw the current page of 50 —
+      // with 155+ suspects per org, that was a real bug.
       const { data, page } = await api.brand.listSuspects({
         organization_id: orgId,
         state: stateFilter === "all" ? undefined : stateFilter,
         source: sourceFilter === "all" ? undefined : sourceFilter,
         is_resolvable: resolvableOnly || undefined,
+        q: search || undefined,
         limit: PAGE_LIMIT,
         offset,
       });
-      const filtered = search
-        ? data.filter(
-            (s) =>
-              s.domain.includes(search.toLowerCase()) ||
-              s.matched_term_value.includes(search.toLowerCase()),
-          )
-        : data;
-      setRows(filtered);
-      setTotal(page.total ?? filtered.length);
+      setRows(data);
+      setTotal(page.total ?? data.length);
     } catch (e) {
       toast(
         "error",
@@ -177,6 +199,95 @@ export function SuspectsTab() {
     }
   };
 
+  const runDefend = async (s: SuspectDomainResponse) => {
+    setDefendingId(s.id);
+    try {
+      await api.brandActions.create(s.id);
+      toast("success", `Brand Defender queued for ${s.domain}`);
+      await load();
+    } catch (e) {
+      toast(
+        "error",
+        e instanceof Error ? e.message : "Brand Defender queue failed",
+      );
+    } finally {
+      setDefendingId(null);
+    }
+  };
+
+  /**
+   * Bounded-concurrency runner — keeps bulk operations from
+   * stampeding the API. One toast at the end with success/fail
+   * counts so the operator gets a single summary instead of N
+   * pop-ups.
+   */
+  const runBulk = useCallback(
+    async (
+      label: string,
+      ids: string[],
+      worker: (id: string) => Promise<void>,
+    ) => {
+      if (ids.length === 0) return;
+      setBulkBusy(true);
+      let ok = 0;
+      let failed = 0;
+      const queue = [...ids];
+      const concurrency = 5;
+      const runOne = async () => {
+        while (queue.length) {
+          const id = queue.shift()!;
+          try {
+            await worker(id);
+            ok++;
+          } catch {
+            failed++;
+          }
+        }
+      };
+      try {
+        await Promise.all(
+          Array.from(
+            { length: Math.min(concurrency, ids.length) },
+            () => runOne(),
+          ),
+        );
+        if (failed === 0) {
+          toast("success", `${label}: ${ok} succeeded.`);
+        } else if (ok === 0) {
+          toast("error", `${label}: ${failed} failed.`);
+        } else {
+          toast("error", `${label}: ${ok} ok, ${failed} failed.`);
+        }
+      } finally {
+        setBulkBusy(false);
+        clearSelection();
+        await load();
+      }
+    },
+    [toast, clearSelection, load],
+  );
+
+  const bulkDefend = useCallback(async () => {
+    const ids = Array.from(selectedIds);
+    await runBulk("Defend", ids, async (id) => {
+      await api.brandActions.create(id);
+    });
+  }, [selectedIds, runBulk]);
+
+  const bulkDismiss = useCallback(
+    async (reason: string) => {
+      const ids = Array.from(selectedIds);
+      await runBulk("Dismiss", ids, async (id) => {
+        await api.brand.transitionSuspect(id, {
+          state: "dismissed",
+          reason,
+        });
+      });
+      setBulkDismissOpen(false);
+    },
+    [selectedIds, runBulk],
+  );
+
   const filterCount = useMemo(
     () =>
       [
@@ -190,6 +301,16 @@ export function SuspectsTab() {
 
   return (
     <div className="space-y-4">
+      {/* Campaign clusters — bad-actor patterns across the suspect pile.
+          Clicking a cluster fills the search box with the shared
+          signal so the underlying suspects show in the table below. */}
+      <ClustersCard
+        onPickCluster={(c) => {
+          setSearch(c.signal_value);
+          setOffset(0);
+        }}
+      />
+
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2">
         <SearchInput
@@ -298,7 +419,22 @@ export function SuspectsTab() {
             <table className="w-full">
               <thead>
                 <tr style={{ background: "var(--color-surface)", borderBottom: "1px solid var(--color-border)" }}>
-                  <Th align="left" className="pl-4 w-[80px]">
+                  <Th align="left" className="pl-4 w-[36px]">
+                    <input
+                      type="checkbox"
+                      checked={rows.length > 0 && rows.every((r) => selectedIds.has(r.id))}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          setSelectedIds(new Set(rows.map((r) => r.id)));
+                        } else {
+                          clearSelection();
+                        }
+                      }}
+                      style={{ cursor: "pointer", accentColor: "var(--color-accent)" }}
+                      aria-label="Select all visible"
+                    />
+                  </Th>
+                  <Th align="left" className="w-[80px]">
                     Sim
                   </Th>
                   <Th align="left">Domain</Th>
@@ -326,8 +462,13 @@ export function SuspectsTab() {
                     key={s.id}
                     s={s}
                     probingId={probingId}
+                    defendingId={defendingId}
                     onProbe={runProbe}
+                    onDefend={runDefend}
                     onTransition={setTransitionTarget}
+                    onOpen={setDrawerSuspect}
+                    selected={selectedIds.has(s.id)}
+                    onToggleSelected={() => toggleSelected(s.id)}
                   />
                 ))}
               </tbody>
@@ -353,6 +494,109 @@ export function SuspectsTab() {
           onSubmit={(to, reason) => transition(transitionTarget, to, reason)}
         />
       )}
+
+      {bulkDismissOpen && (
+        <BulkDismissModal
+          count={selectedIds.size}
+          onClose={() => setBulkDismissOpen(false)}
+          onSubmit={(reason) => bulkDismiss(reason)}
+        />
+      )}
+
+      {drawerSuspect && (
+        <SuspectDetailDrawer
+          suspect={drawerSuspect}
+          onClose={() => setDrawerSuspect(null)}
+          onProbe={() => {
+            void runProbe(drawerSuspect);
+            setDrawerSuspect(null);
+          }}
+          onDefend={() => {
+            void runDefend(drawerSuspect);
+            setDrawerSuspect(null);
+          }}
+          onTransition={() => {
+            setTransitionTarget(drawerSuspect);
+            setDrawerSuspect(null);
+          }}
+        />
+      )}
+
+      {/* Floating bulk-action bar — appears when ≥1 row is selected.
+          Bottom-center placement so it doesn't shift the page on
+          appearance. Bounded concurrency lives in runBulk(). */}
+      {selectedIds.size > 0 && (
+        <div
+          role="region"
+          aria-label="Bulk actions"
+          style={{
+            position: "fixed",
+            bottom: 24,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 60,
+            background: "var(--color-canvas)",
+            border: "1px solid var(--color-border-strong)",
+            borderRadius: 6,
+            padding: "10px 14px",
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.16)",
+          }}
+        >
+          <span className="text-[13px] font-bold" style={{ color: "var(--color-ink)" }}>
+            {selectedIds.size} selected
+          </span>
+          <span style={{ color: "var(--color-border)" }}>·</span>
+          <button
+            type="button"
+            disabled={bulkBusy}
+            onClick={() => void bulkDefend()}
+            className="inline-flex items-center gap-1.5 h-8 px-3 text-[12px] font-bold disabled:opacity-50"
+            style={{
+              background: "var(--color-accent)",
+              color: "var(--color-on-dark)",
+              border: "1px solid var(--color-accent)",
+              borderRadius: 4,
+              cursor: bulkBusy ? "not-allowed" : "pointer",
+            }}
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            Defend selected
+          </button>
+          <button
+            type="button"
+            disabled={bulkBusy}
+            onClick={() => setBulkDismissOpen(true)}
+            className="inline-flex items-center gap-1.5 h-8 px-3 text-[12px] font-bold disabled:opacity-50"
+            style={{
+              background: "var(--color-canvas)",
+              color: "var(--color-body)",
+              border: "1px solid var(--color-border)",
+              borderRadius: 4,
+              cursor: bulkBusy ? "not-allowed" : "pointer",
+            }}
+          >
+            Dismiss selected
+          </button>
+          <button
+            type="button"
+            onClick={clearSelection}
+            disabled={bulkBusy}
+            className="inline-flex items-center gap-1.5 h-8 px-2 text-[12px] font-bold disabled:opacity-50"
+            style={{
+              background: "transparent",
+              color: "var(--color-muted)",
+              border: "1px solid var(--color-border)",
+              borderRadius: 4,
+            }}
+            aria-label="Clear selection"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -360,13 +604,23 @@ export function SuspectsTab() {
 function SuspectRow({
   s,
   probingId,
+  defendingId,
   onProbe,
+  onDefend,
   onTransition,
+  onOpen,
+  selected,
+  onToggleSelected,
 }: {
   s: SuspectDomainResponse;
   probingId: string | null;
+  defendingId: string | null;
   onProbe: (s: SuspectDomainResponse) => void;
+  onDefend: (s: SuspectDomainResponse) => void;
   onTransition: (s: SuspectDomainResponse) => void;
+  onOpen: (s: SuspectDomainResponse) => void;
+  selected: boolean;
+  onToggleSelected: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
   const [linkHovered, setLinkHovered] = useState(false);
@@ -375,13 +629,26 @@ function SuspectRow({
       style={{
         height: "48px",
         borderBottom: "1px solid var(--color-border)",
-        background: hovered ? "var(--color-surface)" : "transparent",
+        background: selected
+          ? "rgba(255,79,0,0.05)"
+          : hovered
+            ? "var(--color-surface)"
+            : "transparent",
         transition: "background 0.15s",
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
       <td className="pl-4">
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={onToggleSelected}
+          aria-label={`Select ${s.domain}`}
+          style={{ cursor: "pointer", accentColor: "var(--color-accent)" }}
+        />
+      </td>
+      <td className="px-3">
         <SimilarityBar value={s.similarity} />
       </td>
       <td className="px-3">
@@ -401,7 +668,12 @@ function SuspectRow({
           {s.domain}
         </a>
       </td>
-      <td className="px-3" style={{ fontSize: "12.5px", color: "var(--color-body)" }}>
+      <td
+        className="px-3"
+        style={{ fontSize: "12.5px", color: "var(--color-body)", cursor: "pointer" }}
+        onClick={() => onOpen(s)}
+        title="Click to open detail drawer"
+      >
         <span className="font-mono">{s.matched_term_value}</span>
         <span style={{ color: "var(--color-muted)", marginLeft: "6px" }}>
           / {s.permutation_kind}
@@ -447,6 +719,18 @@ function SuspectRow({
               <Play className="w-3 h-3" />
             )}
             PROBE
+          </ActionButton>
+          <ActionButton
+            onClick={() => onDefend(s)}
+            disabled={defendingId === s.id}
+            title="Run Brand Defender — agentic recommendation"
+          >
+            {defendingId === s.id ? (
+              <Sparkles className="w-3 h-3 animate-pulse" />
+            ) : (
+              <Sparkles className="w-3 h-3" />
+            )}
+            DEFEND
           </ActionButton>
           <ActionButton onClick={() => onTransition(s)}>
             STATE
@@ -599,5 +883,61 @@ function SourceTag({ source }: { source: string }) {
     }}>
       {source}
     </span>
+  );
+}
+
+
+function BulkDismissModal({
+  count,
+  onClose,
+  onSubmit,
+}: {
+  count: number;
+  onClose: () => void;
+  onSubmit: (reason: string) => void;
+}) {
+  const [reason, setReason] = useState("");
+  const canSubmit = reason.trim().length > 0;
+  return (
+    <ModalShell
+      title={`Dismiss ${count} suspect${count === 1 ? "" : "s"}`}
+      onClose={onClose}
+    >
+      <div className="p-6 space-y-4">
+        <p className="text-[12.5px]" style={{ color: "var(--color-body)" }}>
+          Each selected suspect transitions to{" "}
+          <strong style={{ color: "var(--color-ink)" }}>DISMISSED</strong> with
+          the reason below. The audit trail captures it on every row.
+        </p>
+        <Field
+          label="Reason"
+          required
+          hint="Required. Sent to every dismissed suspect's audit trail."
+        >
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={3}
+            className="w-full p-3"
+            style={{
+              borderRadius: 4,
+              border: "1px solid var(--color-border)",
+              background: "var(--color-canvas)",
+              color: "var(--color-ink)",
+              fontSize: 13,
+              outline: "none",
+              resize: "none",
+            }}
+            placeholder="e.g. CertStream noise — non-targeting cert reissue"
+          />
+        </Field>
+      </div>
+      <ModalFooter
+        onCancel={onClose}
+        onSubmit={() => onSubmit(reason.trim())}
+        submitLabel={`Dismiss ${count}`}
+        disabled={!canSubmit}
+      />
+    </ModalShell>
   );
 }

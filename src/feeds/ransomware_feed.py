@@ -178,7 +178,14 @@ class RansomwareFeed(BaseFeed):
             logger.warning("[%s] Failed to fetch recent victims or unexpected format", self.name)
 
         # ── Active ransomware groups ────────────────────────────────────
-        groups = await self._fetch_json(self.GROUPS_URL)
+        # NOTE: ``/v2/groups`` is also fetched daily by the maintenance
+        # job at ``src/workers/maintenance/refresh_ransomware_targets.py``
+        # to populate ``crawler_targets``. Calling it from both paths
+        # double-burns the free-tier rate limit (HTTP 429). We skip the
+        # group leg here — the threat-map layer reuses the targets table
+        # for group counts, and the per-victim layer (above) is the
+        # unique signal this feed contributes.
+        groups = None  # was: await self._fetch_json(self.GROUPS_URL)
         if isinstance(groups, list):
             logger.info("[%s] Fetched %d ransomware groups", self.name, len(groups))
             for g in groups:

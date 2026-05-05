@@ -166,7 +166,7 @@ _RULES: list[_Rule] = [
     _Rule("T1056", "Input Capture",
           ("keylogger", "keystroke logger"), 0.85),
     _Rule("T1056.004", "Input Capture: Credential API Hooking",
-          ("credential api hook"), 0.8),
+          ("credential api hook",), 0.8),
     _Rule("T1110", "Brute Force",
           ("brute force", "brute-force", "bruteforce"), 0.7),
     _Rule("T1110.003", "Brute Force: Password Spraying",
@@ -276,6 +276,24 @@ _RULES: list[_Rule] = [
           ("cobalt strike", "sliver c2", "metasploit",
            "havoc framework", "brute ratel"), 0.85),
 ]
+
+
+# Drift guard — fail at import if a rule's ``keywords`` field is a bare
+# string instead of a tuple. ``("foo")`` (no trailing comma) is a string,
+# not a 1-tuple, and Python silently iterates its characters as
+# "keywords" — which previously matched the letter "a" against every
+# alert and stamped "matched on: a, a" into the audit trail. Any new
+# 1-keyword rule must use ``("foo",)``.
+for _r in _RULES:
+    if not isinstance(_r.keywords, tuple) or any(
+        not isinstance(_kw, str) or len(_kw) < 2 for _kw in _r.keywords
+    ):
+        raise RuntimeError(
+            f"Decider rule {_r.technique_id} has malformed keywords "
+            f"{_r.keywords!r} — must be a tuple of ≥2-char strings. "
+            f"Did you forget a trailing comma in a 1-element tuple?"
+        )
+del _r
 
 
 # ── Result types ─────────────────────────────────────────────────────

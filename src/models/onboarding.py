@@ -80,7 +80,7 @@ class DiscoveryJobStatus(str, enum.Enum):
 
 
 class DiscoveryJobKind(str, enum.Enum):
-    SUBDOMAIN_ENUM = "subdomain_enum"  # Amass + Subfinder
+    SUBDOMAIN_ENUM = "subdomain_enum"  # Subfinder + Amass + crt.sh + certspotter
     PORT_SCAN = "port_scan"  # naabu
     HTTPX_PROBE = "httpx_probe"
     CT_LOG_BACKFILL = "ct_log_backfill"
@@ -90,6 +90,9 @@ class DiscoveryJobKind(str, enum.Enum):
     VULN_SCAN = "vuln_scan"  # nuclei
     SERVICE_VERSION = "service_version"  # nmap -sV
     TLS_AUDIT = "tls_audit"  # testssl.sh
+    # Phase 1.3 visual + DNS detail.
+    SCREENSHOT = "screenshot"  # gowitness — visual asset catalog
+    DNS_DETAIL = "dns_detail"  # dnsx — DNSSEC + bulk fast resolution
 
 
 class DiscoveryJob(Base, UUIDMixin, TimestampMixin):

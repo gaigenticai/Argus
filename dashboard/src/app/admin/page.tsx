@@ -33,7 +33,11 @@ import {
   CirclePause,
   ChevronRight,
   Link2Off,
+  Gauge,
+  ShieldAlert,
+  Info,
 } from "lucide-react";
+import Link from "next/link";
 import {
   api,
   type AppSettingCategory,
@@ -45,6 +49,9 @@ import {
   type CrawlerTargetResponse,
   type FeedHealthEntry,
   type FeedHealthStatus,
+  type PlatformReadinessResponse,
+  type PlatformReadinessCategory,
+  type PlatformReadinessItem,
   type SlaPolicyResponse,
   type SlaBreachResponse,
   type SlaTicketBindingResponse,
@@ -56,6 +63,7 @@ import { formatDate } from "@/lib/utils";
 import { Select as ThemedSelect } from "@/components/shared/select";
 
 const TABS = [
+  { id: "readiness", label: "Platform Readiness", icon: Gauge },
   { id: "settings", label: "Configuration", icon: SettingsIcon },
   { id: "crawlers", label: "Crawler Targets", icon: Bot },
   { id: "feeds", label: "Feed Health", icon: Activity },
@@ -88,7 +96,7 @@ const btnPrimary: React.CSSProperties = {
 
 export default function AdminPage() {
   const { user } = useAuth();
-  const [tab, setTab] = useState<TabId>("settings");
+  const [tab, setTab] = useState<TabId>("readiness");
 
   if (!user || user.role !== "admin") {
     return (
@@ -135,6 +143,7 @@ export default function AdminPage() {
         })}
       </div>
 
+      {tab === "readiness" && <ReadinessTab />}
       {tab === "settings" && <SettingsTab />}
       {tab === "crawlers" && <CrawlerTargetsTab />}
       {tab === "feeds" && <FeedHealthTab />}
@@ -1285,4 +1294,370 @@ function formatSettingValue(value: unknown, type: AppSettingValueType): string {
   if (type === "json") return JSON.stringify(value, null, 2);
   if (typeof value === "boolean") return value ? "true" : "false";
   return String(value);
+}
+
+
+/* ── Platform Readiness Tab ─────────────────────────────────────────────
+ *
+ *  Composite "is the platform actually working?" view that aggregates
+ *  every signal — domain verification, scope (channels/emails/targets),
+ *  ingestion (raw_intel, IOCs, feed_health), agent activity, integration
+ *  config, self-healing job runs — into a single 0-100 score per
+ *  category plus a prescriptive punch list.
+ *
+ *  This is the page operators visit on Monday morning to know
+ *  "what's broken about my deployment that I should fix today."
+ *  Without this surface every per-feed health view forces them to
+ *  navigate 12 pages to assemble the same picture in their head.
+ */
+
+function ReadinessTab() {
+  const { toast } = useToast();
+  const [data, setData] = useState<PlatformReadinessResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await api.admin.platformReadiness();
+      setData(r);
+    } catch (err) {
+      toast("error", `Couldn't load readiness: ${(err as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [toast]);
+
+  useEffect(() => { void load(); }, [load]);
+
+  if (loading && !data) {
+    return (
+      <div
+        className="p-6 text-[13px] flex items-center gap-2"
+        style={{
+          background: "var(--color-canvas)",
+          border: "1px solid var(--color-border)",
+          borderRadius: 8,
+          color: "var(--color-muted)",
+        }}
+      >
+        <RefreshCw className="w-4 h-4 animate-spin" /> Loading readiness …
+      </div>
+    );
+  }
+
+  if (!data) return null;
+
+  const overallColor =
+    data.overall_score >= 80 ? "#10B981"
+    : data.overall_score >= 50 ? "#F59E0B"
+    : "#EF4444";
+
+  return (
+    <div className="space-y-5">
+      {/* ── Overall composite score ─── */}
+      <div
+        className="p-6 flex items-center gap-6 flex-wrap"
+        style={{
+          background: "var(--color-canvas)",
+          border: "1px solid var(--color-border)",
+          borderRadius: 8,
+        }}
+      >
+        <CompositeRing score={data.overall_score} color={overallColor} />
+        <div className="flex-1 min-w-[260px]">
+          <h2
+            className="text-[18px] font-semibold"
+            style={{ color: "var(--color-ink)" }}
+          >
+            Platform Readiness — {data.overall_score}%
+          </h2>
+          <p
+            className="text-[13px] mt-1"
+            style={{ color: "var(--color-muted)" }}
+          >
+            Composite of {data.categories.length} categories. Updated{" "}
+            <strong>{new Date(data.generated_at).toLocaleString()}</strong>.
+            {data.blockers.length > 0 && (
+              <>
+                {" "}
+                <strong style={{ color: "#EF4444" }}>
+                  {data.blockers.length} blocker{data.blockers.length === 1 ? "" : "s"}
+                </strong>{" "}
+                must be resolved for the platform to function.
+              </>
+            )}
+            {data.blockers.length === 0 && data.overall_score < 100 && (
+              <>
+                {" "}
+                No blockers. Punch list below covers warnings + nice-to-haves.
+              </>
+            )}
+            {data.overall_score === 100 && (
+              <>
+                {" "}
+                <strong style={{ color: "#10B981" }}>All clear.</strong> Every
+                category at 100%. You&apos;re production-ready.
+              </>
+            )}
+          </p>
+        </div>
+        <button
+          onClick={load}
+          className="inline-flex items-center gap-1.5 h-9 px-3 text-[12px] font-medium"
+          style={{
+            background: "var(--color-canvas)",
+            border: "1px solid var(--color-border)",
+            borderRadius: 5,
+            color: "var(--color-ink)",
+            cursor: "pointer",
+          }}
+        >
+          <RefreshCw className="w-3.5 h-3.5" />
+          Re-run
+        </button>
+      </div>
+
+      {/* ── Per-category cards ─── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {data.categories.map((c) => (
+          <CategoryCard key={c.key} category={c} />
+        ))}
+      </div>
+
+      {/* ── Blockers summary at the bottom ─── */}
+      {data.blockers.length > 0 && (
+        <div
+          className="p-5"
+          style={{
+            background: "rgba(239,68,68,0.04)",
+            border: "1px solid rgba(239,68,68,0.3)",
+            borderRadius: 8,
+          }}
+        >
+          <h3
+            className="text-[14px] font-semibold flex items-center gap-2 mb-3"
+            style={{ color: "#B91C1C" }}
+          >
+            <ShieldAlert className="w-4 h-4" />
+            Blockers — {data.blockers.length}
+          </h3>
+          <ul className="space-y-2">
+            {data.blockers.map((item, idx) => (
+              <li key={idx}>
+                <ItemRow item={item} />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CompositeRing({
+  score, color,
+}: { score: number; color: string }) {
+  const radius = 38;
+  const circ = 2 * Math.PI * radius;
+  const offset = circ - (score / 100) * circ;
+  return (
+    <svg width={96} height={96} viewBox="0 0 96 96">
+      <circle
+        cx={48} cy={48} r={radius}
+        fill="none"
+        stroke="var(--color-border)"
+        strokeWidth={8}
+      />
+      <circle
+        cx={48} cy={48} r={radius}
+        fill="none"
+        stroke={color}
+        strokeWidth={8}
+        strokeLinecap="round"
+        strokeDasharray={circ}
+        strokeDashoffset={offset}
+        transform="rotate(-90 48 48)"
+        style={{ transition: "stroke-dashoffset 0.5s" }}
+      />
+      <text
+        x={48} y={54}
+        textAnchor="middle"
+        fontSize={20}
+        fontWeight={700}
+        fill="var(--color-ink)"
+      >
+        {score}
+      </text>
+    </svg>
+  );
+}
+
+function CategoryCard({
+  category,
+}: {
+  category: PlatformReadinessCategory;
+}) {
+  const color =
+    category.score >= 80 ? "#10B981"
+    : category.score >= 50 ? "#F59E0B"
+    : "#EF4444";
+  const blockerCount = category.items.filter(i => i.severity === "blocker").length;
+  const warnCount = category.items.filter(i => i.severity === "warning").length;
+  const infoCount = category.items.filter(i => i.severity === "info").length;
+  return (
+    <div
+      className="p-4 space-y-3"
+      style={{
+        background: "var(--color-canvas)",
+        border: "1px solid var(--color-border)",
+        borderRadius: 8,
+      }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <h3
+          className="text-[14px] font-semibold"
+          style={{ color: "var(--color-ink)" }}
+        >
+          {category.label}
+        </h3>
+        <span
+          className="text-[18px] font-bold"
+          style={{ color }}
+        >
+          {category.score}%
+        </span>
+      </div>
+      <div
+        className="h-1 rounded-full"
+        style={{ background: "var(--color-surface-muted)" }}
+      >
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${category.score}%`, background: color }}
+        />
+      </div>
+      <p
+        className="text-[11.5px]"
+        style={{ color: "var(--color-muted)" }}
+      >
+        {category.summary}
+      </p>
+      {category.items.length > 0 ? (
+        <div className="space-y-1.5 pt-1">
+          {category.items.map((item, idx) => (
+            <ItemRow key={idx} item={item} compact />
+          ))}
+        </div>
+      ) : (
+        <div
+          className="flex items-center gap-1.5 text-[11.5px] pt-1"
+          style={{ color: "var(--color-success-dark, #15803D)" }}
+        >
+          <CheckCircle2 className="w-3.5 h-3.5" />
+          All checks passed.
+        </div>
+      )}
+      {(blockerCount + warnCount + infoCount) > 0 && (
+        <div
+          className="flex gap-2 pt-1 text-[10.5px] font-bold uppercase tracking-[0.6px]"
+        >
+          {blockerCount > 0 && (
+            <span style={{ color: "#EF4444" }}>
+              {blockerCount} blocker{blockerCount === 1 ? "" : "s"}
+            </span>
+          )}
+          {warnCount > 0 && (
+            <span style={{ color: "#F59E0B" }}>
+              {warnCount} warning{warnCount === 1 ? "" : "s"}
+            </span>
+          )}
+          {infoCount > 0 && (
+            <span style={{ color: "var(--color-muted)" }}>
+              {infoCount} info
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ItemRow({
+  item, compact = false,
+}: {
+  item: PlatformReadinessItem;
+  compact?: boolean;
+}) {
+  const sevColor =
+    item.severity === "blocker" ? "#EF4444"
+    : item.severity === "warning" ? "#F59E0B"
+    : "var(--color-muted)";
+  const Icon =
+    item.severity === "blocker" ? AlertTriangle
+    : item.severity === "warning" ? CircleAlert
+    : Info;
+  const body = (
+    <div className="flex items-start gap-2">
+      <Icon
+        className="shrink-0 mt-0.5"
+        style={{
+          color: sevColor,
+          width: compact ? 13 : 16,
+          height: compact ? 13 : 16,
+        }}
+      />
+      <div className="flex-1 min-w-0">
+        <div
+          className="font-semibold"
+          style={{
+            color: "var(--color-ink)",
+            fontSize: compact ? 12 : 13,
+          }}
+        >
+          {item.title}
+        </div>
+        <div
+          className="mt-0.5"
+          style={{
+            color: "var(--color-muted)",
+            fontSize: compact ? 11 : 12,
+          }}
+        >
+          {item.detail}
+        </div>
+      </div>
+      {item.href && (
+        <ChevronRight
+          className="shrink-0 mt-0.5"
+          style={{
+            color: "var(--color-muted)",
+            width: 14, height: 14,
+          }}
+        />
+      )}
+    </div>
+  );
+  if (item.href) {
+    return (
+      <Link
+        href={item.href}
+        className="block px-2 py-1.5 transition-colors"
+        style={{
+          background: "transparent",
+          borderRadius: 4,
+          textDecoration: "none",
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLElement).style.background = "var(--color-surface-muted)";
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.background = "transparent";
+        }}
+      >
+        {body}
+      </Link>
+    );
+  }
+  return <div className="px-2 py-1.5">{body}</div>;
 }

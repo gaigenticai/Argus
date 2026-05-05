@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Filter, RefreshCw, Brain, Loader2 } from "lucide-react";
 import { api, type Alert } from "@/lib/api";
 import { SeverityBadge } from "@/components/shared/severity-badge";
@@ -11,10 +11,13 @@ import { categoryLabels, formatDate } from "@/lib/utils";
 import { useToast } from "@/components/shared/toast";
 import { Select } from "@/components/shared/select";
 
+import { SourcesStrip } from "@/components/shared/sources-strip";
+import { CoverageGate } from "@/components/shared/coverage-gate";
 const SEVERITIES = ["all", "critical", "high", "medium", "low", "info"];
-const STATUSES = ["all", "new", "triaged", "investigating", "confirmed", "false_positive", "resolved"];
+const STATUSES = ["all", "new", "needs_review", "triaged", "investigating", "confirmed", "false_positive", "resolved"];
 
 export default function AlertsPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,6 +69,7 @@ export default function AlertsPage() {
   const selectCls = "h-10 px-3 text-[13px] outline-none transition-colors cursor-pointer"
 
   return (
+    <CoverageGate pageSlug="alerts" pageLabel="Alerts">
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
@@ -76,6 +80,7 @@ export default function AlertsPage() {
             {alerts.length} alerts found
           </p>
         </div>
+      <SourcesStrip pageKey="alerts" />
         <div className="flex items-center gap-2">
           <button
             onClick={handleTriage}
@@ -190,8 +195,9 @@ export default function AlertsPage() {
               {alerts.map((alert) => (
                 <tr
                   key={alert.id}
-                  className="h-[52px] transition-colors"
+                  className="h-[52px] transition-colors cursor-pointer"
                   style={{ borderBottom: "1px solid var(--color-border)" }}
+                  onClick={() => router.push(`/alerts/${alert.id}`)}
                   onMouseEnter={e => (e.currentTarget.style.background = "var(--color-surface)")}
                   onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
                 >
@@ -244,5 +250,6 @@ export default function AlertsPage() {
         )}
       </div>
     </div>
+      </CoverageGate>
   );
 }

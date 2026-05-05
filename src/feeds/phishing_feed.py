@@ -12,11 +12,20 @@ from src.feeds.base import BaseFeed, FeedEntry
 
 logger = logging.getLogger(__name__)
 
-OPENPHISH_URL = "https://openphish.com/feed.txt"
-PHISHSTATS_URL = (
-    "https://phishstats.info:2096/api/phishing"
-    "?_where=(score,gt,5)&_sort=-date&_size=500"
+# OpenPhish moved their canonical free feed in 2025 from
+# ``openphish.com/feed.txt`` (now a 302) to a static raw file on
+# GitHub. Pointing at the GitHub source directly removes the redirect
+# dependency.
+OPENPHISH_URL = (
+    "https://raw.githubusercontent.com/openphish/public_feed/refs/heads/main/feed.txt"
 )
+# phishstats.info:2096 went offline in 2025. There's no drop-in free
+# replacement that publishes a JSON list of high-score phishing URLs;
+# OpenPhish above + URLhaus + PhishTank already cover the core
+# defensive use case. Leaving this empty disables the second source
+# in this feed without breaking the loop. To re-enable, point at any
+# JSON endpoint with the same shape (``[{url, host, ...}]``).
+PHISHSTATS_URL: str = ""
 
 
 class PhishingFeed(BaseFeed):
@@ -92,6 +101,10 @@ class PhishingFeed(BaseFeed):
 
     async def _poll_phishstats(self) -> AsyncIterator[FeedEntry]:
         """JSON API returning scored phishing entries with IP / country."""
+        if not PHISHSTATS_URL:
+            # Source disabled (upstream went offline in 2025). Yield
+            # nothing so the rest of the feed continues to work.
+            return
         data = await self._fetch_json(PHISHSTATS_URL)
         if data is None:
             logger.warning("[%s] PhishStats returned no data", self.name)

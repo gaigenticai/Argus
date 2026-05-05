@@ -231,6 +231,10 @@ class CardLeakageResponse(BaseModel):
     detected_at: datetime
     created_at: datetime
     updated_at: datetime
+    classification: dict | None = None
+    correlated_findings: dict | None = None
+    breach_correlations: dict | None = None
+    takedown_draft: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -408,6 +412,10 @@ class DlpFindingResponse(BaseModel):
     detected_at: datetime
     created_at: datetime
     updated_at: datetime
+    classification: dict | None = None
+    correlated_findings: dict | None = None
+    breach_correlations: dict | None = None
+    takedown_draft: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -528,8 +536,15 @@ async def test_policy(
     p = await db.get(DlpPolicy, policy_id)
     if not p:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Policy not found")
+    import time as _time
+    _started = _time.perf_counter()
     excerpts = evaluate_policy(p, body.text)
-    return {"matched": len(excerpts), "excerpts": excerpts[:25]}
+    _duration_ms = int((_time.perf_counter() - _started) * 1000)
+    return {
+        "matched": len(excerpts),
+        "excerpts": excerpts[:25],
+        "duration_ms": _duration_ms,
+    }
 
 
 @router.post("/dlp/scan", response_model=DlpScanResponse)
@@ -638,3 +653,206 @@ async def change_dlp_state(
     await db.commit()
     await db.refresh(f)
     return f
+
+
+# --- Agentic surfaces -------------------------------------------------
+#
+# Each finding row now carries Bridge-LLM-generated metadata:
+#   classification         severity classifier output
+#   correlated_findings    cross-org PAN/email overlap data
+#   breach_correlations    HIBP per-email breach hits
+#   takedown_draft         operator-triggered DMCA / abuse notice
+#
+# These three endpoints expose that metadata and the on-demand
+# takedown drafter to the dashboard.
+
+
+class TakedownDraftResponse(BaseModel):
+    finding_id: uuid.UUID
+    kind: str
+    status: str  # "queued" | "ready"
+    draft: str | None
+    queued_task_id: uuid.UUID | None
+
+
+async def _kick_takedown(
+    db: AsyncSession,
+    *,
+    finding_id: uuid.UUID,
+    kind: str,
+    organization_id: uuid.UUID,
+    existing_draft: str | None,
+) -> TakedownDraftResponse:
+    """Common path for both DLP and card takedown endpoints.
+
+    Returns the existing draft if present (idempotent re-invoke), else
+    enqueues a ``leakage_takedown_draft`` agent task and returns a
+    ``queued`` response. The agent worker writes the draft to the row;
+    the dashboard polls this endpoint until ``status == "ready"``.
+    """
+    if existing_draft and existing_draft.strip():
+        return TakedownDraftResponse(
+            finding_id=finding_id,
+            kind=kind,
+            status="ready",
+            draft=existing_draft,
+            queued_task_id=None,
+        )
+    from src.llm.agent_queue import enqueue as _enqueue
+
+    task = await _enqueue(
+        db,
+        kind="leakage_takedown_draft",
+        payload={"finding_id": str(finding_id), "kind": kind},
+        organization_id=organization_id,
+        # Per-finding dedup so re-clicking the button before the worker
+        # finishes returns the same task instead of queuing a second.
+        dedup_key=f"takedown:{kind}:{finding_id}",
+        priority=4,
+    )
+    return TakedownDraftResponse(
+        finding_id=finding_id,
+        kind=kind,
+        status="queued" if (task.status or "").lower() in ("queued", "running") else "ready",
+        draft=None,
+        queued_task_id=task.id,
+    )
+
+
+@router.post("/dlp/{finding_id}/draft-takedown", response_model=TakedownDraftResponse)
+async def draft_takedown_dlp(
+    finding_id: uuid.UUID,
+    request: Request,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    f = await db.get(DlpFinding, finding_id)
+    if not f:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
+    return await _kick_takedown(
+        db,
+        finding_id=f.id,
+        kind="dlp",
+        organization_id=f.organization_id,
+        existing_draft=f.takedown_draft,
+    )
+
+
+@router.post("/cards/{finding_id}/draft-takedown", response_model=TakedownDraftResponse)
+async def draft_takedown_card(
+    finding_id: uuid.UUID,
+    request: Request,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    f = await db.get(CardLeakageFinding, finding_id)
+    if not f:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
+    return await _kick_takedown(
+        db,
+        finding_id=f.id,
+        kind="card",
+        organization_id=f.organization_id,
+        existing_draft=f.takedown_draft,
+    )
+
+
+class AgentSummaryResponse(BaseModel):
+    finding_id: uuid.UUID
+    kind: str
+    severity: str
+    state: str
+    classification: dict | None
+    correlated_findings: dict | None
+    breach_correlations: dict | None
+    agent_summary: dict | None
+    takedown_draft: str | None
+
+
+@router.get("/findings/{finding_id}/agent-summary", response_model=AgentSummaryResponse)
+async def finding_agent_summary(
+    finding_id: uuid.UUID,
+    analyst: AnalystUser,
+    kind: Annotated[str | None, Query(pattern="^(dlp|card)$")] = None,
+    db: AsyncSession = Depends(get_session),
+):
+    """Return the LLM-derived metadata for a single finding.
+
+    ``kind`` is optional — when omitted we look up DLP first, then card.
+    """
+    if kind == "dlp" or kind is None:
+        dlp = await db.get(DlpFinding, finding_id)
+        if dlp is not None:
+            return AgentSummaryResponse(
+                finding_id=dlp.id,
+                kind="dlp",
+                severity=dlp.severity,
+                state=dlp.state,
+                classification=dlp.classification,
+                correlated_findings=dlp.correlated_findings,
+                breach_correlations=dlp.breach_correlations,
+                agent_summary=dlp.agent_summary,
+                takedown_draft=dlp.takedown_draft,
+            )
+    if kind == "card" or kind is None:
+        card = await db.get(CardLeakageFinding, finding_id)
+        if card is not None:
+            return AgentSummaryResponse(
+                finding_id=card.id,
+                kind="card",
+                severity=card.severity,
+                state=card.state,
+                classification=card.classification,
+                correlated_findings=card.correlated_findings,
+                breach_correlations=card.breach_correlations,
+                agent_summary=card.agent_summary,
+                takedown_draft=card.takedown_draft,
+            )
+    raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding not found")
+
+
+class PolicyTuneRequest(BaseModel):
+    organization_id: uuid.UUID
+
+
+class PolicyTuneResponse(BaseModel):
+    organization_id: uuid.UUID
+    queued_task_id: uuid.UUID
+    status: str
+
+
+@router.post("/policies/tune", response_model=PolicyTuneResponse)
+async def kick_policy_tune(
+    body: PolicyTuneRequest,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """Queue the regex-tuning agent for an org's policies.
+
+    The agent runs every enabled DLP policy against the bundled benign
+    corpus, computes per-policy false-positive rate, and (for any
+    policy above 20% FP) asks Bridge for a tighter pattern. Results
+    surface as NotificationInbox suggestions tagged
+    ``leakage_policy_tune_suggestion``.
+    """
+    org = await db.get(Organization, body.organization_id)
+    if not org:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
+    from src.llm.agent_queue import enqueue as _enqueue
+
+    # One outstanding tune per org per hour — re-running mid-task just
+    # noises up the inbox.
+    bucket = datetime.now(timezone.utc).strftime("%Y%m%d%H")
+    task = await _enqueue(
+        db,
+        kind="leakage_policy_tune",
+        payload={"organization_id": str(body.organization_id)},
+        organization_id=body.organization_id,
+        dedup_key=f"tune:{body.organization_id}:{bucket}",
+        priority=8,
+    )
+    return PolicyTuneResponse(
+        organization_id=body.organization_id,
+        queued_task_id=task.id,
+        status=task.status,
+    )

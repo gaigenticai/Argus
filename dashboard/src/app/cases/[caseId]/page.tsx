@@ -36,10 +36,14 @@ import {
   type CaseSeverityValue,
   type CaseStateValue,
   type CopilotRunDetail,
+  type CopilotSuggestedPlaybook,
   type InvestigationListItem,
   type InvestigationStatus,
+  type PlaybookExecutionResponse,
 } from "@/lib/api";
 import { useToast } from "@/components/shared/toast";
+import { useAuth } from "@/components/auth/auth-provider";
+import { ActionDrawer } from "@/components/exec-summary/action-drawer";
 import { formatDate, timeAgo } from "@/lib/utils";
 
 const SEVERITIES: CaseSeverityValue[] = [
@@ -115,6 +119,7 @@ const STATE_PRESENTATION: Record<
 const INV_STATUS_TONE: Record<InvestigationStatus, { bg: string; color: string }> = {
   queued: { bg: "rgba(147,144,132,0.12)", color: "#36342e" },
   running: { bg: "rgba(0,187,217,0.1)", color: "#007B8A" },
+  awaiting_plan_approval: { bg: "rgba(255,171,0,0.12)", color: "#B76E00" },
   completed: { bg: "rgba(0,167,111,0.1)", color: "#007B55" },
   failed: { bg: "rgba(255,86,48,0.1)", color: "#B71D18" },
 };
@@ -370,11 +375,15 @@ export default function CaseDetailPage() {
     }
   };
 
-  const removeFinding = async (alertId: string) => {
+  /** ``finding_link_id`` is ``CaseFinding.id`` (the row PK), not the
+   *  legacy ``alert_id``. The unlink endpoint resolves either form,
+   *  but row PK is the only thing every finding (alert-backed or
+   *  polymorphic) reliably has. */
+  const removeFinding = async (findingLinkId: string) => {
     if (!c) return;
     if (!confirm("Remove this finding from the case?")) return;
     try {
-      await api.cases.removeFinding(c.id, alertId);
+      await api.cases.removeFinding(c.id, findingLinkId);
       toast("success", "Finding removed");
       await load();
     } catch (e) {
@@ -766,7 +775,7 @@ function FindingsTab({
 }: {
   findings: CaseFindingResponse[];
   onLinkClick: () => void;
-  onRemove: (alertId: string) => void;
+  onRemove: (findingLinkId: string) => void;
   disabled: boolean;
 }) {
   return (
@@ -777,7 +786,7 @@ function FindingsTab({
             Linked findings
           </h3>
           <p className="text-[11.5px] mt-0.5" style={{ color: "var(--color-muted)" }}>
-            Findings auto-link from Argus detectors. Manually link an
+            Findings auto-link from Marsad detectors. Manually link an
             alert to keep this case as the source of truth.
           </p>
         </div>
@@ -844,15 +853,7 @@ function FindingsTab({
                   )}
                 </td>
                 <td className="px-3">
-                  <Link
-                    href={`/alerts/${f.alert_id}`}
-                    className="font-mono text-[12px] tabular-nums tracking-wide transition-colors"
-                    style={{ color: "var(--color-body)" }}
-                    onMouseEnter={e => (e.currentTarget.style.color = "var(--color-accent)")}
-                    onMouseLeave={e => (e.currentTarget.style.color = "var(--color-body)")}
-                  >
-                    {f.alert_id}
-                  </Link>
+                  <FindingIdCell finding={f} />
                 </td>
                 <td className="px-3 text-[12.5px]" style={{ color: "var(--color-body)" }}>
                   {f.link_reason || (
@@ -864,7 +865,7 @@ function FindingsTab({
                 </td>
                 <td className="px-2 text-right">
                   <button
-                    onClick={() => onRemove(f.alert_id)}
+                    onClick={() => onRemove(f.id)}
                     disabled={disabled}
                     className="p-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{ borderRadius: "4px", color: "var(--color-muted)" }}
@@ -889,6 +890,110 @@ function FindingsTab({
     </div>
   );
 }
+
+
+/** Renders a finding's identity cell.
+ *
+ * Findings come in two shapes:
+ * - **alert-backed**: ``alert_id`` is set, finding lives in the
+ *   ``alerts`` table. Render as a link to ``/alerts/{alert_id}``.
+ * - **polymorphic** (mobile_app, suspect_domain, exposure, fraud,
+ *   impersonation, card_leakage, dlp, logo_match, live_probe):
+ *   ``alert_id`` is null and ``finding_type`` + ``finding_id``
+ *   identify the row in its dedicated table. Render as
+ *   ``"<type> <short-id>"`` with a deep-link to the page that
+ *   owns that type when one exists.
+ *
+ * Without this distinction the FINDING ID column is blank for every
+ * polymorphic case and operators can't tell what's linked.
+ */
+function FindingIdCell({
+  finding,
+}: {
+  finding: CaseFindingResponse;
+}) {
+  if (finding.alert_id) {
+    return (
+      <Link
+        href={`/alerts/${finding.alert_id}`}
+        className="font-mono text-[12px] tabular-nums tracking-wide transition-colors"
+        style={{ color: "var(--color-body)" }}
+        onMouseEnter={e => (e.currentTarget.style.color = "var(--color-accent)")}
+        onMouseLeave={e => (e.currentTarget.style.color = "var(--color-body)")}
+      >
+        {finding.alert_id}
+      </Link>
+    );
+  }
+
+  const ftype = finding.finding_type;
+  const fid = finding.finding_id;
+  if (!ftype || !fid) {
+    return <span className="text-[11px]" style={{ color: "var(--color-muted)" }}>—</span>;
+  }
+
+  // Deep-link by polymorphic finding type. Missing types render as
+  // an inert badge so the operator still sees what's linked even if
+  // we don't have a dedicated page for it yet.
+  const TYPE_HREF: Record<string, string> = {
+    mobile_app:    "/brand#mobile-apps",
+    suspect_domain: "/brand",
+    impersonation: "/brand#impersonations",
+    fraud:         "/brand#fraud",
+    card_leakage:  "/leakage",
+    dlp:           "/leakage#dlp",
+    logo_match:    "/brand#logos",
+    live_probe:    "/brand",
+    exposure:      "/exposures",
+  };
+  const TYPE_LABEL: Record<string, string> = {
+    mobile_app:    "Mobile app",
+    suspect_domain: "Suspect domain",
+    impersonation: "Impersonation",
+    fraud:         "Fraud finding",
+    card_leakage:  "Card leakage",
+    dlp:           "DLP finding",
+    logo_match:    "Logo match",
+    live_probe:    "Live probe",
+    exposure:      "Exposure",
+  };
+  const label = TYPE_LABEL[ftype] || ftype;
+  const href = TYPE_HREF[ftype];
+  const shortId = fid.slice(0, 8);
+
+  const inner = (
+    <span className="inline-flex items-center gap-2">
+      <span
+        className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.6px]"
+        style={{
+          background: "var(--color-surface-muted)",
+          color: "var(--color-muted)",
+          borderRadius: 3,
+        }}
+      >
+        {label}
+      </span>
+      <span className="font-mono text-[12px] tabular-nums" style={{ color: "var(--color-body)" }}>
+        {shortId}…
+      </span>
+    </span>
+  );
+
+  return href ? (
+    <Link
+      href={href}
+      className="transition-colors"
+      style={{ color: "var(--color-body)" }}
+      onMouseEnter={e => (e.currentTarget.style.color = "var(--color-accent)")}
+      onMouseLeave={e => (e.currentTarget.style.color = "var(--color-body)")}
+    >
+      {inner}
+    </Link>
+  ) : (
+    inner
+  );
+}
+
 
 function CommentsTab({
   caseId,
@@ -1923,9 +2028,18 @@ function CopilotTab({
   onAppliedRefresh: () => void;
 }) {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [run, setRun] = useState<CopilotRunDetail | null | undefined>(undefined);
   const [running, setRunning] = useState(false);
   const [applying, setApplying] = useState(false);
+  // Case-scoped PlaybookExecution rows that this Apply produced. Indexed
+  // by playbook_id so each suggested-card can render its execution status.
+  const [executionsByPlaybook, setExecutionsByPlaybook] = useState<
+    Map<string, PlaybookExecutionResponse>
+  >(new Map());
+  const [orgId, setOrgId] = useState<string>("");
+  const [drawerExecutionId, setDrawerExecutionId] = useState<string | null>(null);
 
   const fetchLatest = useCallback(async () => {
     try {
@@ -1938,6 +2052,45 @@ function CopilotTab({
       );
     }
   }, [caseId, toast]);
+
+  // Resolve the org id from the case so we can query playbook history
+  // scoped to it. Stored separately so we don't have to re-fetch the
+  // case detail each time the executions panel re-loads.
+  useEffect(() => {
+    let alive = true;
+    api.cases.get(caseId).then(
+      (c) => { if (alive) setOrgId(c.organization_id); },
+    ).catch(() => {});
+    return () => { alive = false; };
+  }, [caseId]);
+
+  // Keep the executions map fresh — re-fetched after Apply, on copilot
+  // re-run, and when the drawer reports a state change (so a Continue
+  // click on step_complete bumps the card immediately).
+  const fetchExecutions = useCallback(async () => {
+    if (!orgId || !run?.id) return;
+    try {
+      const r = await api.exec.playbookHistory({
+        organization_id: orgId,
+        copilot_run_id: run.id,
+        limit: 50,
+      });
+      const m = new Map<string, PlaybookExecutionResponse>();
+      // Latest first; keep the most-recent-per-playbook so re-applies
+      // (rare; idempotency_key prevents this) don't override the
+      // active row with a stale duplicate.
+      for (const ex of r.items) {
+        if (!m.has(ex.playbook_id)) m.set(ex.playbook_id, ex);
+      }
+      setExecutionsByPlaybook(m);
+    } catch {
+      // Silent — empty map renders the cards as "not applied yet".
+    }
+  }, [orgId, run?.id]);
+
+  useEffect(() => {
+    void fetchExecutions();
+  }, [fetchExecutions]);
 
   useEffect(() => {
     void fetchLatest();
@@ -1976,12 +2129,19 @@ function CopilotTab({
       if (res.already_applied) {
         toast("info", "Suggestions were already applied");
       } else {
-        toast(
-          "success",
-          `Applied — ${res.mitre_attached} MITRE technique(s) attached, draft notes added`,
-        );
+        const parts = [
+          `${res.mitre_attached} MITRE technique${res.mitre_attached === 1 ? "" : "s"} attached`,
+          "draft notes posted",
+        ];
+        if (res.playbooks_queued > 0) {
+          parts.push(
+            `${res.playbooks_queued} investigation playbook${res.playbooks_queued === 1 ? "" : "s"} queued`,
+          );
+        }
+        toast("success", `Applied — ${parts.join(", ")}.`);
       }
       await fetchLatest();
+      await fetchExecutions();
       onAppliedRefresh();
     } catch (e) {
       toast(
@@ -1991,7 +2151,7 @@ function CopilotTab({
     } finally {
       setApplying(false);
     }
-  }, [run, fetchLatest, onAppliedRefresh, toast]);
+  }, [run, fetchLatest, fetchExecutions, onAppliedRefresh, toast]);
 
   if (run === undefined) {
     return (
@@ -2135,11 +2295,39 @@ function CopilotTab({
         </section>
       ) : null}
 
+      {run.suggested_playbooks && run.suggested_playbooks.length > 0 ? (
+        <section>
+          <h4 className="text-[11px] font-bold uppercase tracking-[0.08em] mb-2" style={{ color: "var(--color-muted)" }}>
+            Suggested investigation playbooks
+          </h4>
+          <p className="text-[11.5px] mb-2" style={{ color: "var(--color-muted)" }}>
+            Each card is a real, executable action — not just text.
+            {run.applied_at
+              ? " Click Open to preview and run."
+              : " They become live PlaybookExecution rows once you click Apply."}
+          </p>
+          <div className="space-y-2">
+            {run.suggested_playbooks.map((p, i) => (
+              <CopilotPlaybookCard
+                key={`${p.playbook_id}-${i}`}
+                suggestion={p}
+                execution={executionsByPlaybook.get(p.playbook_id) || null}
+                appliedAt={run.applied_at}
+                onOpen={(executionId) => setDrawerExecutionId(executionId)}
+              />
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {run.draft_next_steps && run.draft_next_steps.length > 0 ? (
         <section>
           <h4 className="text-[11px] font-bold uppercase tracking-[0.08em] mb-2" style={{ color: "var(--color-muted)" }}>
-            Draft next steps
+            Narrative — what we'll do
           </h4>
+          <p className="text-[11.5px] mb-2" style={{ color: "var(--color-muted)" }}>
+            Human-readable summary. Real actions live in the cards above.
+          </p>
           <ul className="space-y-1.5">
             {run.draft_next_steps.map((s) => (
               <li
@@ -2180,6 +2368,122 @@ function CopilotTab({
             ))}
           </ol>
         </section>
+      ) : null}
+
+      {drawerExecutionId && orgId ? (
+        <ActionDrawer
+          executionId={drawerExecutionId}
+          orgId={orgId}
+          isAdmin={isAdmin}
+          onClose={() => setDrawerExecutionId(null)}
+          onStateChanged={() => {
+            void fetchExecutions();
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+
+function CopilotPlaybookCard({
+  suggestion,
+  execution,
+  appliedAt,
+  onOpen,
+}: {
+  suggestion: CopilotSuggestedPlaybook;
+  execution: PlaybookExecutionResponse | null;
+  appliedAt: string | null;
+  onOpen: (executionId: string) => void;
+}) {
+  const status = execution?.status;
+  const tone =
+    status === "completed" ? "ok" :
+    status === "failed" || status === "denied" ? "err" :
+    status === "pending_approval" ? "warn" :
+    status ? "active" : "idle";
+  const toneStyles: Record<string, { bg: string; ink: string }> = {
+    ok:     { bg: "rgba(34,197,94,0.10)",  ink: "var(--color-success-dark)" },
+    warn:   { bg: "rgba(245,158,11,0.12)", ink: "var(--color-warning-dark)" },
+    err:    { bg: "rgba(239,68,68,0.10)",  ink: "var(--color-error-dark)" },
+    active: { bg: "rgba(99,102,241,0.10)", ink: "#3730A3" },
+    idle:   { bg: "var(--color-surface-muted)", ink: "var(--color-muted)" },
+  };
+  const ts = toneStyles[tone];
+
+  return (
+    <div
+      className="px-3 py-2.5 flex items-start gap-3"
+      style={{
+        background: "var(--color-surface)",
+        border: "1px solid var(--color-border)",
+        borderRadius: 4,
+      }}
+    >
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap mb-0.5">
+          <code
+            className="text-[11.5px] font-mono font-bold"
+            style={{ color: "var(--color-ink)" }}
+          >
+            {suggestion.playbook_id}
+          </code>
+          <span
+            className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-[0.6px]"
+            style={{ background: ts.bg, color: ts.ink, borderRadius: 3 }}
+          >
+            {status ? status.replace(/_/g, " ") : (appliedAt ? "missing" : "not applied")}
+          </span>
+        </div>
+        <p className="text-[12.5px]" style={{ color: "var(--color-body)" }}>
+          {suggestion.rationale || "(no rationale supplied)"}
+        </p>
+        {/* Inline result preview — when step 0 has run we show its
+            summary on the card so the analyst doesn't have to click
+            Open just to read the registrar / probe verdict / etc.
+            Errors are surfaced in red with the failure message. */}
+        {execution && execution.step_results.length > 0 ? (
+          <div
+            className="mt-1.5 px-2 py-1 text-[11.5px]"
+            style={{
+              background: "var(--color-canvas)",
+              border: "1px solid var(--color-border)",
+              borderRadius: 3,
+              color: execution.step_results[0].ok
+                ? "var(--color-body)"
+                : "var(--color-error-dark)",
+            }}
+          >
+            <span style={{ fontWeight: 600 }}>
+              {execution.step_results[0].ok ? "Result" : "Failed"}:
+            </span>{" "}
+            {execution.step_results[0].summary}
+            {!execution.step_results[0].ok && execution.step_results[0].error
+              ? ` (${execution.step_results[0].error})`
+              : null}
+          </div>
+        ) : null}
+      </div>
+      {execution ? (
+        <button
+          type="button"
+          onClick={() => onOpen(execution.id)}
+          className="inline-flex items-center text-[11.5px] font-semibold whitespace-nowrap shrink-0"
+          style={{
+            background: "transparent", border: "none",
+            color: "var(--color-accent)", cursor: "pointer",
+          }}
+          title={
+            status === "step_complete"
+              ? "Continue to next step"
+              : status === "pending_approval"
+                ? "Review and approve"
+                : "Open execution detail"
+          }
+        >
+          Open →
+        </button>
       ) : null}
     </div>
   );

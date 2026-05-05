@@ -13,6 +13,7 @@ import {
   SkeletonRows,
 } from "@/components/shared/page-primitives";
 import { useToast } from "@/components/shared/toast";
+import { CoverageGate } from "@/components/shared/coverage-gate";
 
 
 export default function TaxiiPage() {
@@ -52,11 +53,12 @@ export default function TaxiiPage() {
   };
 
   return (
+    <CoverageGate pageSlug="taxii" pageLabel="TAXII">
     <div className="space-y-6">
       <PageHeader
         eyebrow={{ icon: Rss, label: "TAXII 2.1 publish" }}
-        title="Argus as a TAXII feed"
-        description="Wire your downstream Splunk ES / Anomali / ThreatConnect / OpenCTI / MISP at the URLs below. Argus serves STIX 2.1 indicators per the TAXII 2.1 spec; subscribers paginate via ?added_after."
+        title="Marsad as a TAXII feed"
+        description="Wire your downstream Splunk ES / Anomali / ThreatConnect / OpenCTI / MISP at the URLs below. Marsad serves STIX 2.1 indicators per the TAXII 2.1 spec; subscribers paginate via ?added_after."
       />
 
       <Section>
@@ -154,7 +156,7 @@ export default function TaxiiPage() {
         >
           {`curl -H "Accept: application/taxii+json;version=2.1" \\
      -H "Authorization: Bearer <ARGUS_API_KEY>" \\
-     "${origin || "https://argus.example"}/taxii2/api/collections/${
+     "${origin || "https://marsad.example"}/taxii2/api/collections/${
             collectionId ?? "<COLLECTION_ID>"
           }/objects/?added_after=2026-04-01T00:00:00Z"`}
         </pre>
@@ -176,6 +178,7 @@ export default function TaxiiPage() {
         </a>
       </p>
     </div>
+      </CoverageGate>
   );
 }
 

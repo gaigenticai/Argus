@@ -54,6 +54,12 @@ log = logging.getLogger("argus.bridge")
 READY_MARKER = Path(os.environ.get("BRIDGE_READY_MARKER", "/tmp/argus-bridge.ready"))
 TASKS_QUEUE = "ai_tasks"
 RESULTS_QUEUE_PREFIX = "ai_results"
+# Heartbeat — refreshed every BLPOP iteration with a 30s TTL. The
+# Service Inventory page reads this key to tell whether the bridge
+# worker is alive without needing an HTTP probe (the bridge has no
+# HTTP listener; it's a Redis-queue consumer).
+HEARTBEAT_KEY = "argus:bridge:heartbeat"
+HEARTBEAT_TTL_SECONDS = 30
 
 
 def _resolve_claude_cli() -> Path | None:
@@ -115,13 +121,40 @@ async def run() -> None:
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop_event.set)
 
+    # Concurrency cap — how many ``claude -p`` subprocesses the bridge
+    # is willing to run at once. Each claude is ~600MB resident, and
+    # Anthropic's backend rate-limits the host's account; setting this
+    # too high overruns memory or trips a 429. Default 4 mirrors the
+    # API-side ``ARGUS_LLM_MAX_CONCURRENT_CALLS`` so the two layers
+    # don't fight each other. Override with ``BRIDGE_MAX_CONCURRENCY``.
+    max_concurrency = max(1, int(os.environ.get("BRIDGE_MAX_CONCURRENCY", "4")))
+    log.info("argus-bridge: max_concurrency=%d", max_concurrency)
+    sem = asyncio.Semaphore(max_concurrency)
+    in_flight: set[asyncio.Task] = set()
+
+    async def _spawn(task: dict) -> None:
+        async with sem:
+            await _handle_task(task, redis_client, claude_path)
+
     try:
         while not stop_event.is_set():
+            # Refresh heartbeat so the dashboard's Service Inventory
+            # can tell the bridge worker is alive. TTL > poll interval
+            # so a single missed loop doesn't flap the indicator.
+            try:
+                await redis_client.set(
+                    HEARTBEAT_KEY, "1", ex=HEARTBEAT_TTL_SECONDS,
+                )
+            except Exception:  # noqa: BLE001
+                pass
             # blpop returns None on timeout; loop again so we honour
             # shutdown signals promptly without leaving a permanent
             # blocking call.
             got = await redis_client.blpop([TASKS_QUEUE], timeout=5)
             if got is None:
+                # No new work — also opportunistically reap finished
+                # in-flight tasks so the set doesn't grow unbounded.
+                in_flight = {t for t in in_flight if not t.done()}
                 continue
             _queue, payload_bytes = got
             try:
@@ -129,8 +162,16 @@ async def run() -> None:
             except json.JSONDecodeError:
                 log.warning("argus-bridge: dropping malformed task: %r", payload_bytes[:200])
                 continue
-            await _handle_task(task, redis_client, claude_path)
+            # Fire-and-track: pull the next task from redis as soon as
+            # this one is dispatched. Concurrency is capped by the
+            # semaphore inside ``_spawn``.
+            t = asyncio.create_task(_spawn(task))
+            in_flight.add(t)
+            t.add_done_callback(in_flight.discard)
     finally:
+        log.info("argus-bridge: draining %d in-flight task(s)", len(in_flight))
+        if in_flight:
+            await asyncio.gather(*in_flight, return_exceptions=True)
         log.info("argus-bridge: shutdown")
         await redis_client.aclose()
 
@@ -213,11 +254,17 @@ async def _handle_task(
         stdout_str = stdout_bytes.decode()
         # Claude's --output-format json wraps the assistant text in an
         # envelope: {"type": "result", "model": "...", "result": "<text>",
-        # "session_id": "...", ...}. Older surfaces used "model_id".
-        # Surface the model id alongside the text so callers can record
-        # provenance for audit.
+        # "session_id": "...", "usage": {"input_tokens": N,
+        # "output_tokens": M, "cache_creation_input_tokens": ...,
+        # "cache_read_input_tokens": ...}, ...}. Older surfaces used
+        # "model_id" and may not include the usage block.
+        # Surface model + token usage alongside the text so the
+        # InvestigationAgent / BrandDefender can stamp accurate per-run
+        # provenance + cost.
         model_id: str | None = None
         result_text: str = stdout_str  # fall back to the full body
+        usage_in: int | None = None
+        usage_out: int | None = None
         try:
             env = json.loads(stdout_str)
             if isinstance(env, dict):
@@ -225,6 +272,24 @@ async def _handle_task(
                 # Newer envelopes carry the assistant text under "result".
                 if isinstance(env.get("result"), str):
                     result_text = env["result"]
+                # Token usage — the cache_* fields are part of input
+                # tokens for billing purposes, so sum them in. Decay
+                # to None when the field is missing so downstream code
+                # can distinguish "not surfaced" from "zero tokens".
+                u = env.get("usage")
+                if isinstance(u, dict):
+                    in_tok = u.get("input_tokens")
+                    cache_create = u.get("cache_creation_input_tokens") or 0
+                    cache_read = u.get("cache_read_input_tokens") or 0
+                    if isinstance(in_tok, int):
+                        usage_in = (
+                            in_tok
+                            + (cache_create if isinstance(cache_create, int) else 0)
+                            + (cache_read if isinstance(cache_read, int) else 0)
+                        )
+                    out_tok = u.get("output_tokens")
+                    if isinstance(out_tok, int):
+                        usage_out = out_tok
         except json.JSONDecodeError:
             pass
         await push_result({
@@ -233,6 +298,15 @@ async def _handle_task(
             "stdout": stdout_str,
             "result": result_text,
             "model": model_id,
+            # Both flat keys (matches the legacy bridge_client shape)
+            # and a nested usage block (matches Anthropic's REST API
+            # response shape) — bridge_client.py tolerates either.
+            "usage_in": usage_in,
+            "usage_out": usage_out,
+            "usage": {
+                "input_tokens": usage_in,
+                "output_tokens": usage_out,
+            } if (usage_in is not None or usage_out is not None) else None,
         })
     except Exception as exc:  # noqa: BLE001 — worker must never crash
         log.exception("argus-bridge: task %s failed", task_id)

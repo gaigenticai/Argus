@@ -240,6 +240,7 @@ async def scan_text(
     created = 0
     total_matches = 0
     now = datetime.now(timezone.utc)
+    new_findings: list[DlpFinding] = []
 
     for policy in policies:
         excerpts = evaluate_policy(policy, text)
@@ -263,22 +264,52 @@ async def scan_text(
             existing.detected_at = now
             existing.matched_excerpts = list(set((existing.matched_excerpts or []) + excerpts))[:50]
             continue
-        db.add(
-            DlpFinding(
-                organization_id=organization_id,
-                policy_id=policy.id,
-                policy_name=policy.name,
-                severity=policy.severity,
-                source_url=source_url,
-                source_kind=source_kind,
-                matched_count=len(excerpts),
-                matched_excerpts=excerpts[:50],
-                state=LeakageState.OPEN.value,
-                detected_at=now,
-            )
+        finding = DlpFinding(
+            organization_id=organization_id,
+            policy_id=policy.id,
+            policy_name=policy.name,
+            severity=policy.severity,
+            source_url=source_url,
+            source_kind=source_kind,
+            matched_count=len(excerpts),
+            matched_excerpts=excerpts[:50],
+            state=LeakageState.OPEN.value,
+            detected_at=now,
         )
+        db.add(finding)
         await db.flush()
+        new_findings.append(finding)
         created += 1
+
+    # Fire-and-forget agentic enqueues. Done after the create loop so a
+    # mid-loop enqueue failure can never roll back a freshly-persisted
+    # finding (we'd rather have the row + missed agent than no row).
+    if new_findings:
+        try:
+            from src.llm.agent_queue import enqueue as _enqueue
+
+            for f in new_findings:
+                await _enqueue(
+                    db,
+                    kind="leakage_classify",
+                    payload={"finding_id": str(f.id), "kind": "dlp"},
+                    organization_id=organization_id,
+                    dedup_key=f"classify:dlp:{f.id}",
+                    priority=5,
+                )
+                await _enqueue(
+                    db,
+                    kind="leakage_correlate_cross_org",
+                    payload={"finding_id": str(f.id), "kind": "dlp"},
+                    organization_id=organization_id,
+                    dedup_key=f"correlate:dlp:{f.id}",
+                    priority=6,
+                )
+        except Exception:  # noqa: BLE001 — never let agent enqueue break detection
+            import logging as _logging
+            _logging.getLogger(__name__).exception(
+                "leakage agent enqueue failed for org %s", organization_id
+            )
 
     return DlpScanReport(
         policies_evaluated=len(policies),
@@ -287,4 +318,13 @@ async def scan_text(
     )
 
 
-__all__ = ["DlpScanReport", "evaluate_policy", "scan_text"]
+__all__ = [
+    "DlpScanReport",
+    "evaluate_policy",
+    "scan_text",
+    "regex_pattern_is_dangerous",
+]
+
+
+# Backward-compatible alias used by tests and external imports.
+scan_dlp = scan_text

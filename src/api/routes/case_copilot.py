@@ -52,6 +52,11 @@ class CopilotRunDetail(CopilotRunListItem):
     timeline_events: list[dict[str, Any]] | None
     suggested_mitre_ids: list[str] | None
     draft_next_steps: list[str] | None
+    # New in v2: list of {playbook_id, params, rationale} the LLM
+    # picked from the investigation catalog. Frontend renders one
+    # card per entry; the linked PlaybookExecution row (if Apply
+    # already ran) is fetched separately via /exec/playbook-history?case_id=...
+    suggested_playbooks: list[dict[str, Any]] | None
     similar_case_ids: list[str] | None
     trace: list[dict[str, Any]] | None
     error_message: str | None
@@ -70,6 +75,11 @@ class ApplyResponse(BaseModel):
     already_applied: bool
     mitre_attached: int
     comment_added: bool
+    # New in v2: how many investigation playbooks the apply created
+    # as PlaybookExecution rows linked to this case. Lets the
+    # frontend say "queued 4 playbook(s) — open the Copilot tab to
+    # review and run them" instead of just confirming MITRE.
+    playbooks_queued: int = 0
 
 
 async def _run_in_background(run_id: uuid.UUID) -> None:
@@ -226,4 +236,5 @@ async def apply_copilot_run(
         already_applied=bool(result["already_applied"]),
         mitre_attached=int(result["mitre_attached"]),
         comment_added=bool(result["comment_added"]),
+        playbooks_queued=int(result.get("playbooks_queued", 0) or 0),
     )

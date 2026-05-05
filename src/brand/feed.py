@@ -267,6 +267,19 @@ async def ingest_candidates(
             await db.rollback()
             continue
 
+        # Allowlist auto-dismiss before the defender queue — saves
+        # LLM calls on legitimate subsidiary matches.
+        try:
+            from src.brand.allowlist import auto_dismiss_if_allowlisted
+
+            if await auto_dismiss_if_allowlisted(db, suspect=suspect):
+                continue
+        except Exception as _exc:  # noqa: BLE001
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "brand-allowlist check failed for %s: %s", suspect.id, _exc
+            )
+
         # Brand Defender — queue agentic triage for high-sim suspects.
         # Best-effort; feed ingest never fails because of agent queue.
         try:

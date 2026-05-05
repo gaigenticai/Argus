@@ -252,15 +252,23 @@ async def _handle_port_scan(
     db: AsyncSession, job: DiscoveryJob, output: RunnerOutput
 ) -> dict[str, Any]:
     """Each (host, port) becomes a service finding.  Also emits
-    PORT_OPENED diff entries against the source asset."""
+    PORT_OPENED diff entries against the source asset, and rolls up
+    the port list onto the matching domain/subdomain Asset.details so
+    the table column can render real port info."""
     new = 0
+    # Group items by host so we can batch-update the parent asset's port list.
+    by_host: dict[str, list[dict[str, Any]]] = {}
     for item in output.items:
         host = item.get("host")
         port = item.get("port")
         proto = item.get("protocol", "tcp")
         if not host or not port:
             continue
-        value = f"{host.lower()}:{port}"
+        host_key = host.lower()
+        by_host.setdefault(host_key, []).append(
+            {"port": int(port), "protocol": proto}
+        )
+        value = f"{host_key}:{port}"
         finding, created = await _upsert_finding(
             db,
             organization_id=job.organization_id,
@@ -283,7 +291,29 @@ async def _handle_port_scan(
                 summary=f"Port {port}/{proto} open on {host}",
                 after={"host": host, "port": int(port), "protocol": proto},
             )
-    return {"new_findings": new, "total_observations": len(output.items)}
+
+    # Roll port list onto the parent host's Asset.details so the table
+    # row can show "ports: 22, 80, 443" without joining through findings.
+    for host_key, ports in by_host.items():
+        ports_sorted = sorted(ports, key=lambda x: x["port"])
+        for atype in (AssetType.DOMAIN, AssetType.SUBDOMAIN):
+            asset = await _existing_asset(db, job.organization_id, atype, host_key)
+            if asset is None:
+                continue
+            details = dict(asset.details or {})
+            prev_ports = details.get("ports") or []
+            details["ports"] = ports_sorted
+            asset.details = details
+            asset.last_scanned_at = _now()
+            if prev_ports != ports_sorted:
+                asset.last_change_at = _now()
+            break
+
+    return {
+        "new_findings": new,
+        "hosts_with_ports": len(by_host),
+        "total_observations": len(output.items),
+    }
 
 
 _SIGNIFICANT_HTTPX_FIELDS = (
@@ -828,11 +858,17 @@ async def _handle_tls_audit(
     db: AsyncSession, job: DiscoveryJob, output
 ) -> dict[str, Any]:
     new_count = 0
+    # Aggregate TLS posture summary onto the host asset's details.tls so
+    # the surface table can render "TLS A/B/F" and cert expiry without
+    # joining through exposures.
+    sev_buckets: dict[str, int] = {}
+    cves_seen: set[str] = set()
     for item in output.items:
         target = job.target
         if item.get("ip") and item.get("port"):
             target = f"{item['ip'].lower()}:{item['port']}"
         sev_raw = (item.get("severity") or "info").lower()
+        sev_buckets[sev_raw] = sev_buckets.get(sev_raw, 0) + 1
         severity = _TESTSSL_SEV.get(sev_raw, ExposureSeverity.INFO)
         if severity == ExposureSeverity.INFO:
             continue
@@ -841,6 +877,7 @@ async def _handle_tls_audit(
         cve_ids = []
         if cve := item.get("cve"):
             cve_ids = [c.strip().upper() for c in cve.split() if c.strip()]
+        cves_seen.update(cve_ids)
         cwe_ids = []
         if cwe := item.get("cwe"):
             cwe_ids = [c.strip().upper() for c in cwe.split() if c.strip()]
@@ -862,7 +899,112 @@ async def _handle_tls_audit(
         )
         if created:
             new_count += 1
-    return {"new_exposures": new_count, "total_observations": len(output.items)}
+
+    # Roll up TLS posture summary onto the asset.
+    host = job.target.lower().rstrip(".")
+    for atype in (AssetType.DOMAIN, AssetType.SUBDOMAIN):
+        asset = await _existing_asset(db, job.organization_id, atype, host)
+        if asset is None:
+            continue
+        details = dict(asset.details or {})
+        # Compute a single-letter grade based on the worst severity seen.
+        if sev_buckets.get("critical"):
+            grade = "F"
+        elif sev_buckets.get("high"):
+            grade = "C"
+        elif sev_buckets.get("medium") or sev_buckets.get("warn"):
+            grade = "B"
+        else:
+            grade = "A"
+        details["tls"] = {
+            "grade": grade,
+            "issue_counts": dict(sev_buckets),
+            "cves": sorted(cves_seen),
+            "scanned_at": _now().isoformat(),
+        }
+        asset.details = details
+        asset.last_scanned_at = _now()
+        break
+
+    return {
+        "new_exposures": new_count,
+        "total_observations": len(output.items),
+        "tls_grade": (
+            "F" if sev_buckets.get("critical")
+            else "C" if sev_buckets.get("high")
+            else "B" if (sev_buckets.get("medium") or sev_buckets.get("warn"))
+            else "A"
+        ),
+    }
+
+
+async def _handle_screenshot(
+    db: AsyncSession, job: DiscoveryJob, output
+) -> dict[str, Any]:
+    """Persist gowitness screenshot bytes onto the parent asset's details
+    as a base64 data URL. Operators can later wire S3/MinIO storage if
+    they want to keep screenshots out of the primary DB."""
+    if not output.items:
+        return {"records": 0, "note": "no screenshot captured"}
+    rec = output.items[0]
+    host = (rec.get("host") or job.target).lower().rstrip(".")
+    asset = None
+    for atype in (AssetType.DOMAIN, AssetType.SUBDOMAIN):
+        asset = await _existing_asset(db, job.organization_id, atype, host)
+        if asset is not None:
+            break
+    if asset is None:
+        return {"records": 0, "note": "no matching asset"}
+
+    before = dict(asset.details or {})
+    after = dict(before)
+    b64 = rec.get("screenshot_b64")
+    after["screenshot"] = {
+        "data_url": f"data:image/png;base64,{b64}" if b64 else None,
+        "size_bytes": rec.get("size_bytes"),
+        "captured_at": rec.get("captured_at"),
+        "url": rec.get("url"),
+    }
+    asset.details = after
+    asset.last_scanned_at = _now()
+    return {"records": 1, "size_bytes": rec.get("size_bytes")}
+
+
+async def _handle_dns_detail(
+    db: AsyncSession, job: DiscoveryJob, output
+) -> dict[str, Any]:
+    """dnsx output: persist on the matching domain/subdomain asset with
+    DNSSEC chain info. We reuse the same JSON shape as _handle_dns_refresh
+    but with a few extra keys (cname/soa/ptr/dnssec)."""
+    if not output.items:
+        return {"records": 0}
+    rec = output.items[0]
+    domain = (rec.get("domain") or job.target).lower().rstrip(".")
+    asset = await _existing_asset(
+        db, job.organization_id, AssetType.SUBDOMAIN, domain
+    )
+    if asset is None:
+        asset = await _existing_asset(
+            db, job.organization_id, AssetType.DOMAIN, domain
+        )
+    if asset is None:
+        return {"records": 0, "note": "no matching domain asset"}
+
+    before = dict(asset.details or {})
+    after = dict(before)
+    after["dns_detail"] = {
+        "a": rec.get("a") or [],
+        "aaaa": rec.get("aaaa") or [],
+        "cname": rec.get("cname") or [],
+        "mx": rec.get("mx") or [],
+        "ns": rec.get("ns") or [],
+        "txt": rec.get("txt") or [],
+        "soa": rec.get("soa") or [],
+        "dnssec": rec.get("dnssec"),
+    }
+    asset.details = after
+    asset.last_scanned_at = _now()
+    return {"records": 1}
 
 
 _HANDLERS = {
@@ -874,6 +1016,8 @@ _HANDLERS = {
     DiscoveryJobKind.VULN_SCAN.value: _handle_vuln_scan,
     DiscoveryJobKind.SERVICE_VERSION.value: _handle_service_version,
     DiscoveryJobKind.TLS_AUDIT.value: _handle_tls_audit,
+    DiscoveryJobKind.SCREENSHOT.value: _handle_screenshot,
+    DiscoveryJobKind.DNS_DETAIL.value: _handle_dns_detail,
 }
 
 
@@ -902,16 +1046,32 @@ async def execute_job(db: AsyncSession, job: DiscoveryJob) -> dict[str, Any]:
 
     summary = await handler(db, job, output)
 
+    # Phase 1.3 — auto-orchestrate the post-discovery pipeline. After a
+    # subdomain_enum job lands new findings, queue HTTPX/PORT/TLS/VULN/
+    # SCREENSHOT against each so the analyst sees real data, not a list
+    # of bare hostnames. Idempotent + capped per env.
+    auto_queued: dict[str, int] | None = None
+    if job.kind == DiscoveryJobKind.SUBDOMAIN_ENUM.value:
+        from src.easm.orchestrator import queue_pipeline_for_subdomain_enum
+        try:
+            auto_queued = await queue_pipeline_for_subdomain_enum(db, job)
+        except Exception:  # noqa: BLE001
+            _logger.exception("auto-pipeline queueing failed for job %s", job.id)
+            auto_queued = {"queued": 0, "skipped": 0, "errored": 1}
+
     job.status = DiscoveryJobStatus.SUCCEEDED.value
     job.finished_at = _now()
     job.error_message = None
-    job.result_summary = {
+    rs = {
         **summary,
         "raw_count": len(output.items),
         "duration_ms": output.duration_ms,
     }
+    if auto_queued:
+        rs["auto_pipeline"] = auto_queued
+    job.result_summary = rs
     await db.commit()
-    return {"succeeded": True, **summary}
+    return {"succeeded": True, **rs}
 
 
 async def _mark_failed(db: AsyncSession, job: DiscoveryJob, message: str) -> None:

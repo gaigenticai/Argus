@@ -38,6 +38,10 @@ from .base import Base, TimestampMixin, UUIDMixin
 class BrandActionStatus(str, enum.Enum):
     QUEUED = "queued"
     RUNNING = "running"
+    # Plan-then-act gate (T82). Emitted after the agent proposes its
+    # plan when the org has ``brand_defence_plan_approval`` enabled.
+    # Resumed via POST /brand-actions/{id}/approve-plan.
+    AWAITING_PLAN_APPROVAL = "awaiting_plan_approval"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -102,6 +106,16 @@ class BrandAction(Base, UUIDMixin, TimestampMixin):
     model_id: Mapped[str | None] = mapped_column(String(100))
     duration_ms: Mapped[int | None] = mapped_column(Integer)
     error_message: Mapped[str | None] = mapped_column(Text)
+    # Provider-agnostic token usage. Null when the upstream provider
+    # didn't surface counts on any iteration. Used by the dashboard's
+    # cost estimator (see src/lib/llm-cost.ts).
+    input_tokens: Mapped[int | None] = mapped_column(Integer)
+    output_tokens: Mapped[int | None] = mapped_column(Integer)
+
+    # Plan-then-act gate (T82). Populated only when the org's
+    # ``brand_defence_plan_approval`` flag is on; carries the agent's
+    # proposed tool sequence pending operator review.
+    plan: Mapped[list | None] = mapped_column(JSONB)
 
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

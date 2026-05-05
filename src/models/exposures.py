@@ -25,6 +25,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     DateTime,
     Enum,
@@ -71,6 +72,7 @@ class ExposureSource(str, enum.Enum):
     NUCLEI = "nuclei"
     NMAP = "nmap"
     TESTSSL = "testssl"
+    PROWLER = "prowler"
     MANUAL = "manual"
     OTHER = "other"
 
@@ -169,6 +171,30 @@ class ExposureFinding(Base, UUIDMixin, TimestampMixin):
     state_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     state_reason: Mapped[str | None] = mapped_column(Text)
 
+    # --- EPSS / KEV enrichment (populated lazily by worker + read-time
+    # backfill from CveRecord; null when no matching CVE record exists).
+    epss_score: Mapped[float | None] = mapped_column(Float)
+    epss_percentile: Mapped[float | None] = mapped_column(Float)
+    is_kev: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    kev_added_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    # --- Structured remediation captured on terminal state transitions.
+    # ``remediation_action`` is one of: patched | waived | mitigated | blocked |
+    # false_positive — free-form remediation_notes preserves analyst commentary.
+    remediation_action: Mapped[str | None] = mapped_column(String(64))
+    remediation_patch_version: Mapped[str | None] = mapped_column(String(128))
+    remediation_owner: Mapped[str | None] = mapped_column(String(255))
+    remediation_notes: Mapped[str | None] = mapped_column(Text)
+
+    # --- AI triage outputs.
+    ai_priority: Mapped[float | None] = mapped_column(Float)
+    ai_rationale: Mapped[str | None] = mapped_column(Text)
+    ai_triaged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ai_suggest_dismiss: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
+    ai_dismiss_reason: Mapped[str | None] = mapped_column(Text)
+
     __table_args__ = (
         # Within an org, the same (rule_id, target) collapses into one row
         # whose ``occurrence_count`` and ``last_seen_at`` get bumped on
@@ -187,6 +213,9 @@ class ExposureFinding(Base, UUIDMixin, TimestampMixin):
         Index("ix_exposure_org_severity", "organization_id", "severity"),
         Index("ix_exposure_asset", "asset_id"),
         Index("ix_exposure_cve_ids", "cve_ids", postgresql_using="gin"),
+        Index("ix_exposure_is_kev", "is_kev"),
+        Index("ix_exposure_epss_score", "epss_score"),
+        Index("ix_exposure_ai_priority", "ai_priority"),
     )
 
 

@@ -19,3 +19,11 @@ from . import compliance  # noqa: F401 — register compliance tables (P1 #1.3)
 from . import d3fend_oscal  # noqa: F401 — register D3FEND + OSCAL tables (P2 #2.12)
 from . import feed_subscription  # noqa: F401 — P3 #3.4 user-self-service feeds
 from . import oss_tool  # noqa: F401 — admin-onboarding OSS-tool install state
+from . import playbooks  # noqa: F401 — exec-briefing playbook execution audit
+from . import advisory_health  # noqa: F401 — advisory ingest health
+from . import agent_task  # noqa: F401 — Bridge-LLM agent task queue (governance)
+from . import dmarc_forensic  # noqa: F401 — RUF + IMAP mailbox config
+from . import notification_inbox  # noqa: F401 — in-app inbox
+from . import dsar  # noqa: F401 — data-subject-access-request workflow
+from . import learnings  # noqa: F401 — pre-purge knowledge log
+from . import evidence_audit  # noqa: F401 — Merkle audit chain

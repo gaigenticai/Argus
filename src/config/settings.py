@@ -150,7 +150,15 @@ class LLMSettings(BaseSettings):
     base_url: str = "http://localhost:11434"
     model: str = "llama3.1:8b"
     api_key: Optional[str] = None
-    request_timeout_seconds: int = 120
+    # Per-call LLM timeout. Investigation/Triage prompts can be large
+    # (full alert context + tool catalogue + history) and the bridge
+    # transport adds host-CLI startup overhead. 120s was tight enough
+    # that a single slow-tail call would fail entire investigations
+    # at the agent's MAX_ITERATIONS=6 budget. 240s gives headroom for
+    # the long-tail without making degraded-bridge failures take
+    # forever (the agent retries once on transport error so the worst
+    # case is bounded at 2× this value, then bubble up).
+    request_timeout_seconds: int = 240
     max_concurrent_calls: int = 4
 
     @property
@@ -285,6 +293,10 @@ class TakedownSettings(BaseSettings):
 
     netcraft_base_url: str = "https://takedown.netcraft.com/api/v1"
     netcraft_api_key: Optional[str] = None
+    # Operator-facing portal URL — used to construct ``partner_url``
+    # on submitted tickets when the API response doesn't carry one.
+    # The dashboard's "Open at partner" link points here.
+    netcraft_portal_base_url: str = "https://takedown.netcraft.com"
 
     phishlabs_smtp_recipient: Optional[str] = None
     phishlabs_account_reference: Optional[str] = None
@@ -297,6 +309,33 @@ class TakedownSettings(BaseSettings):
     internal_legal_jira_user: Optional[str] = None
     internal_legal_jira_token: Optional[str] = None
     internal_legal_jira_project: Optional[str] = None
+
+    # ─── Free / self-service partners ─────────────────────────────────
+    # abuse.ch URLhaus — free malware URL distribution. Sign up at
+    # https://urlhaus.abuse.ch to get an Auth-Key. The adapter falls
+    # back to anonymous submission when no key is set, but identified
+    # submissions get attribution + history in the URLhaus dashboard.
+    urlhaus_base_url: str = "https://urlhaus.abuse.ch/api"
+    urlhaus_auth_key: Optional[str] = None
+    urlhaus_anonymous: bool = True  # accept submissions without an auth key
+
+    # abuse.ch ThreatFox — free IOC sharing. Same auth pattern as
+    # URLhaus. Distributes domains/IPs/URLs/hashes to ~500 downstream
+    # security feeds (CERTs, ISPs, AV vendors).
+    threatfox_base_url: str = "https://threatfox-api.abuse.ch/api/v1"
+    threatfox_auth_key: Optional[str] = None
+
+    # Direct-registrar abuse mailer. Uses the operator's existing
+    # SMTP config (ARGUS_NOTIFY_EMAIL_*) — no partner-specific creds
+    # needed. The adapter does a WHOIS lookup on the target domain,
+    # extracts the registrar's abuse contact, and sends a templated
+    # report. Cap how many WHOIS queries we'll do per submit (some
+    # registrars rate-limit aggressively).
+    direct_registrar_whois_timeout_seconds: float = 8.0
+    # When the WHOIS abuse contact extraction fails (rare TLDs, broken
+    # WHOIS server), fall back to this catch-all if set. Typical value:
+    # the operator's IR team mailbox.
+    direct_registrar_fallback_recipient: Optional[str] = None
 
 
 class Settings(BaseSettings):

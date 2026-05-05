@@ -35,6 +35,22 @@ class LLMTransportError(RuntimeError):
 
 
 class BaseLLMProvider(ABC):
+    """Common base for every LLM transport.
+
+    Subclasses must implement ``call`` and SHOULD populate
+    ``last_input_tokens`` / ``last_output_tokens`` from the response
+    body when the upstream API exposes them. ``last_model_id`` is the
+    canonical name the provider used (sometimes a router rewrites the
+    requested model — e.g. the bridge maps to whichever Claude CLI
+    profile is active). Callers that want per-call accounting read
+    these attributes immediately after ``await provider.call(...)``.
+    None means the provider didn't surface a value for that field.
+    """
+
+    last_input_tokens: int | None = None
+    last_output_tokens: int | None = None
+    last_model_id: str | None = None
+
     @abstractmethod
     async def call(self, system_prompt: str, user_prompt: str) -> str:
         """Send a two-turn conversation and return the assistant's text."""
@@ -76,6 +92,21 @@ class OllamaProvider(BaseLLMProvider):
                     raise LLMTransportError(
                         f"Ollama response missing message.content: keys={list(data.keys())}"
                     )
+                # Ollama exposes counts as ``prompt_eval_count`` (in)
+                # and ``eval_count`` (out) on /api/chat. Older versions
+                # may omit them — decay to None so the dashboard shows
+                # "—" rather than zero.
+                self.last_input_tokens = (
+                    data.get("prompt_eval_count")
+                    if isinstance(data.get("prompt_eval_count"), int)
+                    else None
+                )
+                self.last_output_tokens = (
+                    data.get("eval_count")
+                    if isinstance(data.get("eval_count"), int)
+                    else None
+                )
+                self.last_model_id = data.get("model") or self._model
                 return data["message"]["content"]
 
 
@@ -125,17 +156,38 @@ class OpenAIProvider(BaseLLMProvider):
                         f"OpenAI-compatible HTTP {resp.status}: {body}"
                     )
                 data = await resp.json()
-                if "choices" in data and data["choices"]:
-                    return data["choices"][0]["message"]["content"]
+                # Some routers wrap the OpenAI body in ``{"data": {...}}``
+                # — peel both shapes consistently before reading content
+                # and usage so token counting works whichever the
+                # upstream returns.
+                payload = data
                 if (
-                    "data" in data
+                    "choices" not in data
+                    and "data" in data
                     and isinstance(data["data"], dict)
                     and data["data"].get("choices")
                 ):
-                    return data["data"]["choices"][0]["message"]["content"]
-                raise LLMTransportError(
-                    f"OpenAI-compatible response missing choices: keys={list(data.keys())}"
+                    payload = data["data"]
+                if "choices" not in payload or not payload["choices"]:
+                    raise LLMTransportError(
+                        f"OpenAI-compatible response missing choices: keys={list(data.keys())}"
+                    )
+                # OpenAI returns ``usage: {prompt_tokens, completion_tokens, total_tokens}``.
+                # Map onto the same Anthropic-style names the rest of
+                # Argus uses so the agent code stays provider-agnostic.
+                usage = payload.get("usage") or {}
+                self.last_input_tokens = (
+                    usage.get("prompt_tokens")
+                    if isinstance(usage.get("prompt_tokens"), int)
+                    else None
                 )
+                self.last_output_tokens = (
+                    usage.get("completion_tokens")
+                    if isinstance(usage.get("completion_tokens"), int)
+                    else None
+                )
+                self.last_model_id = payload.get("model") or self._model
+                return payload["choices"][0]["message"]["content"]
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +236,18 @@ class AnthropicProvider(BaseLLMProvider):
                     raise LLMTransportError(
                         f"Anthropic response missing content: keys={list(data.keys())}"
                     )
+                # Anthropic returns ``usage: {input_tokens, output_tokens}``
+                # on every Messages API response. Stash for the caller —
+                # missing fields decay to None rather than 0 so the
+                # dashboard can distinguish "not surfaced" from "zero".
+                usage = data.get("usage") or {}
+                self.last_input_tokens = (
+                    usage.get("input_tokens") if isinstance(usage.get("input_tokens"), int) else None
+                )
+                self.last_output_tokens = (
+                    usage.get("output_tokens") if isinstance(usage.get("output_tokens"), int) else None
+                )
+                self.last_model_id = data.get("model") or self._model
                 return data["content"][0]["text"]
 
 
@@ -211,12 +275,29 @@ class BridgeProvider(BaseLLMProvider):
 
         cls = type(self)
         if cls._singleton is None:
-            cls._singleton = BridgeLLM(timeout_s=self._timeout_s)
-            await cls._singleton.connect()
+            singleton = BridgeLLM(timeout_s=self._timeout_s)
+            try:
+                await singleton.connect()
+            except Exception:
+                # Don't poison the class slot with a half-initialised
+                # singleton — a transient redis-unreachable on first
+                # call would otherwise sticky-fail every subsequent
+                # call without going through connect() again.
+                cls._singleton = None
+                raise
+            cls._singleton = singleton
         try:
-            return await cls._singleton.call(system_prompt, user_prompt)
+            text = await cls._singleton.call(system_prompt, user_prompt)
         except BridgeError as e:
             raise LLMTransportError(str(e)) from e
+        # Mirror the singleton's per-call provenance onto the provider
+        # instance so the agent can read it through the same interface
+        # as Anthropic/OpenAI/Ollama. Bridge worker may not always
+        # surface tokens — None is the honest answer when missing.
+        self.last_model_id = cls._singleton.last_model_id
+        self.last_input_tokens = cls._singleton.last_input_tokens
+        self.last_output_tokens = cls._singleton.last_output_tokens
+        return text
 
 
 # ---------------------------------------------------------------------------

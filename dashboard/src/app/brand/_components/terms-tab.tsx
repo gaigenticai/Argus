@@ -26,6 +26,7 @@ import {
 } from "@/components/shared/page-primitives";
 import { timeAgo } from "@/lib/utils";
 import { useBrandContext } from "./use-brand-context";
+import { AllowlistCard } from "./allowlist-card";
 
 const inputStyle: React.CSSProperties = {
   width: "100%",
@@ -158,6 +159,9 @@ export function TermsTab() {
 
   return (
     <div className="space-y-5">
+      {/* Brand Defender allowlist + threshold knobs */}
+      <AllowlistCard />
+
       {/* Brand terms registry */}
       <Section>
         <div
@@ -197,7 +201,7 @@ export function TermsTab() {
           <Empty
             icon={TagIcon}
             title="No brand terms yet"
-            description="Add at least one APEX domain (your real homepage, e.g. argusbank.demo) and one NAME (e.g. argus). The brand monitor needs both to surface meaningful matches."
+            description="Add at least one APEX domain (your real homepage, e.g. marsadbank.demo) and one NAME (e.g. marsad). The brand monitor needs both to surface meaningful matches."
             action={
               <PrimaryButton onClick={() => setShowAdd(true)}>
                 <Plus className="w-4 h-4" />
@@ -510,10 +514,10 @@ function AddTermModal({
           required
           hint={
             kind === "apex_domain"
-              ? "Apex domain only (no scheme, no path), e.g. argusbank.demo"
+              ? "Apex domain only (no scheme, no path), e.g. marsadbank.demo"
               : kind === "name"
-              ? "The brand or product name as a string, e.g. argus"
-              : "Product token, e.g. argus-pay"
+              ? "The brand or product name as a string, e.g. marsad"
+              : "Product token, e.g. marsad-pay"
           }
         >
           <input
@@ -522,10 +526,10 @@ function AddTermModal({
             style={{ ...inputStyle, fontFamily: "monospace" }}
             placeholder={
               kind === "apex_domain"
-                ? "argusbank.demo"
+                ? "marsadbank.demo"
                 : kind === "name"
-                ? "argus"
-                : "argus-pay"
+                ? "marsad"
+                : "marsad-pay"
             }
             autoFocus
           />
@@ -577,7 +581,7 @@ function FeedIngestPanel({
         value={text}
         onChange={(e) => setText(e.target.value)}
         rows={5}
-        placeholder="argus-secure-login.com&#10;login-argus.io&#10;argus-bank-customer-support.net"
+        placeholder="marsad-secure-login.com&#10;login-marsad.io&#10;marsad-bank-customer-support.net"
         style={{
           width: "100%",
           padding: "8px 12px",

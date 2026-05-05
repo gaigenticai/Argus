@@ -23,26 +23,51 @@ logger = logging.getLogger(__name__)
 
 # Batch size for geolocation
 _GEO_BATCH_SIZE = 200
+# Hard cap on entries-per-tick across all feeds. Some feeds (PhishTank
+# public list, abuse.ch URLhaus full CSV) return 50k+ records per
+# poll. Even with a 3s DNS timeout per entry that's hours of work
+# per tick. Capping at 5000 keeps each tick under ~10 minutes; the
+# remaining entries either re-appear next tick (most feeds are
+# upsert-on-conflict so latest-seen wins) or we miss them — both
+# tolerable vs. wedging the scheduler. Override via
+# ``ARGUS_FEED_MAX_ENTRIES_PER_TICK`` env var.
+import os as _os
+_MAX_ENTRIES_PER_TICK = int(
+    _os.environ.get("ARGUS_FEED_MAX_ENTRIES_PER_TICK") or "5000"
+)
 
 # DNS resolution concurrency limit
 _DNS_SEMAPHORE = asyncio.Semaphore(50)
 _DNS_CACHE: dict[str, str | None] = {}
+# Hard timeout per DNS query. Without this, ``socket.getaddrinfo``
+# on a dead phishing domain inherits the OS resolver timeout (~30s
+# on Linux). A bulk URL feed of 3000 entries with that timeout
+# multiplies into an hours-long hang and trips the scheduler's
+# 600s tick deadline. 3s is generous for a healthy resolver and
+# bounds worst case.
+_DNS_TIMEOUT_SECONDS = 3.0
 
 
 async def resolve_domain_to_ip(domain: str) -> str | None:
-    """Resolve a domain to its first IPv4 address via DNS. Cached and rate-limited."""
+    """Resolve a domain to its first IPv4 address via DNS. Cached
+    and rate-limited; each query is hard-bounded by
+    ``_DNS_TIMEOUT_SECONDS`` so a single dead domain can't wedge the
+    feed pipeline."""
     if domain in _DNS_CACHE:
         return _DNS_CACHE[domain]
 
     async with _DNS_SEMAPHORE:
         try:
-            result = await asyncio.to_thread(
-                socket.getaddrinfo, domain, None, socket.AF_INET, socket.SOCK_STREAM,
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    socket.getaddrinfo, domain, None, socket.AF_INET, socket.SOCK_STREAM,
+                ),
+                timeout=_DNS_TIMEOUT_SECONDS,
             )
             ip = result[0][4][0] if result else None
             _DNS_CACHE[domain] = ip
             return ip
-        except (socket.gaierror, OSError, TimeoutError):
+        except (socket.gaierror, OSError, TimeoutError, asyncio.TimeoutError):
             _DNS_CACHE[domain] = None
             return None
 
@@ -86,6 +111,14 @@ class FeedIngestionPipeline:
             async with feed:
                 async for entry in feed.poll():
                     total_count += 1
+                    if total_count > _MAX_ENTRIES_PER_TICK:
+                        logger.warning(
+                            "[feed-pipeline] %s exceeded %d entries this "
+                            "tick — capping. Remaining will arrive next "
+                            "tick (most feeds upsert on conflict).",
+                            feed.name, _MAX_ENTRIES_PER_TICK,
+                        )
+                        break
                     try:
                         now = datetime.now(timezone.utc)
                         expires_at = now + timedelta(hours=entry.expires_hours)

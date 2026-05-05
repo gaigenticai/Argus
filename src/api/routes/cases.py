@@ -98,10 +98,18 @@ class CommentUpdate(BaseModel):
 
 class FindingResponse(BaseModel):
     id: uuid.UUID
-    alert_id: uuid.UUID
+    # alert_id is nullable: polymorphic Phase 1+ findings (Exposure,
+    # SuspectDomain, Impersonation, Fraud, CardLeakage, Dlp,
+    # LogoMatch, LiveProbe) link via finding_type + finding_id rather
+    # than going through the Alert table. The Pydantic schema must
+    # mirror the model, otherwise a brand-defender-created case with
+    # a SuspectDomain finding 500s the case detail endpoint.
+    alert_id: uuid.UUID | None = None
+    finding_type: str | None = None
+    finding_id: uuid.UUID | None = None
     is_primary: bool
-    linked_by_user_id: uuid.UUID | None
-    link_reason: str | None
+    linked_by_user_id: uuid.UUID | None = None
+    link_reason: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -639,28 +647,55 @@ async def link_finding(
     return finding
 
 
-@router.delete("/{case_id}/findings/{alert_id}", status_code=204)
+@router.delete("/{case_id}/findings/{link_or_alert_id}", status_code=204)
 async def unlink_finding(
     case_id: uuid.UUID,
-    alert_id: uuid.UUID,
+    link_or_alert_id: uuid.UUID,
     request: Request,
     analyst: AnalystUser,
     db: AsyncSession = Depends(get_session),
 ):
+    """Unlink a finding row from a case.
+
+    The path param is interpreted as either the ``CaseFinding.id`` (row
+    PK) OR the legacy ``CaseFinding.alert_id``. Polymorphic findings
+    (mobile_app, suspect_domain, exposure, etc.) have ``alert_id=NULL``
+    so they can only be addressed by row id. Resolution order:
+
+    1. Look up by ``CaseFinding.id`` first — every linked finding has
+       one of these regardless of type.
+    2. Fall back to ``alert_id`` for backwards compatibility with any
+       external caller still passing an alert UUID.
+
+    Returns 404 if neither resolves.
+    """
     case = await _get_case_or_404(db, case_id)
-    result = await db.execute(
-        select(CaseFinding).where(
-            and_(
-                CaseFinding.case_id == case.id,
-                CaseFinding.alert_id == alert_id,
+    finding = (
+        await db.execute(
+            select(CaseFinding).where(
+                and_(
+                    CaseFinding.case_id == case.id,
+                    CaseFinding.id == link_or_alert_id,
+                )
             )
         )
-    )
-    finding = result.scalar_one_or_none()
+    ).scalar_one_or_none()
+    if finding is None:
+        finding = (
+            await db.execute(
+                select(CaseFinding).where(
+                    and_(
+                        CaseFinding.case_id == case.id,
+                        CaseFinding.alert_id == link_or_alert_id,
+                    )
+                )
+            )
+        ).scalar_one_or_none()
     if not finding:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Finding link not found")
 
     finding_id = finding.id
+    legacy_alert_id = finding.alert_id
     await db.delete(finding)
     ip, ua = _client_meta(request)
     await audit_log(
@@ -669,7 +704,12 @@ async def unlink_finding(
         user=analyst,
         resource_type="case_finding",
         resource_id=str(finding_id),
-        details={"case_id": str(case.id), "alert_id": str(alert_id)},
+        details={
+            "case_id": str(case.id),
+            "alert_id": str(legacy_alert_id) if legacy_alert_id else None,
+            "finding_type": finding.finding_type,
+            "finding_id": str(finding.finding_id) if finding.finding_id else None,
+        },
         ip_address=ip,
         user_agent=ua,
     )

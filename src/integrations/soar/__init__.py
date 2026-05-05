@@ -1,12 +1,15 @@
 """SOAR push connectors (P3 #3.7).
 
-Three connectors mirroring Argus alerts / IOCs into the customer's
+Four connectors mirroring Argus alerts / IOCs into the customer's
 SOAR platform — same shape as the SIEM connectors (P2 #2.7) so
 operators get a uniform "configure once" experience:
 
   xsoar         Cortex XSOAR (Palo Alto) — incidents API
   tines         Tines — webhook receiver
   splunk_soar   Splunk SOAR (Phantom) — container ingest API
+  cortex        Cortex (TheHive Project) — analyzer/responder framework
+                (Apache-2.0 OSS, 200+ analyzers; covers the SOAR niche
+                without a paid license)
 
 Each connector reads its own env vars, falls back to a structured
 "not configured" no-op when credentials are missing, and goes
@@ -20,12 +23,14 @@ from .base import SoarConnector, SoarPushResult
 from .xsoar import XsoarConnector
 from .tines import TinesConnector
 from .splunk_soar import SplunkSoarConnector
+from .cortex import CortexConnector
 
 
 CONNECTORS: dict[str, type[SoarConnector]] = {
     "xsoar":       XsoarConnector,
     "tines":       TinesConnector,
     "splunk_soar": SplunkSoarConnector,
+    "cortex":      CortexConnector,
 }
 
 
@@ -54,6 +59,7 @@ __all__ = [
     "XsoarConnector",
     "TinesConnector",
     "SplunkSoarConnector",
+    "CortexConnector",
     "CONNECTORS",
     "get_connector",
     "list_available",

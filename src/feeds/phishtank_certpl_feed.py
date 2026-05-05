@@ -53,10 +53,28 @@ class PhishTankCertPLFeed(BaseFeed):
 
     async def _poll_phishtank(self) -> AsyncIterator[FeedEntry]:
         api_key = (os.environ.get("ARGUS_PHISHTANK_API_KEY") or "").strip()
-        url = (
-            _PHISHTANK_URL_TEMPLATE.format(key=api_key)
-            if api_key else _PHISHTANK_PUBLIC_URL
-        )
+        # The unauthenticated ``online-valid.json`` endpoint stopped
+        # accepting requests in 2024 and now returns 403 — PhishTank
+        # made the public feed key-only. Without a key, skipping
+        # cleanly here keeps the CERT.PL half of the combined feed
+        # running and lets the operator see a clear "unconfigured"
+        # signal in the Fetch Health drawer instead of "auth_error"
+        # for the whole class.
+        if not api_key:
+            self.last_unconfigured_reason = (
+                "PhishTank now requires a registered application key for "
+                "unauthenticated fetches (the public online-valid.json "
+                "endpoint returns 403). Get a free key at "
+                "https://phishtank.org/api_register.php and set "
+                "ARGUS_PHISHTANK_API_KEY. CERT.PL half of this feed will "
+                "still poll without a key."
+            )
+            logger.info(
+                "[%s] PhishTank skipped (no ARGUS_PHISHTANK_API_KEY)",
+                self.name,
+            )
+            return
+        url = _PHISHTANK_URL_TEMPLATE.format(key=api_key)
         payload = await self._fetch_json(url)
         if not isinstance(payload, list):
             return
@@ -111,11 +129,29 @@ class PhishTankCertPLFeed(BaseFeed):
                 expires_hours=336,  # 14 days
             )
 
+    # CERT.PL's full warning list is ~130k rows — yielding every
+    # one through the ingestion pipeline blows the scheduler's 600s
+    # hard timeout (each yield round-trips through DB upsert, geo
+    # enrichment, and feed_metadata serialisation). Cap at the
+    # 5000 most-recently-inserted to stay well under budget while
+    # still ingesting the meaningful tip of the list.
+    _CERTPL_MAX_ROWS = 5000
+
     async def _poll_certpl(self) -> AsyncIterator[FeedEntry]:
         payload = await self._fetch_json(_CERTPL_URL)
         if not isinstance(payload, list):
             return
         logger.info("[%s] CERT.PL returned %d records", self.name, len(payload))
+        # Sort by InsertDate DESC so we keep the freshest rows
+        # when capping. CERT.PL appends to the end so reversing
+        # the list approximates "most recent first" without
+        # parsing every date.
+        if len(payload) > self._CERTPL_MAX_ROWS:
+            payload = payload[-self._CERTPL_MAX_ROWS :]
+            logger.info(
+                "[%s] CERT.PL capped to most-recent %d rows (timeout guard)",
+                self.name, self._CERTPL_MAX_ROWS,
+            )
         for row in payload:
             domain = (row.get("DomainAddress") or row.get("domain") or "").strip().lower()
             if not domain:

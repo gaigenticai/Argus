@@ -18,6 +18,8 @@ import {
   ListChecks,
   Save,
   PartyPopper,
+  ShieldCheck,
+  ShieldAlert,
 } from "lucide-react";
 import {
   api,
@@ -27,9 +29,11 @@ import {
   type OnboardingSessionRecord,
   type OnboardingStepKey,
   type OnboardingValidationReport,
+  type OrgDomainListItem,
 } from "@/lib/api";
 import { useToast } from "@/components/shared/toast";
 import { Select as ThemedSelect } from "@/components/shared/select";
+import { DomainChallengePanel } from "@/components/shared/scope-verification-gate";
 
 // --- Types --------------------------------------------------------------
 
@@ -253,6 +257,24 @@ export default function WizardPage({
     vendors: emptyAssets(),
     review: emptyReview(),
   });
+  // Identity verification state for the draft org bound to this
+  // session. Backend creates the draft org on the first step-1 save
+  // and mints a DNS-TXT challenge for the primary domain. Until that
+  // domain is verified, the wizard cannot advance past step 1 — the
+  // verified domain IS the org's identity, not the typed name.
+  const [orgDomains, setOrgDomains] = useState<OrgDomainListItem[]>([]);
+  const refreshOrgDomains = useCallback(async (orgId: string | null) => {
+    if (!orgId) {
+      setOrgDomains([]);
+      return;
+    }
+    try {
+      const list = await api.orgDomains.list(orgId);
+      setOrgDomains(list);
+    } catch {
+      setOrgDomains([]);
+    }
+  }, []);
 
   useEffect(() => {
     void load();
@@ -266,6 +288,7 @@ export default function WizardPage({
       setSession(sess);
       setState(loadStateFromSession(sess));
       setStepIndex(Math.max(0, Math.min(STEPS.length - 1, sess.current_step - 1)));
+      await refreshOrgDomains(sess.organization_id ?? null);
     } catch (e) {
       toast("error", `Failed to load session: ${(e as Error).message}`);
     } finally {
@@ -293,6 +316,22 @@ export default function WizardPage({
           advance,
         });
         setSession(updated);
+        // Step 1 save may have created or updated the draft org +
+        // verification token — refresh domains so the inline panel
+        // reflects the latest state, and switch the dashboard's
+        // active scope to the new org so the header badge reflects
+        // the identity being built.
+        if (currentStep.key === "organization") {
+          await refreshOrgDomains(updated.organization_id ?? null);
+          if (updated.organization_id) {
+            window.localStorage.setItem("argus_org_id", updated.organization_id);
+            window.dispatchEvent(
+              new CustomEvent("argus:org-changed", {
+                detail: { orgId: updated.organization_id },
+              }),
+            );
+          }
+        }
         if (advance) {
           setStepIndex((idx) => Math.min(STEPS.length - 1, idx + 1));
         }
@@ -303,7 +342,7 @@ export default function WizardPage({
         setSaving(false);
       }
     },
-    [session, stepIsReadOnly, currentStep, state, toast]
+    [session, stepIsReadOnly, currentStep, state, toast, refreshOrgDomains]
   );
 
   const runValidation = useCallback(async () => {
@@ -324,8 +363,22 @@ export default function WizardPage({
     try {
       await persistStep(false);
       const result = await api.completeOnboardingSession(session.id);
-      toast("success", `Complete — ${result.assets_created} assets, ${result.discovery_jobs_enqueued} discovery jobs queued.`);
-      router.push(`/organizations`);
+      toast(
+        "success",
+        `Setup complete — ${result.assets_created} asset(s), ${result.discovery_jobs_enqueued} discovery job(s) queued.`,
+      );
+      // Pass org_id + summary stats to the done page so it can render
+      // immediately without an extra round-trip and so the URL is
+      // shareable/back-button-safe. The new org is also set as the
+      // operator's "current" scope inside the done page itself.
+      const params = new URLSearchParams({
+        org: result.organization_id,
+        orgName: state.organization.name || "your organization",
+        domain: state.organization.primary_domain || "",
+        assets: String(result.assets_created),
+        jobs: String(result.discovery_jobs_enqueued),
+      });
+      router.push(`/onboarding/${session.id}/done?${params.toString()}`);
     } catch (e) {
       toast("error", `Complete failed: ${(e as Error).message}`);
     } finally {
@@ -348,6 +401,33 @@ export default function WizardPage({
     () => reports.find((r) => r.step === currentStep.key),
     [reports, currentStep.key]
   );
+
+  // Identity gate: the wizard cannot advance past step 1 (or complete
+  // at the end) until the primary domain is verified. Without proof of
+  // ownership we'd be letting anyone register as anyone — exactly the
+  // hole verification exists to close.
+  const primaryDomain = orgDomains.find((d) => d.is_primary) ?? orgDomains[0];
+  const isPrimaryVerified = primaryDomain?.verification_status === "verified";
+  const needsIdentity = !isPrimaryVerified;
+  let canAdvance = true;
+  let cannotAdvanceReason: string | undefined;
+  if (currentStep.key === "organization") {
+    if (!state.organization.name.trim()) {
+      canAdvance = false;
+      cannotAdvanceReason = "Enter the legal name first.";
+    } else if (!state.organization.primary_domain.trim()) {
+      canAdvance = false;
+      cannotAdvanceReason = "Enter your primary domain — it's the org's identity anchor.";
+    } else if (needsIdentity) {
+      canAdvance = false;
+      cannotAdvanceReason =
+        "Verify ownership of the primary domain (DNS TXT) before continuing.";
+    }
+  } else if (stepIndex === STEPS.length - 1 && needsIdentity) {
+    canAdvance = false;
+    cannotAdvanceReason =
+      "Primary domain still unverified — go back to step 1 to complete the DNS TXT challenge.";
+  }
 
   if (loading || !session) {
     return (
@@ -467,6 +547,9 @@ export default function WizardPage({
             value={state.organization}
             onChange={(v) => setState((s) => ({ ...s, organization: v }))}
             readOnly={stepIsReadOnly}
+            orgId={session.organization_id ?? null}
+            domains={orgDomains}
+            onDomainChanged={() => refreshOrgDomains(session.organization_id ?? null)}
           />
         )}
         {currentStep.key === "infra" && (
@@ -522,12 +605,20 @@ export default function WizardPage({
             </WizardSecondaryButton>
           )}
           {stepIndex < STEPS.length - 1 ? (
-            <WizardPrimaryButton onClick={() => persistStep(true)} disabled={saving || stepIsReadOnly}>
+            <WizardPrimaryButton
+              onClick={() => persistStep(true)}
+              disabled={saving || stepIsReadOnly || !canAdvance}
+              title={!canAdvance ? cannotAdvanceReason : undefined}
+            >
               Save & continue
               <ChevronRight style={{ width: "16px", height: "16px" }} />
             </WizardPrimaryButton>
           ) : (
-            <WizardAccentButton onClick={handleComplete} disabled={completing || stepIsReadOnly}>
+            <WizardAccentButton
+              onClick={handleComplete}
+              disabled={completing || stepIsReadOnly || !canAdvance}
+              title={!canAdvance ? cannotAdvanceReason : undefined}
+            >
               {completing ? <Loader2 style={{ width: "16px", height: "16px" }} className="animate-spin" /> : <PartyPopper style={{ width: "16px", height: "16px" }} />}
               Complete onboarding
             </WizardAccentButton>
@@ -582,16 +673,19 @@ function WizardPrimaryButton({
   onClick,
   disabled,
   children,
+  title,
 }: {
   onClick: () => void;
   disabled?: boolean;
   children: React.ReactNode;
+  title?: string;
 }) {
   const [hov, setHov] = useState(false);
   return (
     <button
       onClick={onClick}
       disabled={disabled}
+      title={title}
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
       style={{
@@ -620,16 +714,19 @@ function WizardAccentButton({
   onClick,
   disabled,
   children,
+  title,
 }: {
   onClick: () => void;
   disabled?: boolean;
   children: React.ReactNode;
+  title?: string;
 }) {
   const [hov, setHov] = useState(false);
   return (
     <button
       onClick={onClick}
       disabled={disabled}
+      title={title}
       onMouseEnter={() => setHov(true)}
       onMouseLeave={() => setHov(false)}
       style={{
@@ -688,14 +785,131 @@ function OrganizationStep({
   value,
   onChange,
   readOnly,
+  orgId,
+  domains,
+  onDomainChanged,
 }: {
   value: OrgStepData;
   onChange: (v: OrgStepData) => void;
   readOnly: boolean;
+  orgId: string | null;
+  domains: OrgDomainListItem[];
+  onDomainChanged: () => Promise<void> | void;
 }) {
+  const primary = domains.find((d) => d.is_primary) ?? domains[0];
+  const isVerified = primary?.verification_status === "verified";
+  const hasToken = !!primary && primary.verification_status !== "unverified";
+
   return (
-    <div className="space-y-4">
-      <h3 style={{ fontSize: "16px", fontWeight: 700, color: "var(--color-ink)" }}>Organization</h3>
+    <div className="space-y-5">
+      <div>
+        <h3 style={{ fontSize: "16px", fontWeight: 700, color: "var(--color-ink)" }}>
+          Step 1 — Claim your organisation
+        </h3>
+        <p style={{ fontSize: "13px", color: "var(--color-muted)", marginTop: "4px", maxWidth: "720px" }}>
+          The <strong style={{ color: "var(--color-body)" }}>primary domain</strong>{" "}
+          is your organisation&apos;s identity. Anyone can type a name —
+          only the true domain owner can publish a DNS TXT record on it.
+          Marsad will not show you real findings until ownership is proven.
+        </p>
+      </div>
+
+      {/* Domain block — comes first because it IS the identity. */}
+      <div
+        style={{
+          borderRadius: "5px",
+          border: isVerified
+            ? "1px solid rgba(34,197,94,0.4)"
+            : hasToken
+            ? "1px solid var(--color-accent)"
+            : "1px solid var(--color-border)",
+          background: isVerified
+            ? "rgba(34,197,94,0.04)"
+            : hasToken
+            ? "rgba(255,79,0,0.03)"
+            : "var(--color-surface)",
+          padding: "16px",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px" }}>
+          {isVerified ? (
+            <ShieldCheck style={{ width: "18px", height: "18px", color: "var(--color-success, #10B981)" }} />
+          ) : (
+            <ShieldAlert style={{ width: "18px", height: "18px", color: "var(--color-accent)" }} />
+          )}
+          <h4 style={{ fontSize: "13px", fontWeight: 700, color: "var(--color-ink)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+            {isVerified ? "Identity verified" : "Identity — primary domain"}
+          </h4>
+        </div>
+        <Field label="Primary domain *">
+          <input
+            value={value.primary_domain}
+            onChange={(e) => onChange({ ...value, primary_domain: e.target.value })}
+            readOnly={readOnly || isVerified}
+            style={{
+              ...inputStyle,
+              fontFamily: "monospace",
+              background: isVerified ? "var(--color-surface-muted)" : "var(--color-canvas)",
+            }}
+            placeholder="acme-bank.com"
+          />
+        </Field>
+        <p style={{ fontSize: "11.5px", color: "var(--color-muted)", marginTop: "6px" }}>
+          Apex domain only — no <code>https://</code>, no <code>www.</code>, no path.
+          You&apos;ll prove you own this via a DNS TXT record at{" "}
+          <code style={{ fontFamily: "monospace" }}>_marsad-challenge.&lt;domain&gt;</code>.
+        </p>
+
+        {orgId && primary ? (
+          isVerified ? (
+            <div
+              style={{
+                marginTop: "12px",
+                padding: "10px 12px",
+                borderRadius: "4px",
+                background: "rgba(34,197,94,0.08)",
+                border: "1px solid rgba(34,197,94,0.25)",
+                fontSize: "12.5px",
+                color: "var(--color-body)",
+              }}
+            >
+              <strong style={{ color: "var(--color-success-dark, #15803D)" }}>
+                ✓ {primary.domain} verified.
+              </strong>{" "}
+              You now own this org&apos;s identity in Marsad. Continue to fill
+              in name, industry, keywords, then move on to the next steps.
+            </div>
+          ) : (
+            <div style={{ marginTop: "12px" }}>
+              <DomainChallengePanel
+                orgId={orgId}
+                domain={primary.domain}
+                onChanged={async () => {
+                  await onDomainChanged();
+                }}
+              />
+            </div>
+          )
+        ) : (
+          <div
+            style={{
+              marginTop: "12px",
+              padding: "10px 12px",
+              borderRadius: "4px",
+              background: "var(--color-surface-muted)",
+              border: "1px dashed var(--color-border)",
+              fontSize: "12.5px",
+              color: "var(--color-muted)",
+            }}
+          >
+            Type a domain above and click <strong>Save</strong> below to mint a
+            verification challenge — the DNS TXT instructions will appear here.
+          </div>
+        )}
+      </div>
+
+      {/* Identity-derived metadata. Visible always (so the operator sees
+          where it's going), but conceptually downstream of the domain. */}
       <div className="grid grid-cols-2 gap-4">
         <Field label="Legal name *">
           <input
@@ -715,16 +929,7 @@ function OrganizationStep({
             placeholder="e.g. finance, healthcare, retail"
           />
         </Field>
-        <Field label="Primary domain">
-          <input
-            value={value.primary_domain}
-            onChange={(e) => onChange({ ...value, primary_domain: e.target.value })}
-            readOnly={readOnly}
-            style={{ ...inputStyle, fontFamily: "monospace" }}
-            placeholder="acme-bank.com"
-          />
-        </Field>
-        <Field label="Keywords (comma separated)">
+        <Field label="Brand keywords (comma separated)">
           <input
             value={value.keywords}
             onChange={(e) => onChange({ ...value, keywords: e.target.value })}
@@ -733,26 +938,27 @@ function OrganizationStep({
             placeholder="acme, retail-bank, mortgages"
           />
         </Field>
+        <Field label="Notes">
+          <textarea
+            value={value.notes}
+            onChange={(e) => onChange({ ...value, notes: e.target.value })}
+            readOnly={readOnly}
+            rows={1}
+            style={{
+              width: "100%",
+              borderRadius: "4px",
+              border: "1px solid var(--color-border)",
+              background: "var(--color-canvas)",
+              color: "var(--color-ink)",
+              padding: "8px 12px",
+              fontSize: "14px",
+              outline: "none",
+              resize: "vertical",
+              minHeight: "40px",
+            }}
+          />
+        </Field>
       </div>
-      <Field label="Notes">
-        <textarea
-          value={value.notes}
-          onChange={(e) => onChange({ ...value, notes: e.target.value })}
-          readOnly={readOnly}
-          rows={3}
-          style={{
-            width: "100%",
-            borderRadius: "4px",
-            border: "1px solid var(--color-border)",
-            background: "var(--color-canvas)",
-            color: "var(--color-ink)",
-            padding: "8px 12px",
-            fontSize: "14px",
-            outline: "none",
-            resize: "none",
-          }}
-        />
-      </Field>
     </div>
   );
 }
@@ -1108,15 +1314,15 @@ function placeholderForType(t: AssetTypeName): string {
     case "executive":
       return "Krishna Iyer";
     case "brand":
-      return "Argus";
+      return "Marsad";
     case "mobile_app":
-      return "com.gaigentic.argus";
+      return "com.gaigentic.marsad";
     case "social_handle":
-      return "twitter:argus_official";
+      return "twitter:marsad_official";
     case "vendor":
       return "Acme Cloud Inc";
     case "code_repository":
-      return "github:gaigenticai/argus";
+      return "github:gaigenticai/marsad";
     case "cloud_account":
       return "aws:123456789012";
     default:
@@ -1137,11 +1343,11 @@ function detailsPlaceholderForType(t: AssetTypeName): string {
     case "executive":
       return '{"full_name":"Krishna Iyer","title":"CEO","emails":["k@example.com"]}';
     case "brand":
-      return '{"name":"Argus","keywords":["argus","gaigentic"]}';
+      return '{"name":"Marsad","keywords":["marsad","gaigentic"]}';
     case "mobile_app":
-      return '{"app_name":"Argus","bundle_id":"com.gaigentic.argus"}';
+      return '{"app_name":"Marsad","bundle_id":"com.gaigentic.marsad"}';
     case "social_handle":
-      return '{"platform":"twitter","handle":"argus_official"}';
+      return '{"platform":"twitter","handle":"marsad_official"}';
     case "vendor":
       return '{"legal_name":"Acme Cloud Inc","primary_domain":"acme-cloud.example","relationship_type":"saas"}';
     case "code_repository":

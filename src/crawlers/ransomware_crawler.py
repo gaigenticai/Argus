@@ -53,7 +53,7 @@ class RansomwareLeakCrawler(BaseCrawler):
     Group targets are configured per-deployment via ``group_configs``.
     """
 
-    name = "ransomware_leak_crawler"
+    name = "ransomware_leak_group"
     source_type = SourceType.RANSOMWARE_LEAK
 
     def __init__(

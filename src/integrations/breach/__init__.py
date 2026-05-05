@@ -24,14 +24,26 @@ shape for the dashboard.
 from __future__ import annotations
 
 from .base import BreachProvider, BreachHit, ProviderResult
+from .cavalier import CavalierProvider
+from .xposedornot import XposedOrNotProvider
 from .hibp import HibpProvider
 from .intelx import IntelxProvider
 from .dehashed import DehashedProvider
 
+# Order matters — the dashboard renders providers in this sequence.
+# Two OSS-default providers (no key required) come first so a brand-
+# new deploy sees real signal on /leakage immediately:
+#   * Cavalier      — stealer-log corpus (live infections)
+#   * XposedOrNot   — dataset-breach corpus (paste-site / dump leaks)
+# Together they cover both flavours of "is this email compromised";
+# paid tiers (HIBP/IntelX/Dehashed) layer on top for higher volume or
+# niche corpora that the OSS pair doesn't index.
 PROVIDERS: dict[str, type[BreachProvider]] = {
-    "hibp":     HibpProvider,
-    "intelx":   IntelxProvider,
-    "dehashed": DehashedProvider,
+    "cavalier":    CavalierProvider,
+    "xposedornot": XposedOrNotProvider,
+    "hibp":        HibpProvider,
+    "intelx":      IntelxProvider,
+    "dehashed":    DehashedProvider,
 }
 
 

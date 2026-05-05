@@ -43,6 +43,8 @@ export default function NewsPage() {
   const [search, setSearch] = useState("");
   const [feedFilter, setFeedFilter] = useState<string | null>(null);
   const [showAddFeed, setShowAddFeed] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [categoryFilter, setCategoryFilter] = useState<"all" | "news" | "intel" | "advisories">("all");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -55,7 +57,11 @@ export default function NewsPage() {
           limit: 200,
         }),
       ]);
-      setFeeds(f);
+      setFeeds(
+        categoryFilter === "all"
+          ? f
+          : f.filter((x: NewsFeedResponse & { category?: string }) => (x.category ?? "news") === categoryFilter),
+      );
       setArticles(a);
     } catch (e) {
       toast(
@@ -65,7 +71,7 @@ export default function NewsPage() {
     } finally {
       setLoading(false);
     }
-  }, [feedFilter, search, toast]);
+  }, [feedFilter, search, toast, categoryFilter]);
 
   useEffect(() => {
     load();
@@ -81,6 +87,43 @@ export default function NewsPage() {
           <>
             <RefreshButton onClick={load} refreshing={loading} />
             <button
+              onClick={async () => {
+                try {
+                  const r = await api.news.seedFeedCatalog();
+                  toast("success", `Catalog seeded — inserted ${r.inserted}, updated ${r.updated}, total ${r.total}`);
+                  await load();
+                } catch (e) {
+                  toast("error", e instanceof Error ? e.message : "Seed failed");
+                }
+              }}
+              className="inline-flex items-center gap-2 h-10 px-4 text-[13px] font-bold"
+              style={{ borderRadius: "4px", border: "1px solid var(--color-border)", background: "var(--color-canvas)", color: "var(--color-body)" }}
+            >
+              Seed catalog
+            </button>
+            <button
+              onClick={async () => {
+                setSyncing(true);
+                try {
+                  const r = await api.news.syncAllFeeds({ only_due: true, max_feeds: 10, process_bodies: false });
+                  toast(
+                    "success",
+                    `Synced ${r.feeds} feeds — ${r.new} new, ${r.dup} dup, ${r.iocs} IOCs, ${r.techniques} TTPs, ${r.errors} errors`,
+                  );
+                  await load();
+                } catch (e) {
+                  toast("error", e instanceof Error ? e.message : "Sync failed");
+                } finally {
+                  setSyncing(false);
+                }
+              }}
+              disabled={syncing}
+              className="inline-flex items-center gap-2 h-10 px-4 text-[13px] font-bold disabled:opacity-50"
+              style={{ borderRadius: "4px", border: "1px solid var(--color-border)", background: "var(--color-canvas)", color: "var(--color-body)" }}
+            >
+              {syncing ? "Syncing…" : "Sync due feeds"}
+            </button>
+            <button
               onClick={() => setShowAddFeed(true)}
               className="inline-flex items-center gap-2 h-10 px-4 text-[13px] font-bold"
               style={{ borderRadius: "4px", border: "1px solid var(--color-accent)", background: "var(--color-accent)", color: "var(--color-on-dark)" }}
@@ -91,6 +134,20 @@ export default function NewsPage() {
           </>
         }
       />
+
+      <div className="flex gap-2 text-[12px]">
+        <span className="font-semibold mr-2" style={{ color: "var(--color-muted)" }}>Category:</span>
+        {(["all", "news", "intel", "advisories"] as const).map((c) => (
+          <button
+            key={c}
+            onClick={() => setCategoryFilter(c)}
+            className="font-semibold"
+            style={{ color: categoryFilter === c ? "var(--color-accent)" : "var(--color-muted)" }}
+          >
+            {c}
+          </button>
+        ))}
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-5">
         {/* Feed sidebar */}

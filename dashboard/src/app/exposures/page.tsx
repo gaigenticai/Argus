@@ -13,6 +13,7 @@ import {
   PageHeader,
   RefreshButton,
 } from "@/components/shared/page-primitives";
+import { SourcesStrip } from "@/components/shared/sources-strip";
 import {
   ExposuresContextProvider,
   useExposuresContext,
@@ -21,6 +22,7 @@ import { ExposuresInbox } from "./_components/exposures-inbox";
 import { FindingsTab } from "./_components/findings-tab";
 import { ChangesTab } from "./_components/changes-tab";
 import { JobsTab } from "./_components/jobs-tab";
+import { CoverageGate } from "@/components/shared/coverage-gate";
 
 const TABS = [
   { id: "exposures", label: "Exposures", icon: ShieldAlert },
@@ -33,9 +35,11 @@ type TabId = (typeof TABS)[number]["id"];
 
 export default function ExposuresPage() {
   return (
+    <CoverageGate pageSlug="exposures" pageLabel="Exposures">
     <ExposuresContextProvider>
       <Shell />
     </ExposuresContextProvider>
+      </CoverageGate>
   );
 }
 
@@ -78,6 +82,7 @@ function Shell() {
         actions={
           <>
             <OrgSwitcher orgs={orgs} orgId={orgId} onChange={setOrgId} />
+      <SourcesStrip pageKey="exposures" />
             <RefreshButton onClick={bumpRefresh} refreshing={false} />
           </>
         }

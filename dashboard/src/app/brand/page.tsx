@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
+  BarChart3,
   ShieldCheck,
   Globe2,
   Camera,
@@ -10,6 +12,7 @@ import {
   Smartphone,
   AlertOctagon,
   Settings2,
+  Sparkles,
 } from "lucide-react";
 import {
   PageHeader,
@@ -17,6 +20,7 @@ import {
   OrgSwitcher,
 } from "@/components/shared/page-primitives";
 
+import { SourcesStrip } from "@/components/shared/sources-strip";
 import {
   BrandContextProvider,
   useBrandContext,
@@ -29,9 +33,12 @@ import { ImpersonationsTab } from "./_components/impersonations-tab";
 import { MobileAppsTab } from "./_components/mobile-apps-tab";
 import { FraudTab } from "./_components/fraud-tab";
 import { TermsTab } from "./_components/terms-tab";
+import { DefenderTab } from "./_components/defender-tab";
+import { CoverageGate } from "@/components/shared/coverage-gate";
 
 const TABS = [
   { id: "overview", label: "Overview", icon: ShieldCheck },
+  { id: "defender", label: "Defender", icon: Sparkles },
   { id: "suspects", label: "Suspect domains", icon: Globe2 },
   { id: "probes", label: "Live probes", icon: Camera },
   { id: "logos", label: "Logos", icon: ImageIcon },
@@ -45,9 +52,11 @@ type TabId = (typeof TABS)[number]["id"];
 
 export default function BrandPage() {
   return (
+    <CoverageGate pageSlug="brand" pageLabel="Brand Protection">
     <BrandContextProvider>
       <BrandShell />
     </BrandContextProvider>
+      </CoverageGate>
   );
 }
 
@@ -55,10 +64,21 @@ function BrandShell() {
   const { orgs, orgId, setOrgId, loading, bumpRefresh, refreshKey } =
     useBrandContext();
 
+  // Initial tab resolution honours BOTH ``#tab`` and ``?tab=`` so links
+  // from elsewhere in the app work whichever convention the caller used.
+  // The hash form is the canonical persisted form (browser back/forward
+  // reliably preserves it); ``?tab=`` is a graceful read-on-arrival.
   const [tab, setTab] = useState<TabId>(() => {
     if (typeof window === "undefined") return "overview";
-    const h = window.location.hash.replace("#", "");
-    return (TABS.find((t) => t.id === h)?.id || "overview") as TabId;
+    const fromHash = window.location.hash.replace("#", "");
+    if (fromHash && TABS.find((t) => t.id === fromHash)) {
+      return fromHash as TabId;
+    }
+    const fromQuery = new URLSearchParams(window.location.search).get("tab");
+    if (fromQuery && TABS.find((t) => t.id === fromQuery)) {
+      return fromQuery as TabId;
+    }
+    return "overview";
   });
 
   // Sync hash <-> tab so deep links + browser back/forward work as analysts expect
@@ -91,6 +111,21 @@ function BrandShell() {
         actions={
           <>
             <OrgSwitcher orgs={orgs} orgId={orgId} onChange={setOrgId} />
+            <SourcesStrip pageKey="brand" />
+            <Link
+              href="/brand/stats"
+              className="inline-flex items-center gap-1.5 h-8 px-3 text-[12px] font-bold transition-colors"
+              style={{
+                borderRadius: 4,
+                border: "1px solid var(--color-border)",
+                background: "var(--color-canvas)",
+                color: "var(--color-body)",
+              }}
+              title="Brand Defender analytics"
+            >
+              <BarChart3 style={{ width: 13, height: 13 }} />
+              Stats
+            </Link>
             <RefreshButton onClick={bumpRefresh} refreshing={false} />
           </>
         }
@@ -131,6 +166,7 @@ function BrandShell() {
       ) : (
         <div key={`${orgId}-${tab}-${refreshKey}`}>
           {tab === "overview" && <OverviewTab onJumpTab={switchTab} />}
+          {tab === "defender" && <DefenderTab />}
           {tab === "suspects" && <SuspectsTab />}
           {tab === "probes" && <ProbesTab />}
           {tab === "logos" && <LogosTab />}

@@ -294,6 +294,11 @@ class TraceStep:
     tool: str | None
     tool_args: dict | None
     tool_result: Any
+    # Per-iteration timing for the dashboard's per-step duration
+    # display + total-time aggregation. Both nullable for legacy /
+    # forced-finalise paths so the FE degrades gracefully.
+    started_at: datetime | None = None
+    duration_ms: int | None = None
 
 
 @dataclass
@@ -306,6 +311,12 @@ class BrandReport:
     risk_signals: list[str] = field(default_factory=list)
     suggested_partner: str | None = None
     trace: list[TraceStep] = field(default_factory=list)
+    # Provider-agnostic LLM usage totals — populated by the agent's
+    # accumulator after each provider call. None means the upstream
+    # API didn't surface usage on any iteration.
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    model_id: str | None = None
 
 
 # ----------------------------------------------------------------------
@@ -362,19 +373,53 @@ class BrandDefenderAgent:
         self.session = session
 
     async def defend(
-        self, *, suspect_domain_id: str, organization_id: str
+        self,
+        *,
+        suspect_domain_id: str,
+        organization_id: str,
+        brand_action_id: uuid.UUID | None = None,
+        approved_plan: list[dict[str, Any]] | None = None,
     ) -> BrandReport:
         from src.agents.triage_agent import (
             LLMNotConfigured,
             LLMTransportError,
-            TriageAgent,
         )
+        from src.llm.providers import get_provider
 
         if not settings.llm.is_configured:
             raise LLMNotConfigured("Brand Defender requires a configured LLM provider.")
 
-        triage = TriageAgent()
-        call_llm = triage._call_llm
+        # Use the provider directly so we can read per-call token
+        # counts off the provider instance after each await — matches
+        # the InvestigationAgent's accounting path (T50 / T74).
+        provider = get_provider(settings.llm)
+        call_llm = provider.call
+
+        # Live event bus — emit each step over SSE so the Brand
+        # Defender activity panel can render the trace as it happens.
+        # No-op when no subscriber is listening.
+        from src.core.brand_action_events import bus as _ev_bus
+
+        async def _emit(payload: dict[str, Any]) -> None:
+            if brand_action_id is None:
+                return
+            try:
+                await _ev_bus.emit(brand_action_id, payload)
+            except Exception:  # noqa: BLE001
+                logger.debug("[brand-defender] sse emit failed", exc_info=True)
+
+        # Token accumulators (T50 pattern).
+        total_input_tokens: int | None = None
+        total_output_tokens: int | None = None
+
+        def _accumulate_tokens() -> None:
+            nonlocal total_input_tokens, total_output_tokens
+            ti = provider.last_input_tokens
+            to = provider.last_output_tokens
+            if isinstance(ti, int):
+                total_input_tokens = (total_input_tokens or 0) + ti
+            if isinstance(to, int):
+                total_output_tokens = (total_output_tokens or 0) + to
 
         # Adversarial audit D-6 — wrap untrusted text in a delimiter
         # that the system prompt teaches the model to treat as data
@@ -383,15 +428,31 @@ class BrandDefenderAgent:
         # or smuggle in escape sequences.
         suspect_clean = _safe_strip(suspect_domain_id)
         org_clean = _safe_strip(organization_id)
-        history: list[dict[str, str]] = [
-            {
-                "role": "user",
-                "content": (
-                    "Begin brand-defence assessment.\n"
-                    f"<<<DATA>>>{json.dumps({'suspect_domain_id': suspect_clean, 'organization_id': org_clean})}<<<END>>>"
-                ),
-            }
-        ]
+        seed = (
+            "Begin brand-defence assessment.\n"
+            f"<<<DATA>>>{json.dumps({'suspect_domain_id': suspect_clean, 'organization_id': org_clean})}<<<END>>>"
+        )
+        # Plan-approval gate output OR analyst-supplied extra context
+        # is rendered as a hint in the seed turn — agent encouraged
+        # but not forced to follow it.
+        if approved_plan:
+            hint_lines: list[str] = []
+            for step in approved_plan:
+                if not isinstance(step, dict):
+                    continue
+                if step.get("kind") == "extra_context" and step.get("text"):
+                    hint_lines.append(f"Analyst note: {step['text']}")
+                elif step.get("tool"):
+                    rat = step.get("rationale") or ""
+                    hint_lines.append(
+                        f"  - {step['tool']}: {rat}" if rat else f"  - {step['tool']}"
+                    )
+            if hint_lines:
+                seed += (
+                    "\n\nAnalyst-approved hint (follow when sensible):\n"
+                    + "\n".join(hint_lines)
+                )
+        history: list[dict[str, str]] = [{"role": "user", "content": seed}]
         trace: list[TraceStep] = []
         catalogue = json.dumps(
             [
@@ -415,26 +476,52 @@ class BrandDefenderAgent:
         )
 
         for i in range(1, self.MAX_ITERATIONS + 1):
+            iter_started = datetime.now(timezone.utc)
             user_blob = "\n\n".join(
                 f"[{m['role']}] {m['content']}" for m in history
             )
             try:
                 raw = await call_llm(system, user_blob)
-            except (LLMNotConfigured, LLMTransportError):
+            except LLMNotConfigured:
                 raise
+            except LLMTransportError as exc:
+                # Same retry-once policy as the InvestigationAgent —
+                # one transient bridge timeout / connection reset must
+                # not fail the whole defence.
+                logger.warning(
+                    "[brand-defender] iter=%d transport error, retrying once: %s",
+                    i, exc,
+                )
+                try:
+                    raw = await call_llm(system, user_blob)
+                except LLMTransportError:
+                    raise
+            _accumulate_tokens()
             decision = _parse_decision(raw)
             thought = decision.get("thought") or ""
 
             if decision.get("finalise"):
-                trace.append(
-                    TraceStep(
-                        iteration=i,
-                        thought=thought,
-                        tool=None,
-                        tool_args=None,
-                        tool_result=None,
-                    )
+                step = TraceStep(
+                    iteration=i,
+                    thought=thought,
+                    tool=None,
+                    tool_args=None,
+                    tool_result=None,
+                    started_at=iter_started,
+                    duration_ms=int(
+                        (datetime.now(timezone.utc) - iter_started).total_seconds() * 1000
+                    ),
                 )
+                trace.append(step)
+                await _emit({
+                    "kind": "step",
+                    "iteration": step.iteration,
+                    "tool": step.tool,
+                    "thought": step.thought,
+                    "args": step.tool_args,
+                    "result": step.tool_result,
+                    "duration_ms": step.duration_ms,
+                })
                 rec = decision.get("recommendation") or "insufficient_data"
                 # Coerce stray model output into the enum surface.
                 valid = {
@@ -455,6 +542,9 @@ class BrandDefenderAgent:
                     risk_signals=list(decision.get("risk_signals") or []),
                     suggested_partner=decision.get("suggested_partner") or None,
                     trace=trace,
+                    input_tokens=total_input_tokens,
+                    output_tokens=total_output_tokens,
+                    model_id=getattr(provider, "last_model_id", None),
                 )
 
             tool_name = decision.get("tool")
@@ -469,17 +559,30 @@ class BrandDefenderAgent:
                         ),
                     }
                 )
-                trace.append(
-                    TraceStep(
-                        iteration=i,
-                        thought=thought,
-                        tool=tool_name,
-                        tool_args=tool_args,
-                        tool_result={"error": "unknown_tool"},
-                    )
+                step = TraceStep(
+                    iteration=i,
+                    thought=thought,
+                    tool=tool_name,
+                    tool_args=tool_args,
+                    tool_result={"error": "unknown_tool"},
+                    started_at=iter_started,
+                    duration_ms=int(
+                        (datetime.now(timezone.utc) - iter_started).total_seconds() * 1000
+                    ),
                 )
+                trace.append(step)
+                await _emit({
+                    "kind": "step",
+                    "iteration": step.iteration,
+                    "tool": step.tool,
+                    "thought": step.thought,
+                    "args": step.tool_args,
+                    "result": step.tool_result,
+                    "duration_ms": step.duration_ms,
+                })
                 continue
 
+            tool_started = datetime.now(timezone.utc)
             try:
                 tool_result = await _TOOLS[tool_name].runner(self.session, **tool_args)
             except TypeError as exc:
@@ -488,15 +591,27 @@ class BrandDefenderAgent:
                 logger.exception("[brand-defender] tool %s crashed", tool_name)
                 tool_result = {"error": f"{type(exc).__name__}: {exc}"}
 
-            trace.append(
-                TraceStep(
-                    iteration=i,
-                    thought=thought,
-                    tool=tool_name,
-                    tool_args=tool_args,
-                    tool_result=tool_result,
-                )
+            step = TraceStep(
+                iteration=i,
+                thought=thought,
+                tool=tool_name,
+                tool_args=tool_args,
+                tool_result=tool_result,
+                started_at=tool_started,
+                duration_ms=int(
+                    (datetime.now(timezone.utc) - tool_started).total_seconds() * 1000
+                ),
             )
+            trace.append(step)
+            await _emit({
+                "kind": "step",
+                "iteration": step.iteration,
+                "tool": step.tool,
+                "thought": step.thought,
+                "args": step.tool_args,
+                "result": step.tool_result,
+                "duration_ms": step.duration_ms,
+            })
             history.append(
                 {"role": "assistant", "content": json.dumps({"tool": tool_name, "args": tool_args})}
             )
@@ -523,6 +638,9 @@ class BrandDefenderAgent:
             ),
             confidence=0.0,
             trace=trace,
+            input_tokens=total_input_tokens,
+            output_tokens=total_output_tokens,
+            model_id=getattr(provider, "last_model_id", None),
         )
 
 
@@ -568,7 +686,7 @@ async def run_and_persist(
     action_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
     from src.agents.triage_agent import LLMNotConfigured, LLMTransportError
-    from src.llm.providers import BridgeProvider
+    from src.core.brand_action_events import bus as _ev_bus
     from src.models.brand_actions import (
         BrandAction,
         BrandActionRecommendation,
@@ -592,20 +710,29 @@ async def run_and_persist(
             )
         ).scalar_one()
         action.status = BrandActionStatus.RUNNING.value
-        action.started_at = datetime.now(timezone.utc)
+        if not action.started_at:
+            action.started_at = datetime.now(timezone.utc)
     await session.commit()
+
+    # SSE: lifecycle "started" so subscribers get a marker even if the
+    # agent crashes before iteration 1.
+    try:
+        await _ev_bus.emit(action_id, {"kind": "started", "status": "running"})
+    except Exception:  # noqa: BLE001
+        pass
 
     started = time.monotonic()
     agent = BrandDefenderAgent(session)
+    # An approved plan (post-gate) or rerun extra_context lives on
+    # ``action.plan``; honour it as a hint to the seed turn.
+    approved_plan = action.plan if isinstance(action.plan, list) else None
     try:
         report = await agent.defend(
             suspect_domain_id=str(suspect_domain_id),
             organization_id=str(organization_id),
+            brand_action_id=action_id,
+            approved_plan=approved_plan,
         )
-        try:
-            model_id = getattr(BridgeProvider._singleton, "last_model_id", None)
-        except Exception:  # noqa: BLE001
-            model_id = None
 
         action.status = BrandActionStatus.COMPLETED.value
         action.recommendation = report.recommendation
@@ -614,6 +741,7 @@ async def run_and_persist(
         action.risk_signals = report.risk_signals
         action.suggested_partner = report.suggested_partner
         action.iterations = report.iterations
+        # Persist per-step timing now too (T49 pattern).
         action.trace = [
             {
                 "iteration": s.iteration,
@@ -621,12 +749,16 @@ async def run_and_persist(
                 "tool": s.tool,
                 "args": s.tool_args,
                 "result": s.tool_result,
+                "started_at": s.started_at.isoformat() if s.started_at else None,
+                "duration_ms": s.duration_ms,
             }
             for s in report.trace
         ]
-        action.model_id = model_id
+        action.model_id = report.model_id
         action.duration_ms = int((time.monotonic() - started) * 1000)
         action.finished_at = datetime.now(timezone.utc)
+        action.input_tokens = report.input_tokens
+        action.output_tokens = report.output_tokens
     except (LLMNotConfigured, LLMTransportError) as exc:
         action.status = BrandActionStatus.FAILED.value
         action.error_message = f"{type(exc).__name__}: {exc}"
@@ -643,6 +775,22 @@ async def run_and_persist(
         logger.exception("[brand-defender] crashed for suspect=%s", suspect_domain_id)
 
     await session.commit()
+
+    try:
+        await _ev_bus.emit(
+            action_id,
+            {
+                "kind": "stopped",
+                "status": action.status,
+                "recommendation": action.recommendation,
+                "confidence": action.confidence,
+                "iterations": action.iterations,
+                "duration_ms": action.duration_ms,
+                "error_message": action.error_message,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
     # Auto-takedown — gated. Two env vars must align AND the
     # recommendation has to be ``takedown_now`` AND confidence ≥ 0.95.
@@ -777,6 +925,10 @@ async def _maybe_auto_file_takedown(session: AsyncSession, *, action) -> None:
 # ----------------------------------------------------------------------
 
 
+# Fallback used only when the org has no settings row yet (fresh install
+# / unseeded org). The real threshold lives in
+# ``OrganizationAgentSettings.brand_defence_min_similarity`` and is
+# editable from Settings → Agents.
 _AUTO_DEFEND_MIN_SIMILARITY = 0.80
 
 
@@ -785,19 +937,23 @@ async def maybe_queue_brand_defence(
 ) -> uuid.UUID | None:
     """Queue a Brand Defender run if the suspect looks like a real
     candidate. Idempotent across queued/running rows for the same suspect.
+
+    Threshold resolution:
+      1. ``OrganizationAgentSettings.brand_defence_min_similarity`` if
+         the org has a settings row.
+      2. ``_AUTO_DEFEND_MIN_SIMILARITY`` (0.80) otherwise.
     """
     from src.models.brand_actions import BrandAction, BrandActionStatus
     from src.models.org_agent_settings import OrganizationAgentSettings
 
     similarity = float(getattr(suspect, "similarity", 0.0) or 0.0)
     state = (getattr(suspect, "state", None) or "").lower()
-    if similarity < _AUTO_DEFEND_MIN_SIMILARITY:
-        return None
     if state in {"dismissed", "cleared"}:
         # Operator already adjudicated.
         return None
 
-    # Per-org veto — Settings → Agents tab toggles this per org.
+    # Per-org settings — both the kill-switch and the per-org
+    # threshold knob live here.
     org_settings = (
         await session.execute(
             select(OrganizationAgentSettings).where(
@@ -810,6 +966,13 @@ async def maybe_queue_brand_defence(
             "[brand-defender] queue skipped (org %s disabled brand_defender_enabled)",
             suspect.organization_id,
         )
+        return None
+    threshold = (
+        float(getattr(org_settings, "brand_defence_min_similarity", _AUTO_DEFEND_MIN_SIMILARITY))
+        if org_settings is not None
+        else _AUTO_DEFEND_MIN_SIMILARITY
+    )
+    if similarity < threshold:
         return None
 
     existing = (

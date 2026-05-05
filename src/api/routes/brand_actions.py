@@ -8,12 +8,14 @@ that part is a thin pass-through, the agent never auto-submits.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,6 +43,11 @@ class BrandActionListItem(BaseModel):
     created_at: datetime
     finished_at: datetime | None
     takedown_ticket_id: uuid.UUID | None
+    # T56-style enrichment so the activity panel can render a useful
+    # row without a second fetch per action.
+    suspect_domain: str | None = None
+    suspect_similarity: float | None = None
+    suspect_state: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -50,6 +57,47 @@ class BrandActionDetail(BrandActionListItem):
     trace: list[dict[str, Any]] | None
     error_message: str | None
     started_at: datetime | None
+    plan: list[dict[str, Any]] | None = None
+    # Token totals (T94) — surface to the FE so the cost estimator
+    # can render $/run alongside duration. Null when upstream LLM
+    # provider didn't surface usage on any iteration.
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+
+class RerunRequest(BaseModel):
+    extra_context: str | None = Field(default=None, max_length=2000)
+
+
+class ApprovePlanRequest(BaseModel):
+    plan: list[dict[str, Any]] | None = None
+
+
+class StatsResponse(BaseModel):
+    total: int
+    by_status: dict[str, int]
+    by_recommendation: dict[str, int]
+    avg_confidence: float | None
+    avg_iterations: float
+    avg_duration_ms: float | None
+    top_risk_signals: list[dict[str, Any]]
+    defence_to_takedown_rate: float
+    daily: list[dict[str, Any]]
+
+
+class CompareDiff(BaseModel):
+    a_id: uuid.UUID
+    b_id: uuid.UUID
+    same_suspect: bool
+    iteration_delta: int
+    duration_delta_ms: int | None
+    confidence_delta: float | None
+    recommendation_a: str | None
+    recommendation_b: str | None
+    risk_signals_added: list[str]
+    risk_signals_removed: list[str]
+    tools_added: list[str]
+    tools_removed: list[str]
 
 
 class CreateBrandActionResponse(BaseModel):
@@ -156,6 +204,335 @@ async def create_brand_action(
     )
 
 
+@router.post(
+    "/{action_id}/rerun",
+    response_model=CreateBrandActionResponse,
+    status_code=202,
+)
+async def rerun_brand_action(
+    action_id: uuid.UUID,
+    background: BackgroundTasks,
+    body: RerunRequest | None = None,
+    db: AsyncSession = Depends(get_session),
+    user: AnalystUser = None,  # noqa: B008
+) -> CreateBrandActionResponse:
+    """Spawn a new brand-action on the same suspect (T82 pattern).
+
+    Optional ``extra_context`` is rendered as an analyst hint in the
+    new run's seed turn. Original row stays untouched.
+    """
+    org_id = await get_system_org_id(db)
+    src = (
+        await db.execute(
+            select(BrandAction)
+            .where(BrandAction.id == action_id)
+            .where(BrandAction.organization_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if src is None:
+        raise HTTPException(404, "brand action not found")
+
+    extra = body.extra_context.strip() if body and body.extra_context else None
+    plan = [{"kind": "extra_context", "text": extra}] if extra else None
+
+    action = BrandAction(
+        organization_id=org_id,
+        suspect_domain_id=src.suspect_domain_id,
+        status=BrandActionStatus.QUEUED.value,
+        plan=plan,
+    )
+    db.add(action)
+    await db.commit()
+    await db.refresh(action)
+    background.add_task(_run_in_background, action.id)
+    return CreateBrandActionResponse(
+        id=action.id, status=action.status, suspect_domain_id=src.suspect_domain_id,
+    )
+
+
+@router.post(
+    "/{action_id}/approve-plan",
+    response_model=CreateBrandActionResponse,
+)
+async def approve_plan(
+    action_id: uuid.UUID,
+    body: ApprovePlanRequest,
+    background: BackgroundTasks,
+    db: AsyncSession = Depends(get_session),
+    user: AnalystUser = None,  # noqa: B008
+) -> CreateBrandActionResponse:
+    """Resume a plan-approval-paused brand-action."""
+    org_id = await get_system_org_id(db)
+    action = (
+        await db.execute(
+            select(BrandAction)
+            .where(BrandAction.id == action_id)
+            .where(BrandAction.organization_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if action is None:
+        raise HTTPException(404, "brand action not found")
+    if action.status != BrandActionStatus.AWAITING_PLAN_APPROVAL.value:
+        raise HTTPException(
+            409,
+            f"brand action is {action.status}, not awaiting_plan_approval",
+        )
+    if body.plan is not None:
+        action.plan = body.plan
+    action.status = BrandActionStatus.RUNNING.value
+    await db.commit()
+    background.add_task(_run_in_background, action.id)
+    return CreateBrandActionResponse(
+        id=action.id, status=action.status, suspect_domain_id=action.suspect_domain_id,
+    )
+
+
+@router.get("/{action_id}/stream")
+async def stream_brand_action(
+    action_id: uuid.UUID,
+    request: Request,
+    db: AsyncSession = Depends(get_session),
+    user: AnalystUser = None,  # noqa: B008
+):
+    """Live SSE stream of agent steps for one brand-action.
+
+    Replays persisted trace as initial burst, then streams new events.
+    Closes on terminal status (completed / failed).
+    """
+    from src.core.brand_action_events import BrandActionEventBus, bus
+
+    org_id = await get_system_org_id(db)
+    action = (
+        await db.execute(
+            select(BrandAction)
+            .where(BrandAction.id == action_id)
+            .where(BrandAction.organization_id == org_id)
+        )
+    ).scalar_one_or_none()
+    if action is None:
+        raise HTTPException(404, "brand action not found")
+
+    queue = bus.subscribe(action_id)
+
+    async def event_stream():
+        try:
+            for step in (action.trace or []):
+                yield BrandActionEventBus.to_sse({
+                    "kind": "step",
+                    "iteration": step.get("iteration"),
+                    "tool": step.get("tool"),
+                    "thought": step.get("thought"),
+                    "args": step.get("args"),
+                    "result": step.get("result"),
+                    "duration_ms": step.get("duration_ms"),
+                    "brand_action_id": str(action_id),
+                    "replay": True,
+                })
+            if action.status in (
+                BrandActionStatus.COMPLETED.value,
+                BrandActionStatus.FAILED.value,
+            ):
+                yield BrandActionEventBus.to_sse({
+                    "kind": "stopped",
+                    "status": action.status,
+                    "recommendation": action.recommendation,
+                    "confidence": action.confidence,
+                    "iterations": action.iterations,
+                    "duration_ms": action.duration_ms,
+                    "brand_action_id": str(action_id),
+                    "replay": True,
+                })
+                return
+
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    ev = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield BrandActionEventBus.to_sse(ev)
+                    if ev.get("kind") == "stopped":
+                        break
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            bus.unsubscribe(action_id, queue)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
+
+
+@router.get("/stats", response_model=StatsResponse)
+async def get_stats(
+    days: int = Query(30, ge=1, le=365),
+    db: AsyncSession = Depends(get_session),
+    user: AnalystUser = None,  # noqa: B008
+) -> StatsResponse:
+    """Brand-defender analytics — drives /brand/stats page.
+
+    Defence→takedown conversion rate measures how often a completed
+    action with takedown_now / takedown_after_review actually got a
+    real takedown_ticket_id assigned.
+    """
+    org_id = await get_system_org_id(db)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    q = (
+        select(BrandAction)
+        .where(BrandAction.organization_id == org_id)
+        .where(BrandAction.created_at >= cutoff)
+    )
+    rows: list[BrandAction] = list((await db.execute(q)).scalars().all())
+    total = len(rows)
+
+    by_status: dict[str, int] = {}
+    by_rec: dict[str, int] = {}
+    for r in rows:
+        by_status[r.status] = by_status.get(r.status, 0) + 1
+        if r.recommendation:
+            by_rec[r.recommendation] = by_rec.get(r.recommendation, 0) + 1
+
+    confs = [r.confidence for r in rows if r.confidence is not None]
+    avg_conf = sum(confs) / len(confs) if confs else None
+    iters = [r.iterations for r in rows if r.iterations]
+    avg_iters = sum(iters) / len(iters) if iters else 0.0
+    durs = [r.duration_ms for r in rows if r.duration_ms]
+    avg_dur = sum(durs) / len(durs) if durs else None
+
+    rs_counter: dict[str, int] = {}
+    for r in rows:
+        for s in (r.risk_signals or []):
+            rs_counter[s] = rs_counter.get(s, 0) + 1
+    top_rs = sorted(
+        [{"risk_signal": k, "count": v} for k, v in rs_counter.items()],
+        key=lambda x: x["count"],
+        reverse=True,
+    )[:8]
+
+    # Defence→takedown conversion: of completed runs with a recommendation
+    # of takedown_now or takedown_after_review, how many had a ticket
+    # filed against them?
+    eligible = [
+        r for r in rows
+        if r.status == BrandActionStatus.COMPLETED.value
+        and r.recommendation in ("takedown_now", "takedown_after_review")
+    ]
+    converted = sum(1 for r in eligible if r.takedown_ticket_id)
+    conv_rate = converted / len(eligible) if eligible else 0.0
+
+    daily_buckets: dict[str, dict[str, int]] = {}
+    for r in rows:
+        day = r.created_at.date().isoformat()
+        b = daily_buckets.setdefault(
+            day, {"total": 0, "completed": 0, "failed": 0, "takedown_now": 0}
+        )
+        b["total"] += 1
+        if r.status == BrandActionStatus.COMPLETED.value:
+            b["completed"] += 1
+        elif r.status == BrandActionStatus.FAILED.value:
+            b["failed"] += 1
+        if r.recommendation == "takedown_now":
+            b["takedown_now"] += 1
+    daily = [{"date": k, **v} for k, v in sorted(daily_buckets.items())]
+
+    return StatsResponse(
+        total=total,
+        by_status=by_status,
+        by_recommendation=by_rec,
+        avg_confidence=avg_conf,
+        avg_iterations=avg_iters,
+        avg_duration_ms=avg_dur,
+        top_risk_signals=top_rs,
+        defence_to_takedown_rate=conv_rate,
+        daily=daily,
+    )
+
+
+@router.get("/compare", response_model=CompareDiff)
+async def compare_brand_actions(
+    ids: str = Query(..., description="Two action ids comma-separated"),
+    db: AsyncSession = Depends(get_session),
+    user: AnalystUser = None,  # noqa: B008
+) -> CompareDiff:
+    """Diff two brand-action runs against the same suspect.
+
+    Useful when re-running after new live-probe / WHOIS evidence
+    landed and the analyst wants to see what the agent learned.
+    """
+    parts = [p.strip() for p in ids.split(",") if p.strip()]
+    if len(parts) != 2:
+        raise HTTPException(422, "ids must be exactly two uuids, comma-separated")
+    try:
+        a_id, b_id = uuid.UUID(parts[0]), uuid.UUID(parts[1])
+    except ValueError as exc:
+        raise HTTPException(422, f"invalid uuid: {exc}") from exc
+
+    org_id = await get_system_org_id(db)
+    rows = list(
+        (await db.execute(
+            select(BrandAction)
+            .where(BrandAction.id.in_([a_id, b_id]))
+            .where(BrandAction.organization_id == org_id)
+        )).scalars().all()
+    )
+    by_id = {r.id: r for r in rows}
+    if a_id not in by_id or b_id not in by_id:
+        raise HTTPException(404, "one or both actions not found")
+    a, b = by_id[a_id], by_id[b_id]
+    same_suspect = a.suspect_domain_id == b.suspect_domain_id
+    if not same_suspect:
+        raise HTTPException(
+            422,
+            "actions are on different suspects — compare requires same suspect",
+        )
+
+    def _diff(prev: list, new: list) -> tuple[list[str], list[str]]:
+        ps = set(prev or [])
+        ns = set(new or [])
+        return sorted(ns - ps), sorted(ps - ns)
+
+    rs_added, rs_removed = _diff(a.risk_signals, b.risk_signals)
+
+    def _tools_used(action: BrandAction) -> list[str]:
+        seen: set[str] = set()
+        ordered: list[str] = []
+        for s in (action.trace or []):
+            t = s.get("tool")
+            if isinstance(t, str) and t not in seen:
+                seen.add(t)
+                ordered.append(t)
+        return ordered
+
+    tools_a, tools_b = _tools_used(a), _tools_used(b)
+    tools_added, tools_removed = _diff(tools_a, tools_b)
+
+    duration_delta = None
+    if a.duration_ms is not None and b.duration_ms is not None:
+        duration_delta = b.duration_ms - a.duration_ms
+    confidence_delta = None
+    if a.confidence is not None and b.confidence is not None:
+        confidence_delta = b.confidence - a.confidence
+
+    return CompareDiff(
+        a_id=a.id, b_id=b.id,
+        same_suspect=same_suspect,
+        iteration_delta=(b.iterations - a.iterations),
+        duration_delta_ms=duration_delta,
+        confidence_delta=confidence_delta,
+        recommendation_a=a.recommendation,
+        recommendation_b=b.recommendation,
+        risk_signals_added=rs_added,
+        risk_signals_removed=rs_removed,
+        tools_added=tools_added,
+        tools_removed=tools_removed,
+    )
+
+
 @router.get("/{action_id}", response_model=BrandActionDetail)
 async def get_brand_action(
     action_id: uuid.UUID,
@@ -172,7 +549,13 @@ async def get_brand_action(
     ).scalar_one_or_none()
     if action is None:
         raise HTTPException(404, "brand action not found")
-    return BrandActionDetail.model_validate(action)
+    detail = BrandActionDetail.model_validate(action)
+    suspect = await db.get(SuspectDomain, action.suspect_domain_id)
+    if suspect is not None:
+        detail.suspect_domain = suspect.domain
+        detail.suspect_similarity = suspect.similarity
+        detail.suspect_state = suspect.state
+    return detail
 
 
 @router.post(
@@ -335,9 +718,19 @@ async def list_brand_actions(
     db: AsyncSession = Depends(get_session),
     user: AnalystUser = None,  # noqa: B008
 ) -> list[BrandActionListItem]:
+    """List brand-actions with the seed suspect joined inline (T56-style)
+    so the dashboard can render meaningful rows without a second fetch
+    per action.
+    """
     org_id = await get_system_org_id(db)
     stmt = (
-        select(BrandAction)
+        select(
+            BrandAction,
+            SuspectDomain.domain,
+            SuspectDomain.similarity,
+            SuspectDomain.state,
+        )
+        .join(SuspectDomain, BrandAction.suspect_domain_id == SuspectDomain.id)
         .where(BrandAction.organization_id == org_id)
         .order_by(desc(BrandAction.created_at))
         .limit(limit)
@@ -348,5 +741,12 @@ async def list_brand_actions(
         stmt = stmt.where(BrandAction.status == status)
     if recommendation is not None:
         stmt = stmt.where(BrandAction.recommendation == recommendation)
-    rows = (await db.execute(stmt)).scalars().all()
-    return [BrandActionListItem.model_validate(r) for r in rows]
+    rows = (await db.execute(stmt)).all()
+    items: list[BrandActionListItem] = []
+    for action, domain, similarity, sus_state in rows:
+        item = BrandActionListItem.model_validate(action)
+        item.suspect_domain = domain
+        item.suspect_similarity = similarity
+        item.suspect_state = sus_state
+        items.append(item)
+    return items

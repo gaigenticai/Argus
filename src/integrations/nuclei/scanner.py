@@ -191,21 +191,43 @@ class NucleiScanner:
         return findings
 
     async def check_installed(self) -> bool:
-        """Verify the nuclei binary is on PATH and executable."""
-        from src.core.sandbox import SandboxPolicy, run_sandboxed
+        """Verify the nuclei binary is on PATH and executable.
 
+        ``nuclei -version`` is a static, inert probe — no scanning,
+        no network — so we bypass the bwrap sandbox here. The sandbox
+        wrapper requires unprivileged user namespaces; many Docker
+        defaults (seccomp profile + missing CAP_SYS_ADMIN) reject
+        ``bwrap --unshare-user`` and the call exits with rc=1.
+        Result: nuclei was installed in the worker image but the
+        version check failed, the EASM maintenance task marked itself
+        ``disabled`` with the misleading "binary not detected"
+        message, and operators thought EASM wasn't shipping.
+        """
+        import shutil
+        real_path = shutil.which(self.binary_path) or self.binary_path
         try:
-            rc, stdout, stderr = await run_sandboxed(
-                [self.binary_path, "-version"],
-                policy=SandboxPolicy(share_net=False, timeout_seconds=10),
+            proc = await asyncio.create_subprocess_exec(
+                real_path, "-version",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    proc.communicate(), timeout=10
+                )
+            except asyncio.TimeoutError:
+                proc.kill()
+                try:
+                    await proc.communicate()
+                except Exception:  # noqa: BLE001
+                    pass
+                logger.warning("nuclei -version timed out")
+                return False
         except FileNotFoundError:
             logger.warning("nuclei binary not found at %r", self.binary_path)
             return False
-        except asyncio.TimeoutError:
-            logger.warning("nuclei -version timed out")
-            return False
 
+        rc = proc.returncode or 0
         output = (stdout or stderr or b"").decode(errors="replace").strip()
         if rc == 0:
             logger.info("nuclei version: %s", output.split("\n")[0])

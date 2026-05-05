@@ -60,6 +60,7 @@ class CIRCLMispFeed(BaseFeed):
     default_interval_seconds = 21600  # 6 hours
 
     async def poll(self) -> AsyncIterator[FeedEntry]:
+        import asyncio
         manifest = await self._fetch_json(_CIRCL_MANIFEST_URL)
         if not isinstance(manifest, dict):
             logger.warning("[%s] manifest is not a dict (got %s)",
@@ -82,13 +83,33 @@ class CIRCLMispFeed(BaseFeed):
             reverse=True,
         )
 
+        # Concurrency: previously fetched the 25 event payloads
+        # sequentially. circl.lu round-trips ~3s each from the lab,
+        # so the worst case was 75s+ on top of the manifest fetch
+        # — easy to hit the scheduler's 600s hard timeout when the
+        # upstream is slow. ``asyncio.gather`` under a semaphore
+        # keeps the politeness contract (max 4 in flight) while
+        # capping wall-clock at ~10-15s for the typical case.
+        sem = asyncio.Semaphore(4)
+        async def _fetch_event(event_uuid: str) -> tuple[str, dict | None]:
+            async with sem:
+                payload = await self._fetch_json(_CIRCL_EVENT_URL.format(uuid=event_uuid))
+                return event_uuid, (payload if isinstance(payload, dict) else None)
+
+        candidates = [
+            (uuid_, meta) for uuid_, meta in sorted_entries[:_MAX_EVENTS_PER_POLL]
+            if isinstance(meta, dict)
+        ]
+        fetched = await asyncio.gather(
+            *[_fetch_event(uuid_) for uuid_, _ in candidates],
+            return_exceptions=False,
+        )
+        payloads_by_uuid = {uuid_: payload for uuid_, payload in fetched}
+
         events_processed = 0
-        for event_uuid, meta in sorted_entries[:_MAX_EVENTS_PER_POLL]:
-            if not isinstance(meta, dict):
-                continue
-            event_url = _CIRCL_EVENT_URL.format(uuid=event_uuid)
-            event_payload = await self._fetch_json(event_url)
-            if not isinstance(event_payload, dict):
+        for event_uuid, meta in candidates:
+            event_payload = payloads_by_uuid.get(event_uuid)
+            if event_payload is None:
                 continue
             event = event_payload.get("Event") or {}
             if not isinstance(event, dict):

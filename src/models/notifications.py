@@ -213,6 +213,11 @@ class NotificationDelivery(Base, UUIDMixin, TimestampMixin):
     response_body: Mapped[str | None] = mapped_column(Text)
     error_message: Mapped[str | None] = mapped_column(Text)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Channel-Aware Content Agent — per-channel rendered body, runbook,
+    # severity reclassifier verdict, dedup-cluster meta.
+    rendered_payload: Mapped[dict | None] = mapped_column(JSONB)
+    cluster_count: Mapped[int | None] = mapped_column(Integer)
+    cluster_dedup_key: Mapped[str | None] = mapped_column(String(200))
 
     __table_args__ = (
         Index("ix_notif_deliveries_org_kind", "organization_id", "event_kind"),

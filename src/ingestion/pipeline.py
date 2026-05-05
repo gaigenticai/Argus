@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from sqlalchemy import select, func
@@ -16,7 +17,7 @@ from src.core.webhook_dispatcher import dispatch_alert
 from src.crawlers.base import BaseCrawler, CrawlResult
 from src.enrichment.ioc_extractor import extract_iocs, IOCTypeEnum
 from src.enrichment.actor_tracker import create_or_update_actor
-from src.models.intel import CrawlerSource, IOC, SourceHealthStatus
+from src.models.intel import IOC
 from src.models.threat import (
     Alert,
     AlertStatus,
@@ -30,6 +31,29 @@ from src.core.activity import ActivityType, emit as activity_emit
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class IngestSummary:
+    """Outcome of one crawler ingest pass.
+
+    ``items_collected`` is the number of fresh ``RawIntel`` rows we
+    actually persisted (deduped — same content_hash hits skip the
+    insert). ``alerts_created`` is the number of org-scoped alerts the
+    triage step emitted on top of those rows. The two are decoupled
+    on purpose: a public-channel crawl can pull 50 messages without a
+    single one matching any org's brand terms, and the dashboard
+    should report "50 items collected · 0 alerts" in that case rather
+    than "0 rows" and looking dead.
+    """
+
+    items_collected: int = 0
+    alerts_created: int = 0
+
+    # Convenience for callers that only care about the headline count.
+    @property
+    def total_results(self) -> int:
+        return self.items_collected
+
+
 class IngestionPipeline:
     """Orchestrates: crawl → deduplicate → store → triage → alert."""
 
@@ -37,13 +61,20 @@ class IngestionPipeline:
         self.db = db_session
         self.triage = TriageAgent(db=db_session)
 
-    async def ingest_from_crawler(
-        self, crawler: BaseCrawler, source_id: uuid.UUID | None = None
-    ) -> int:
-        """Run a crawler and process all results. Returns number of new alerts."""
+    async def ingest_from_crawler(self, crawler: BaseCrawler) -> IngestSummary:
+        """Run a crawler and process all results.
+
+        Returns an :class:`IngestSummary` with ``items_collected`` (fresh
+        RawIntel rows persisted) and ``alerts_created`` (alerts emitted
+        on top). Previously this returned only ``alert_count`` cast to
+        int, which the scheduler then surfaced as "rows ingested" on
+        the dashboard — making well-functioning crawlers that pull
+        non-actionable content look broken (see Telegram channel
+        crawler showing "0 items collected" even when 20 messages were
+        actually fetched).
+        """
         alert_count = 0
         result_count = 0
-        crawl_success = False
 
         await activity_emit(
             ActivityType.CRAWLER_START,
@@ -56,7 +87,6 @@ class IngestionPipeline:
             async with crawler:
                 async for result in crawler.crawl():
                     result_count += 1
-                    crawl_success = True
                     try:
                         await activity_emit(
                             ActivityType.CRAWLER_RESULT,
@@ -130,16 +160,6 @@ class IngestionPipeline:
                         await self.db.rollback()
         except Exception as e:
             logger.error(f"[pipeline] Crawler {crawler.name} failed: {e}")
-            crawl_success = False
-
-        # Update source health if source_id was provided
-        if source_id is not None:
-            await self._update_source_health(
-                source_id=source_id,
-                success=crawl_success,
-                items_collected=result_count,
-            )
-            await self.db.commit()
 
         await activity_emit(
             ActivityType.CRAWLER_COMPLETE,
@@ -148,7 +168,10 @@ class IngestionPipeline:
             {"results": result_count, "alerts": alert_count},
         )
 
-        return alert_count
+        return IngestSummary(
+            items_collected=result_count,
+            alerts_created=alert_count,
+        )
 
     async def _store_raw(self, result: CrawlResult) -> RawIntel | None:
         """Store raw intel, returns None if duplicate."""
@@ -271,64 +294,6 @@ class IngestionPipeline:
         raw.is_processed = True
 
         return alerts
-
-    async def _update_source_health(
-        self,
-        source_id: uuid.UUID,
-        success: bool,
-        items_collected: int = 0,
-        structure_hash: str | None = None,
-    ) -> None:
-        """Update CrawlerSource health metrics after a crawl completes."""
-        source = await self.db.get(CrawlerSource, source_id)
-        if source is None:
-            logger.warning(f"[pipeline] CrawlerSource {source_id} not found for health update")
-            return
-
-        now = datetime.now(timezone.utc)
-
-        if success:
-            source.health_status = SourceHealthStatus.HEALTHY.value
-            source.consecutive_failures = 0
-            source.last_success_at = now
-            source.total_items_collected += items_collected
-        else:
-            source.consecutive_failures += 1
-            if source.consecutive_failures >= 3:
-                source.health_status = SourceHealthStatus.DEGRADED.value
-                await activity_emit(
-                    ActivityType.SYSTEM,
-                    "pipeline",
-                    f"Source {source.name} degraded — {source.consecutive_failures} consecutive failures",
-                    {
-                        "source_id": str(source_id),
-                        "source_name": source.name,
-                        "consecutive_failures": source.consecutive_failures,
-                        "health_status": SourceHealthStatus.DEGRADED.value,
-                    },
-                    severity="warning",
-                )
-
-        # Detect structure changes (e.g., site layout changed, selectors may be stale)
-        if structure_hash is not None and structure_hash != source.last_structure_hash:
-            old_hash = source.last_structure_hash
-            source.last_structure_hash = structure_hash
-            source.structure_changed_at = now
-            await activity_emit(
-                ActivityType.SYSTEM,
-                "pipeline",
-                f"Source {source.name} structure changed — selectors may need updating",
-                {
-                    "source_id": str(source_id),
-                    "source_name": source.name,
-                    "old_hash": old_hash,
-                    "new_hash": structure_hash,
-                },
-                severity="warning",
-            )
-
-        source.last_crawled_at = now
-        await self.db.flush()
 
     async def _extract_and_store_iocs(
         self,

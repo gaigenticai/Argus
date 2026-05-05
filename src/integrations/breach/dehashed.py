@@ -33,8 +33,13 @@ class DehashedProvider(BreachProvider):
     label = "Dehashed"
 
     def __init__(self):
-        self._user = (os.environ.get("ARGUS_DEHASHED_USERNAME") or "").strip()
-        self._key = (os.environ.get("ARGUS_DEHASHED_API_KEY") or "").strip()
+        from src.core import integration_keys
+        self._user = (
+            integration_keys.get("dehashed_user", env_fallback="ARGUS_DEHASHED_USERNAME") or ""
+        ).strip()
+        self._key = (
+            integration_keys.get("dehashed", env_fallback="ARGUS_DEHASHED_API_KEY") or ""
+        ).strip()
 
     def is_configured(self) -> bool:
         return bool(self._user and self._key)

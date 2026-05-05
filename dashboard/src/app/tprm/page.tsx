@@ -23,8 +23,11 @@ import {
   api,
   type AssetRecord,
   type Org,
+  type TprmExecDashboard,
   type TprmOnboardingResponse,
+  type TprmQuestion,
   type TprmScorecardResponse,
+  type TprmTemplateCreatePayload,
   type TprmTemplateResponse,
   type VendorOnboardingStage,
 } from "@/lib/api";
@@ -55,6 +58,7 @@ interface TprmCtx {
 const Ctx = createContext<TprmCtx | null>(null);
 
 const TABS = [
+  { id: "exec", label: "Executive", icon: TrendingUp },
   { id: "scorecards", label: "Scorecards", icon: TrendingUp },
   { id: "onboarding", label: "Vendor onboarding", icon: Workflow },
   { id: "templates", label: "Questionnaires", icon: BookOpen },
@@ -65,7 +69,7 @@ const STAGE_TONE: Record<VendorOnboardingStage, StateTone> = {
   invited: "neutral",
   questionnaire_sent: "info",
   questionnaire_received: "info",
-  under_review: "warning",
+  analyst_review: "warning",
   approved: "success",
   rejected: "error-strong",
   on_hold: "muted",
@@ -74,7 +78,7 @@ const STAGE_LABEL: Record<VendorOnboardingStage, string> = {
   invited: "INVITED",
   questionnaire_sent: "Q SENT",
   questionnaire_received: "Q RECEIVED",
-  under_review: "REVIEW",
+  analyst_review: "REVIEW",
   approved: "APPROVED",
   rejected: "REJECTED",
   on_hold: "ON HOLD",
@@ -176,6 +180,7 @@ export default function TprmPage() {
         </div>
 
         <div key={`${orgId}-${tab}-${refreshKey}`}>
+          {tab === "exec" && <ExecDashboardTab />}
           {tab === "scorecards" && <ScorecardsTab />}
           {tab === "onboarding" && <OnboardingTab />}
           {tab === "templates" && <TemplatesTab />}
@@ -189,6 +194,306 @@ function useTprm() {
   const c = useContext(Ctx);
   if (!c) throw new Error("Tprm context missing");
   return c;
+}
+
+// ─── Executive dashboard tab ─────────────────────────────────────────
+
+function ExecDashboardTab() {
+  const { orgId } = useTprm();
+  const { toast } = useToast();
+  const [data, setData] = useState<TprmExecDashboard | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [running, setRunning] = useState(false);
+
+  const load = useCallback(async () => {
+    if (!orgId) return;
+    setLoading(true);
+    try {
+      const r = await api.tprm.execDashboard(orgId);
+      setData(r);
+    } catch (e) {
+      toast(
+        "error",
+        e instanceof Error ? e.message : "Failed to load exec dashboard",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [orgId, toast]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleQuarterly = async () => {
+    if (!orgId || running) return;
+    setRunning(true);
+    try {
+      const r = await api.tprm.quarterlyHealthCheck(orgId, 20);
+      toast(
+        "success",
+        `Recomputed ${r.computed}/${r.vendors_total} · ${r.drops_detected.length} drops detected`,
+      );
+      await load();
+    } catch (e) {
+      toast(
+        "error",
+        e instanceof Error ? e.message : "Health check failed",
+      );
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  if (loading || !data) {
+    return (
+      <div
+        className="p-12 text-center text-[13px]"
+        style={{
+          color: "var(--color-muted)",
+          border: "1px solid var(--color-border)",
+          borderRadius: "5px",
+          background: "var(--color-canvas)",
+        }}
+      >
+        Loading executive dashboard…
+      </div>
+    );
+  }
+
+  const cardStyle = {
+    background: "var(--color-canvas)",
+    border: "1px solid var(--color-border)",
+    borderRadius: "5px",
+  } as React.CSSProperties;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <h2
+          className="text-[16px] font-semibold"
+          style={{ color: "var(--color-ink)" }}
+        >
+          Vendor risk — executive view
+        </h2>
+        <button
+          onClick={handleQuarterly}
+          disabled={running}
+          className="h-9 px-3 text-[12px] font-semibold disabled:opacity-50"
+          style={{
+            borderRadius: "4px",
+            border: "1px solid var(--color-border)",
+            background: "var(--color-canvas)",
+            color: "var(--color-ink)",
+          }}
+        >
+          {running ? "Running…" : "Run quarterly health check"}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <ExecKpi
+          label="Vendors"
+          value={data.vendors_total}
+          hint={
+            data.below_threshold_count > 0
+              ? `${data.below_threshold_count} below threshold`
+              : "all on or above 70"
+          }
+          cardStyle={cardStyle}
+        />
+        <ExecKpi
+          label="Avg score"
+          value={data.avg_score !== null ? data.avg_score.toFixed(1) : "—"}
+          cardStyle={cardStyle}
+        />
+        <ExecKpi
+          label="Compliant %"
+          value={`${data.compliant_pct.toFixed(1)}%`}
+          hint="≥70 score"
+          cardStyle={cardStyle}
+        />
+        <ExecKpi
+          label="By tier"
+          value={
+            Object.entries(data.by_tier)
+              .map(([k, v]) => `${k.replace("tier_", "T")}:${v}`)
+              .join(" ") || "—"
+          }
+          cardStyle={cardStyle}
+        />
+        <ExecKpi
+          label="By grade"
+          value={
+            Object.entries(data.by_grade)
+              .map(([k, v]) => `${k}:${v}`)
+              .join(" ") || "—"
+          }
+          cardStyle={cardStyle}
+        />
+      </div>
+
+      <div style={cardStyle}>
+        <div
+          className="px-4 h-11 flex items-center"
+          style={{ borderBottom: "1px solid var(--color-border)" }}
+        >
+          <h3
+            className="text-[13px] font-semibold"
+            style={{ color: "var(--color-ink)" }}
+          >
+            Top 10 risk vendors
+          </h3>
+          <span
+            className="ml-2 text-[10.5px]"
+            style={{ color: "var(--color-muted)" }}
+          >
+            sorted by composite score (lowest first)
+          </span>
+        </div>
+        {data.top_risk.length === 0 ? (
+          <div
+            className="p-6 text-[12.5px]"
+            style={{ color: "var(--color-muted)" }}
+          >
+            No scorecards computed yet — onboard a vendor or hit
+            "Recompute" on an existing one.
+          </div>
+        ) : (
+          <table className="w-full">
+            <thead>
+              <tr
+                style={{
+                  background: "var(--color-surface-muted)",
+                  borderBottom: "1px solid var(--color-border)",
+                }}
+              >
+                <th className="text-left h-8 px-3 text-[10px] font-bold uppercase tracking-[0.07em]">
+                  Vendor
+                </th>
+                <th className="text-left h-8 px-3 text-[10px] font-bold uppercase tracking-[0.07em]">
+                  Tier
+                </th>
+                <th className="text-left h-8 px-3 text-[10px] font-bold uppercase tracking-[0.07em]">
+                  Category
+                </th>
+                <th className="text-left h-8 px-3 text-[10px] font-bold uppercase tracking-[0.07em]">
+                  Score
+                </th>
+                <th className="text-left h-8 px-3 text-[10px] font-bold uppercase tracking-[0.07em]">
+                  Pillars
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.top_risk.map((v) => (
+                <tr
+                  key={v.vendor_id}
+                  style={{
+                    height: "44px",
+                    borderBottom: "1px solid var(--color-surface-muted)",
+                  }}
+                >
+                  <td
+                    className="px-3 text-[13px] font-mono"
+                    style={{ color: "var(--color-ink)" }}
+                  >
+                    {v.vendor_value}
+                  </td>
+                  <td
+                    className="px-3 text-[11px] font-mono"
+                    style={{ color: "var(--color-body)" }}
+                  >
+                    {v.tier.replace("tier_", "T")}
+                  </td>
+                  <td
+                    className="px-3 text-[11px]"
+                    style={{ color: "var(--color-body)" }}
+                  >
+                    {v.category.replace(/_/g, " ")}
+                  </td>
+                  <td className="px-3">
+                    <span
+                      style={{
+                        fontFamily: "monospace",
+                        fontSize: "13px",
+                        fontWeight: 700,
+                        color:
+                          v.score >= 80
+                            ? "#1e8e3e"
+                            : v.score >= 60
+                            ? "#B76E00"
+                            : "#B71D18",
+                      }}
+                    >
+                      {v.score.toFixed(1)}
+                    </span>
+                    <span
+                      className="ml-2 text-[10px]"
+                      style={{ color: "var(--color-muted)" }}
+                    >
+                      ({v.grade})
+                    </span>
+                  </td>
+                  <td className="px-3">
+                    <span
+                      className="text-[10.5px] font-mono"
+                      style={{ color: "var(--color-muted)" }}
+                    >
+                      {Object.entries(v.pillar_scores)
+                        .map(
+                          ([k, s]) =>
+                            `${k.slice(0, 3)}:${(s as number).toFixed(0)}`,
+                        )
+                        .join(" · ")}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ExecKpi({
+  label,
+  value,
+  hint,
+  cardStyle,
+}: {
+  label: string;
+  value: React.ReactNode;
+  hint?: string;
+  cardStyle: React.CSSProperties;
+}) {
+  return (
+    <div className="p-4" style={cardStyle}>
+      <div
+        className="text-[10px] font-semibold uppercase tracking-[0.08em] mb-1"
+        style={{ color: "var(--color-muted)" }}
+      >
+        {label}
+      </div>
+      <div
+        className="text-[20px] font-bold truncate"
+        style={{ color: "var(--color-ink)" }}
+        title={typeof value === "string" ? value : undefined}
+      >
+        {value}
+      </div>
+      {hint ? (
+        <div
+          className="text-[10.5px] mt-0.5"
+          style={{ color: "var(--color-muted)" }}
+        >
+          {hint}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 // ─── Scorecards tab ─────────────────────────────────────────────────
@@ -497,6 +802,7 @@ function OnboardingTab() {
   const [vendors, setVendors] = useState<AssetRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
+  const [showAddVendor, setShowAddVendor] = useState(false);
   const [transitionTarget, setTransitionTarget] =
     useState<TprmOnboardingResponse | null>(null);
 
@@ -533,16 +839,42 @@ function OnboardingTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-[12px] font-mono tabular-nums" style={{ color: "var(--color-muted)" }}>
-          {rows.length} workflow{rows.length === 1 ? "" : "s"}
+          {rows.length} workflow{rows.length === 1 ? "" : "s"} ·{" "}
+          {vendors.length} vendor asset
+          {vendors.length === 1 ? "" : "s"}
         </p>
-        <button
-          onClick={() => setShowCreate(true)}
-          disabled={vendors.length === 0}
-          className="inline-flex items-center gap-2 h-9 px-3 text-[13px] font-bold disabled:opacity-50"
-          style={{ borderRadius: "4px", border: "1px solid var(--color-accent)", background: "var(--color-accent)", color: "var(--color-on-dark)" }}
-        >
-          Begin onboarding
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowAddVendor(true)}
+            className="inline-flex items-center gap-2 h-9 px-3 text-[13px] font-bold"
+            style={{
+              borderRadius: "4px",
+              border: "1px solid var(--color-border)",
+              background: "var(--color-canvas)",
+              color: "var(--color-ink)",
+            }}
+          >
+            + Add vendor
+          </button>
+          <button
+            onClick={() => setShowCreate(true)}
+            disabled={vendors.length === 0}
+            title={
+              vendors.length === 0
+                ? "Add a vendor first — use the '+ Add vendor' button"
+                : "Begin onboarding for one of your vendor assets"
+            }
+            className="inline-flex items-center gap-2 h-9 px-3 text-[13px] font-bold disabled:opacity-50"
+            style={{
+              borderRadius: "4px",
+              border: "1px solid var(--color-accent)",
+              background: "var(--color-accent)",
+              color: "var(--color-on-dark)",
+            }}
+          >
+            Begin onboarding
+          </button>
+        </div>
       </div>
       <Section>
         {loading ? (
@@ -626,6 +958,16 @@ function OnboardingTab() {
         )}
       </Section>
 
+      {showAddVendor && orgId ? (
+        <AddVendorModal
+          orgId={orgId}
+          onClose={() => setShowAddVendor(false)}
+          onCreated={async () => {
+            setShowAddVendor(false);
+            await load();
+          }}
+        />
+      ) : null}
       {showCreate && orgId && (
         <BeginOnboardingModal
           orgId={orgId}
@@ -745,7 +1087,7 @@ function TransitionOnboardingModal({
     "invited",
     "questionnaire_sent",
     "questionnaire_received",
-    "under_review",
+    "analyst_review",
     "approved",
     "rejected",
     "on_hold",
@@ -830,6 +1172,7 @@ function TransitionOnboardingModal({
 // ─── Templates tab ──────────────────────────────────────────────────
 
 function TemplatesTab() {
+  const { orgId } = useTprm();
   const { toast } = useToast();
   const [rows, setRows] = useState<TprmTemplateResponse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -838,7 +1181,7 @@ function TemplatesTab() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setRows(await api.tprm.listTemplates());
+      setRows(await api.tprm.listTemplates(orgId));
     } catch (e) {
       toast(
         "error",
@@ -847,16 +1190,20 @@ function TemplatesTab() {
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [orgId, toast]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   const seed = async () => {
+    if (!orgId) {
+      toast("error", "Pick an organization first");
+      return;
+    }
     setSeeding(true);
     try {
-      await api.tprm.seedTemplates();
+      await api.tprm.seedTemplates(orgId);
       toast("success", "Built-in templates seeded");
       await load();
     } catch (e) {
@@ -866,23 +1213,45 @@ function TemplatesTab() {
     }
   };
 
+  const [creating, setCreating] = useState(false);
+  const [previewing, setPreviewing] = useState<TprmTemplateResponse | null>(null);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-[12px] font-mono tabular-nums" style={{ color: "var(--color-muted)" }}>
           {rows.length} template{rows.length === 1 ? "" : "s"}
         </p>
-        {rows.length === 0 && (
+        <div className="flex items-center gap-2">
           <button
-            onClick={seed}
-            disabled={seeding}
-            className="inline-flex items-center gap-2 h-9 px-3 text-[13px] font-bold disabled:opacity-50"
-            style={{ borderRadius: "4px", border: "1px solid var(--color-accent)", background: "var(--color-accent)", color: "var(--color-on-dark)" }}
+            onClick={() => setCreating(true)}
+            className="inline-flex items-center gap-2 h-9 px-3 text-[13px] font-bold"
+            style={{
+              borderRadius: "4px",
+              border: "1px solid var(--color-border)",
+              background: "var(--color-canvas)",
+              color: "var(--color-ink)",
+            }}
           >
-            <Sparkles className="w-3.5 h-3.5" />
-            {seeding ? "Seeding…" : "Seed built-in templates"}
+            + Build custom questionnaire
           </button>
-        )}
+          {rows.length === 0 ? (
+            <button
+              onClick={seed}
+              disabled={seeding}
+              className="inline-flex items-center gap-2 h-9 px-3 text-[13px] font-bold disabled:opacity-50"
+              style={{
+                borderRadius: "4px",
+                border: "1px solid var(--color-accent)",
+                background: "var(--color-accent)",
+                color: "var(--color-on-dark)",
+              }}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              {seeding ? "Seeding…" : "Seed built-in templates"}
+            </button>
+          ) : null}
+        </div>
       </div>
       <Section>
         {loading ? (
@@ -891,36 +1260,93 @@ function TemplatesTab() {
           <Empty
             icon={ClipboardList}
             title="No questionnaire templates"
-            description="Seed the built-ins (NIST SP 800-53 lite, SOC2 trust services, GDPR processor) or upload your own. Templates feed onboarding workflows + vendor scorecards."
+            description="Seed the built-ins (SIG-Lite, CAIQ v4) for instant coverage, or build your own from scratch with the question builder. Templates feed onboarding workflows + vendor scorecards."
             action={
-              <button
-                onClick={seed}
-                disabled={seeding}
-                className="inline-flex items-center gap-2 h-10 px-4 text-[13px] font-bold disabled:opacity-50"
-                style={{ borderRadius: "4px", border: "1px solid var(--color-accent)", background: "var(--color-accent)", color: "var(--color-on-dark)" }}
-              >
-                <Sparkles className="w-4 h-4" />
-                Seed built-in templates
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setCreating(true)}
+                  className="inline-flex items-center gap-2 h-10 px-4 text-[13px] font-bold"
+                  style={{
+                    borderRadius: "4px",
+                    border: "1px solid var(--color-border)",
+                    background: "var(--color-canvas)",
+                    color: "var(--color-ink)",
+                  }}
+                >
+                  Build custom
+                </button>
+                <button
+                  onClick={seed}
+                  disabled={seeding}
+                  className="inline-flex items-center gap-2 h-10 px-4 text-[13px] font-bold disabled:opacity-50"
+                  style={{
+                    borderRadius: "4px",
+                    border: "1px solid var(--color-accent)",
+                    background: "var(--color-accent)",
+                    color: "var(--color-on-dark)",
+                  }}
+                >
+                  <Sparkles className="w-4 h-4" />
+                  Seed built-ins
+                </button>
+              </div>
             }
           />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 p-3">
             {rows.map((t) => (
-              <TemplateCard key={t.id} template={t} />
+              <TemplateCard
+                key={t.id}
+                template={t}
+                onClick={() => setPreviewing(t)}
+              />
             ))}
           </div>
         )}
       </Section>
+      {creating ? (
+        <CustomQuestionnaireModal
+          orgId={orgId}
+          onClose={() => setCreating(false)}
+          onCreated={async (t) => {
+            setCreating(false);
+            await load();
+            setPreviewing(t);
+          }}
+        />
+      ) : null}
+      {previewing ? (
+        <TemplatePreviewModal
+          template={previewing}
+          onClose={() => setPreviewing(null)}
+        />
+      ) : null}
     </div>
   );
 }
 
-function TemplateCard({ template }: { template: TprmTemplateResponse }) {
+function TemplateCard({
+  template,
+  onClick,
+}: {
+  template: TprmTemplateResponse;
+  onClick?: () => void;
+}) {
   return (
     <div
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (onClick && (e.key === "Enter" || e.key === " ")) onClick();
+      }}
       className="p-4 space-y-3 transition-colors"
-      style={{ borderRadius: "5px", border: "1px solid var(--color-border)", background: "var(--color-canvas)" }}
+      style={{
+        borderRadius: "5px",
+        border: "1px solid var(--color-border)",
+        background: "var(--color-canvas)",
+        cursor: onClick ? "pointer" : "default",
+      }}
       onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--color-border-strong)")}
       onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--color-border)")}
     >
@@ -963,5 +1389,611 @@ function TemplateCard({ template }: { template: TprmTemplateResponse }) {
         <span>{timeAgo(template.updated_at)}</span>
       </div>
     </div>
+  );
+}
+
+// ─── Template preview modal ─────────────────────────────────────────
+
+function TemplatePreviewModal({
+  template,
+  onClose,
+}: {
+  template: TprmTemplateResponse;
+  onClose: () => void;
+}) {
+  return (
+    <ModalShell title={`Preview · ${template.name}`} onClose={onClose}>
+      <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className="inline-flex items-center h-[20px] px-2 text-[10.5px] font-bold tracking-[0.06em]"
+            style={{
+              borderRadius: "4px",
+              background: "var(--color-surface-muted)",
+              color: "var(--color-body)",
+            }}
+          >
+            {template.kind.toUpperCase()}
+          </span>
+          {template.organization_id ? (
+            <span
+              className="inline-flex items-center h-[20px] px-2 text-[10.5px] font-bold tracking-[0.06em]"
+              style={{
+                borderRadius: "4px",
+                background: "rgba(255,79,0,0.1)",
+                color: "var(--color-accent)",
+              }}
+            >
+              CUSTOM
+            </span>
+          ) : (
+            <span
+              className="inline-flex items-center h-[20px] px-2 text-[10.5px] font-bold tracking-[0.06em]"
+              style={{
+                borderRadius: "4px",
+                background: "rgba(0,187,217,0.1)",
+                color: "#007B8A",
+              }}
+            >
+              BUILT-IN
+            </span>
+          )}
+          <span
+            className="text-[11px] font-mono"
+            style={{ color: "var(--color-muted)" }}
+          >
+            {template.questions.length} question
+            {template.questions.length === 1 ? "" : "s"} · updated{" "}
+            {timeAgo(template.updated_at)}
+          </span>
+        </div>
+        {template.description ? (
+          <p
+            className="text-[12.5px]"
+            style={{ color: "var(--color-body)", lineHeight: 1.6 }}
+          >
+            {template.description}
+          </p>
+        ) : null}
+        <div className="space-y-2">
+          {template.questions.map((q, i) => (
+            <div
+              key={q.id || i}
+              className="p-3"
+              style={{
+                border: "1px solid var(--color-border)",
+                borderRadius: "5px",
+                background: "var(--color-surface-muted)",
+              }}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex-1 min-w-0">
+                  <div
+                    className="text-[10.5px] font-mono"
+                    style={{ color: "var(--color-muted)" }}
+                  >
+                    Q{i + 1} · {q.id}
+                  </div>
+                  <div
+                    className="text-[13px] mt-0.5"
+                    style={{ color: "var(--color-ink)" }}
+                  >
+                    {q.text}
+                  </div>
+                </div>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                  <span
+                    className="inline-flex items-center h-[18px] px-1.5 text-[10px] font-bold tracking-[0.06em]"
+                    style={{
+                      borderRadius: "3px",
+                      background: "var(--color-canvas)",
+                      color: "var(--color-body)",
+                      border: "1px solid var(--color-border)",
+                    }}
+                  >
+                    {q.answer_kind}
+                  </span>
+                  <span
+                    className="text-[10.5px] font-mono"
+                    style={{ color: "var(--color-muted)" }}
+                  >
+                    weight {q.weight}
+                    {q.required ? " · required" : ""}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+      <ModalFooter
+        onCancel={onClose}
+        onSubmit={onClose}
+        submitLabel="Close"
+      />
+    </ModalShell>
+  );
+}
+
+// ─── Custom questionnaire builder ───────────────────────────────────
+
+const ANSWER_KINDS: TprmQuestion["answer_kind"][] = [
+  "yes_no",
+  "yes_no_na",
+  "scale_1_5",
+  "free_text",
+  "evidence",
+];
+
+const ANSWER_KIND_HELP: Record<string, string> = {
+  yes_no: "Yes / No",
+  yes_no_na: "Yes / No / N/A",
+  scale_1_5: "1–5 scale (Likert)",
+  free_text: "Free text answer",
+  evidence: "Expects an uploaded file (SOC2 PDF, etc.)",
+};
+
+function defaultQuestion(idx: number): TprmQuestion {
+  return {
+    id: `q_${idx}`,
+    text: "",
+    answer_kind: "yes_no",
+    weight: 1,
+    required: true,
+  };
+}
+
+function CustomQuestionnaireModal({
+  orgId,
+  onClose,
+  onCreated,
+}: {
+  orgId: string;
+  onClose: () => void;
+  onCreated: (t: TprmTemplateResponse) => void | Promise<void>;
+}) {
+  const { toast } = useToast();
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState<"sig_lite" | "sig_core" | "caiq_v4" | "custom">("custom");
+  const [description, setDescription] = useState("");
+  const [questions, setQuestions] = useState<TprmQuestion[]>([defaultQuestion(1)]);
+  const [busy, setBusy] = useState(false);
+
+  const addQuestion = () => {
+    setQuestions((qs) => [...qs, defaultQuestion(qs.length + 1)]);
+  };
+  const removeQuestion = (i: number) => {
+    setQuestions((qs) => qs.filter((_, idx) => idx !== i));
+  };
+  const updateQuestion = (i: number, patch: Partial<TprmQuestion>) => {
+    setQuestions((qs) =>
+      qs.map((q, idx) => (idx === i ? { ...q, ...patch } : q)),
+    );
+  };
+
+  const valid =
+    name.trim().length > 0 &&
+    questions.length > 0 &&
+    questions.every((q) => q.id.trim() && q.text.trim());
+
+  const submit = async () => {
+    if (!valid || busy) return;
+    if (!orgId) {
+      toast("error", "Pick an organization first");
+      return;
+    }
+    setBusy(true);
+    try {
+      const ids = new Set<string>();
+      for (const q of questions) {
+        if (ids.has(q.id)) {
+          throw new Error(`Duplicate question id: ${q.id}`);
+        }
+        ids.add(q.id);
+      }
+      const body: TprmTemplateCreatePayload = {
+        organization_id: orgId,
+        name: name.trim(),
+        kind,
+        description: description.trim() || undefined,
+        questions,
+        is_active: true,
+      };
+      const tpl = await api.tprm.createTemplate(body);
+      toast("success", `Created "${tpl.name}" with ${tpl.questions.length} question(s)`);
+      await onCreated(tpl);
+    } catch (e) {
+      toast(
+        "error",
+        e instanceof Error ? e.message : "Failed to create template",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inputCls = "w-full h-9 px-2.5 text-[13px]";
+  const inputStyle: React.CSSProperties = {
+    border: "1px solid var(--color-border)",
+    borderRadius: "4px",
+    background: "var(--color-canvas)",
+    color: "var(--color-ink)",
+    outline: "none",
+  };
+
+  return (
+    <ModalShell title="Build custom questionnaire" onClose={onClose}>
+      <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto">
+        <Field label="Name" required>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Acme custom risk questionnaire"
+            className={inputCls}
+            style={inputStyle}
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field
+            label="Framework"
+            hint="Just a tag for grouping — doesn't auto-add questions."
+          >
+            <select
+              value={kind}
+              onChange={(e) => setKind(e.target.value as typeof kind)}
+              className={inputCls}
+              style={inputStyle}
+            >
+              <option value="custom">Custom (your own questions)</option>
+              <option value="sig_lite">SIG Lite — ~125 Q, 18 risk domains</option>
+              <option value="sig_core">SIG Core — full ~800 Q, high-crit vendors</option>
+              <option value="caiq_v4">CAIQ v4 — cloud-vendor focused</option>
+            </select>
+          </Field>
+          <Field label="Description (optional)">
+            <input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Short summary"
+              className={inputCls}
+              style={inputStyle}
+            />
+          </Field>
+        </div>
+
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label
+              className="text-[11px] font-bold tracking-[0.08em] uppercase"
+              style={{ color: "var(--color-muted)" }}
+            >
+              Questions ({questions.length})
+            </label>
+            <button
+              onClick={addQuestion}
+              type="button"
+              className="text-[11.5px] font-bold"
+              style={{
+                color: "var(--color-accent)",
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+              }}
+            >
+              + Add question
+            </button>
+          </div>
+          <div className="space-y-2">
+            {questions.map((q, i) => (
+              <div
+                key={i}
+                className="p-3 space-y-2"
+                style={{
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "5px",
+                  background: "var(--color-surface-muted)",
+                }}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span
+                    className="text-[10.5px] font-bold tracking-[0.06em]"
+                    style={{ color: "var(--color-muted)" }}
+                  >
+                    Q{i + 1}
+                  </span>
+                  {questions.length > 1 ? (
+                    <button
+                      onClick={() => removeQuestion(i)}
+                      type="button"
+                      className="text-[11px]"
+                      style={{
+                        color: "#B71D18",
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <input
+                    value={q.id}
+                    onChange={(e) =>
+                      updateQuestion(i, { id: e.target.value.replace(/\s+/g, "_") })
+                    }
+                    placeholder="question_id"
+                    className={inputCls}
+                    style={{ ...inputStyle, fontFamily: "monospace" }}
+                  />
+                  <select
+                    value={q.answer_kind}
+                    onChange={(e) =>
+                      updateQuestion(i, { answer_kind: e.target.value })
+                    }
+                    className={inputCls}
+                    style={inputStyle}
+                  >
+                    {ANSWER_KINDS.map((k) => (
+                      <option key={k} value={k}>
+                        {ANSWER_KIND_HELP[k]}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={q.weight}
+                      onChange={(e) =>
+                        updateQuestion(i, {
+                          weight: Math.max(1, Math.min(10, Number(e.target.value) || 1)),
+                        })
+                      }
+                      className={inputCls}
+                      style={{ ...inputStyle, width: "70px" }}
+                    />
+                    <label
+                      className="text-[11px] inline-flex items-center gap-1 cursor-pointer"
+                      style={{ color: "var(--color-body)" }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={q.required}
+                        onChange={(e) =>
+                          updateQuestion(i, { required: e.target.checked })
+                        }
+                      />
+                      required
+                    </label>
+                  </div>
+                </div>
+                <input
+                  value={q.text}
+                  onChange={(e) => updateQuestion(i, { text: e.target.value })}
+                  placeholder="What's the question?"
+                  className={inputCls}
+                  style={inputStyle}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+      <ModalFooter
+        onCancel={onClose}
+        onSubmit={submit}
+        submitLabel={busy ? "Creating…" : "Create template"}
+        disabled={!valid || busy}
+      />
+    </ModalShell>
+  );
+}
+
+// ─── Add vendor modal ────────────────────────────────────────────────
+
+const VENDOR_CRITICALITIES: Array<{ value: "crown_jewel" | "high" | "medium" | "low"; label: string }> = [
+  { value: "crown_jewel", label: "Crown jewel — handles your crown-jewel data" },
+  { value: "high", label: "High — significant access / hard to replace" },
+  { value: "medium", label: "Medium — meaningful access" },
+  { value: "low", label: "Low — minimal access / easily swapped" },
+];
+
+const VENDOR_TIERS: Array<{ value: "tier_1" | "tier_2" | "tier_3"; label: string }> = [
+  { value: "tier_1", label: "Tier 1 — annual review (critical)" },
+  { value: "tier_2", label: "Tier 2 — biennial review (important)" },
+  { value: "tier_3", label: "Tier 3 — on-demand (standard)" },
+];
+
+const VENDOR_CATEGORIES: Array<{ value: string; label: string }> = [
+  { value: "payment_processor", label: "Payment processor" },
+  { value: "cloud_provider", label: "Cloud / SaaS provider" },
+  { value: "security_vendor", label: "Security vendor" },
+  { value: "hr_payroll", label: "HR / Payroll" },
+  { value: "telecom", label: "Telecom" },
+  { value: "legal", label: "Legal" },
+  { value: "auditor", label: "Auditor" },
+  { value: "marketing_saas", label: "Marketing SaaS" },
+  { value: "data_broker", label: "Data broker" },
+  { value: "other", label: "Other" },
+];
+
+const VENDOR_DATA_ACCESS: Array<{ value: string; label: string }> = [
+  { value: "none", label: "None — no customer data" },
+  { value: "metadata", label: "Metadata only" },
+  { value: "pii", label: "PII (names, emails, addresses)" },
+  { value: "financial", label: "Financial / payment data" },
+  { value: "crown_jewel", label: "Crown-jewel data (full access)" },
+];
+
+function AddVendorModal({
+  orgId,
+  onClose,
+  onCreated,
+}: {
+  orgId: string;
+  onClose: () => void;
+  onCreated: () => void | Promise<void>;
+}) {
+  const { toast } = useToast();
+  const [name, setName] = useState("");
+  const [primaryDomain, setPrimaryDomain] = useState("");
+  const [criticality, setCriticality] = useState<"crown_jewel" | "high" | "medium" | "low">("medium");
+  const [tier, setTier] = useState<"tier_1" | "tier_2" | "tier_3">("tier_3");
+  const [category, setCategory] = useState("other");
+  const [dataAccess, setDataAccess] = useState("metadata");
+  const [githubOrg, setGithubOrg] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const valid = name.trim().length >= 2;
+
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    try {
+      const cleanDomain = primaryDomain.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+      await api.createAsset({
+        organization_id: orgId,
+        asset_type: "vendor",
+        value: name.trim(),
+        criticality,
+        details: {
+          primary_domain: cleanDomain || undefined,
+          tier,
+          category,
+          data_access_level: dataAccess,
+          github_org: githubOrg.trim() || undefined,
+        },
+        tags: ["vendor", category],
+        discovery_method: "manual",
+      });
+      toast("success", `Vendor "${name.trim()}" added`);
+      await onCreated();
+    } catch (e) {
+      toast("error", e instanceof Error ? e.message : "Failed to add vendor");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inputCls = "w-full h-9 px-2.5 text-[13px]";
+  const inputStyleLocal: React.CSSProperties = {
+    border: "1px solid var(--color-border)",
+    borderRadius: "4px",
+    background: "var(--color-canvas)",
+    color: "var(--color-ink)",
+    outline: "none",
+  };
+
+  return (
+    <ModalShell title="Add vendor" onClose={onClose}>
+      <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
+        <Field label="Vendor name" required>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g. Acme Cloud Backup Inc"
+            className={inputCls}
+            style={inputStyleLocal}
+            autoFocus
+          />
+        </Field>
+        <Field
+          label="Primary domain"
+          hint="Used by EASM scope, DMARC/SPF check, HIBP probe, sanctions screen, and brand-protection typosquat correlation."
+        >
+          <input
+            value={primaryDomain}
+            onChange={(e) => setPrimaryDomain(e.target.value)}
+            placeholder="acme-cloud.com"
+            className={inputCls}
+            style={{ ...inputStyleLocal, fontFamily: "monospace" }}
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Criticality">
+            <select
+              value={criticality}
+              onChange={(e) => setCriticality(e.target.value as typeof criticality)}
+              className={inputCls}
+              style={inputStyleLocal}
+            >
+              {VENDOR_CRITICALITIES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Review cadence (tier)">
+            <select
+              value={tier}
+              onChange={(e) => setTier(e.target.value as typeof tier)}
+              className={inputCls}
+              style={inputStyleLocal}
+            >
+              {VENDOR_TIERS.map((t) => (
+                <option key={t.value} value={t.value}>
+                  {t.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Category">
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              className={inputCls}
+              style={inputStyleLocal}
+            >
+              {VENDOR_CATEGORIES.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field
+            label="Data access level"
+            hint="Drives the operational pillar of the scorecard."
+          >
+            <select
+              value={dataAccess}
+              onChange={(e) => setDataAccess(e.target.value)}
+              className={inputCls}
+              style={inputStyleLocal}
+            >
+              {VENDOR_DATA_ACCESS.map((d) => (
+                <option key={d.value} value={d.value}>
+                  {d.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <Field
+          label="GitHub org (optional)"
+          hint="Enables free GitHub Search-API leak scanning for this vendor's public repos."
+        >
+          <input
+            value={githubOrg}
+            onChange={(e) => setGithubOrg(e.target.value)}
+            placeholder="acme-cloud"
+            className={inputCls}
+            style={{ ...inputStyleLocal, fontFamily: "monospace" }}
+          />
+        </Field>
+      </div>
+      <ModalFooter
+        onCancel={onClose}
+        onSubmit={submit}
+        submitLabel={busy ? "Adding…" : "Add vendor"}
+        disabled={!valid || busy}
+      />
+    </ModalShell>
   );
 }

@@ -29,6 +29,7 @@ import {
 } from "@/components/shared/page-primitives";
 import { useToast } from "@/components/shared/toast";
 import { timeAgo } from "@/lib/utils";
+import { CoverageGate } from "@/components/shared/coverage-gate";
 
 
 export default function ThreatHunterPage() {
@@ -80,10 +81,10 @@ export default function ThreatHunterPage() {
     if (selectedId) void loadDetail(selectedId);
   }, [selectedId, loadDetail]);
 
-  const handleRun = useCallback(async () => {
+  const handleRun = useCallback(async (templateId?: string) => {
     setRunning(true);
     try {
-      await api.threatHunts.create();
+      await api.threatHunts.create(templateId);
       toast("info", "Hunt dispatched — give it a minute");
       await loadList();
     } catch (e) {
@@ -97,6 +98,7 @@ export default function ThreatHunterPage() {
   }, [loadList, toast]);
 
   return (
+    <CoverageGate pageSlug="threat-hunter" pageLabel="Threat Hunter">
     <div className="space-y-6">
       <PageHeader
         eyebrow={{ icon: Sparkles, label: "Agentic" }}
@@ -109,11 +111,19 @@ export default function ThreatHunterPage() {
         }
         actions={
           <>
+            <TemplatesButton onPicked={handleRun} />
             <RunHuntButton onClick={handleRun} running={running} />
             <RefreshButton onClick={loadList} refreshing={loading} />
           </>
         }
       />
+
+      {detail && detail.findings && detail.findings.length > 0 && (
+        <DetailActionBar
+          detail={detail}
+          onRefresh={() => selectedId && void loadDetail(selectedId)}
+        />
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <Section className="lg:col-span-5">
@@ -175,6 +185,7 @@ export default function ThreatHunterPage() {
         </div>
       </div>
     </div>
+      </CoverageGate>
   );
 }
 
@@ -426,5 +437,213 @@ function FindingCard({ finding }: { finding: HuntFinding }) {
         ) : null}
       </div>
     </li>
+  );
+}
+
+
+function TemplatesButton({ onPicked }: { onPicked: (templateId?: string) => void }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [templates, setTemplates] = useState<Awaited<ReturnType<typeof api.threatHunts.listTemplates>>>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    setLoading(true);
+    api.threatHunts.listTemplates()
+      .then(setTemplates)
+      .catch(() => toast("error", "Failed to load templates"))
+      .finally(() => setLoading(false));
+  }, [open, toast]);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "8px",
+          height: "40px",
+          padding: "0 14px",
+          borderRadius: "4px",
+          border: "1px solid var(--color-border)",
+          background: "var(--color-canvas)",
+          color: "var(--color-body)",
+          fontSize: "13px",
+          fontWeight: 700,
+          cursor: "pointer",
+        }}
+      >
+        Templates
+      </button>
+      {open && (
+        <div
+          className="absolute right-0 top-full mt-1 z-50 w-[420px] p-2"
+          style={{
+            background: "var(--color-canvas)",
+            border: "1px solid var(--color-border)",
+            borderRadius: 6,
+            boxShadow: "0 8px 24px rgba(0,0,0,0.10)",
+          }}
+        >
+          <div className="flex items-center justify-between mb-2 px-2 pt-1">
+            <h4 className="text-[12px] font-bold uppercase tracking-wide" style={{ color: "var(--color-muted)" }}>
+              Hunt templates (PEAK)
+            </h4>
+            <button
+              onClick={async () => {
+                try {
+                  const r = await api.threatHunts.seedTemplates();
+                  toast("success", `Seeded ${r.inserted} templates (refreshed ${r.updated})`);
+                  const fresh = await api.threatHunts.listTemplates();
+                  setTemplates(fresh);
+                } catch (e) {
+                  toast("error", `Seed failed — ${String(e)}`);
+                }
+              }}
+              className="text-[11px] font-semibold"
+              style={{ color: "var(--color-accent)" }}
+            >
+              Reseed builtins
+            </button>
+          </div>
+          {loading ? (
+            <p className="text-[12px] px-2 py-3" style={{ color: "var(--color-muted)" }}>Loading…</p>
+          ) : templates.length === 0 ? (
+            <p className="text-[12px] px-2 py-3" style={{ color: "var(--color-muted)" }}>No templates — click Reseed.</p>
+          ) : (
+            <div className="space-y-1 max-h-[480px] overflow-y-auto">
+              {templates.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={async () => {
+                    setOpen(false);
+                    onPicked(t.id);
+                    toast("info", `Hunt queued — anchored on template "${t.name}"`);
+                  }}
+                  className="block w-full text-left p-2"
+                  style={{
+                    borderRadius: 4,
+                    background: "transparent",
+                    border: "1px solid transparent",
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLElement).style.borderColor = "var(--color-border)";
+                    (e.currentTarget as HTMLElement).style.background = "var(--color-surface)";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLElement).style.borderColor = "transparent";
+                    (e.currentTarget as HTMLElement).style.background = "transparent";
+                  }}
+                >
+                  <div className="text-[12px] font-semibold" style={{ color: "var(--color-ink)" }}>{t.name}</div>
+                  <div className="text-[11px] mt-0.5" style={{ color: "var(--color-muted)" }}>{t.hypothesis}</div>
+                  <div className="flex gap-1 mt-1">
+                    {t.mitre_technique_ids.map((m) => (
+                      <span
+                        key={m}
+                        className="px-1.5 h-[16px] inline-flex items-center text-[10px] font-bold"
+                        style={{ borderRadius: 3, background: "var(--color-surface-muted)", color: "var(--color-body)" }}
+                      >
+                        {m}
+                      </span>
+                    ))}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function DetailActionBar({
+  detail,
+  onRefresh,
+}: {
+  detail: HuntDetail;
+  onRefresh: () => void;
+}) {
+  const { toast } = useToast();
+  return (
+    <div
+      className="flex items-center gap-2 p-3"
+      style={{
+        background: "var(--color-surface)",
+        border: "1px solid var(--color-border)",
+        borderRadius: 5,
+      }}
+    >
+      <span className="text-[12px] font-semibold mr-2" style={{ color: "var(--color-muted)" }}>
+        Workflow: {(detail as HuntDetail & { workflow_state?: string }).workflow_state ?? "hypothesis"}
+      </span>
+      {(["hypothesis", "investigating", "reporting", "closed"] as const).map((s) => (
+        <button
+          key={s}
+          onClick={async () => {
+            try {
+              await api.threatHunts.transition(detail.id, s);
+              toast("success", `Moved to "${s}"`);
+              onRefresh();
+            } catch (e) {
+              toast("error", `Transition failed — ${String(e)}`);
+            }
+          }}
+          className="h-7 px-2 text-[11px] font-semibold"
+          style={{
+            borderRadius: 3,
+            border: "1px solid var(--color-border)",
+            background: "var(--color-canvas)",
+            color: "var(--color-body)",
+          }}
+        >
+          → {s}
+        </button>
+      ))}
+      <button
+        onClick={async () => {
+          try {
+            const r = await api.threatHunts.escalate(detail.id);
+            toast("success", `Case created — ${r.title}`);
+          } catch (e) {
+            toast("error", `Escalate failed — ${String(e)}`);
+          }
+        }}
+        className="h-7 px-3 text-[11px] font-semibold"
+        style={{ borderRadius: 3, background: "var(--color-accent)", color: "#fff" }}
+      >
+        Escalate to case
+      </button>
+      <button
+        onClick={async () => {
+          try {
+            const r = await api.threatHunts.report(detail.id);
+            const blob = new Blob([r.markdown], { type: "text/markdown" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `hunt-${detail.id}.md`;
+            a.click();
+            URL.revokeObjectURL(url);
+          } catch (e) {
+            toast("error", `Report failed — ${String(e)}`);
+          }
+        }}
+        className="h-7 px-3 text-[11px] font-semibold ml-auto"
+        style={{
+          borderRadius: 3,
+          border: "1px solid var(--color-border)",
+          background: "var(--color-canvas)",
+          color: "var(--color-body)",
+        }}
+      >
+        Download report (md)
+      </button>
+    </div>
   );
 }

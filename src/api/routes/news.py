@@ -88,8 +88,16 @@ class FeedResponse(BaseModel):
     enabled: bool
     last_fetched_at: datetime | None
     last_status: str | None
+    last_status_at: datetime | None
     last_error: str | None
     tags: list[str]
+    category: str
+    credibility_score: int
+    language: str
+    description: str | None
+    fetch_interval_seconds: int
+    health_score: int
+    consecutive_failures: int
     created_at: datetime
     updated_at: datetime
 
@@ -156,6 +164,7 @@ async def list_feeds(
     db: AsyncSession = Depends(get_session),
     organization_id: uuid.UUID | None = None,
     enabled: bool | None = None,
+    category: str | None = None,
 ):
     q = select(NewsFeed)
     if organization_id is not None:
@@ -167,7 +176,133 @@ async def list_feeds(
         )
     if enabled is not None:
         q = q.where(NewsFeed.enabled == enabled)
+    if category:
+        q = q.where(NewsFeed.category == category)
     return list((await db.execute(q.order_by(NewsFeed.created_at.desc()))).scalars().all())
+
+
+# --- Catalog seeding + bulk sync (admin) ----------------------------
+
+
+@router.post("/feeds/seed-catalog")
+async def seed_catalog(
+    request: Request,
+    admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """Insert (or update) every feed in the curated CTI source catalog.
+
+    Idempotent — keys on (organization_id NULL, url). Existing rows have
+    their category/credibility/language/description/fetch_interval/
+    description fields refreshed from the catalog so authoritative
+    metadata stays in sync.
+    """
+    from src.news.source_catalog import CATALOG
+
+    inserted = 0
+    updated = 0
+    for fd in CATALOG:
+        existing = (
+            await db.execute(
+                select(NewsFeed).where(
+                    NewsFeed.organization_id.is_(None),
+                    NewsFeed.url == fd.url,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            db.add(
+                NewsFeed(
+                    organization_id=None,
+                    name=fd.name,
+                    url=fd.url,
+                    kind=fd.kind,
+                    enabled=True,
+                    category=fd.category,
+                    credibility_score=fd.credibility,
+                    language=fd.language,
+                    description=fd.description,
+                    fetch_interval_seconds=fd.fetch_interval_seconds,
+                    tags=[fd.category],
+                )
+            )
+            inserted += 1
+        else:
+            existing.name = fd.name
+            existing.kind = fd.kind
+            existing.category = fd.category
+            existing.credibility_score = fd.credibility
+            existing.language = fd.language
+            existing.description = fd.description
+            existing.fetch_interval_seconds = fd.fetch_interval_seconds
+            updated += 1
+
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db,
+        AuditAction.NEWS_FEED_REGISTER,
+        user=admin,
+        resource_type="news_feed",
+        resource_id="catalog",
+        details={"inserted": inserted, "updated": updated, "total": len(CATALOG)},
+        ip_address=ip,
+        user_agent=ua,
+    )
+    await db.commit()
+    return {"inserted": inserted, "updated": updated, "total": len(CATALOG)}
+
+
+@router.post("/feeds/sync-all")
+async def sync_all(
+    request: Request,
+    admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
+    process_bodies: bool = True,
+    max_feeds: int | None = None,
+    only_due: bool = True,
+):
+    """Trigger a one-shot fetch of every enabled feed (respecting interval).
+
+    Designed to be called either by an admin from the UI or by an
+    external scheduler/cron. The async work is bounded by the request
+    timeout — pass ``max_feeds`` to keep individual calls quick.
+    """
+    from src.news.worker import fetch_and_ingest_feed, fetch_due_feeds
+
+    if only_due:
+        totals = await fetch_due_feeds(
+            db, process_bodies=process_bodies, max_feeds=max_feeds
+        )
+    else:
+        totals = {"feeds": 0, "parsed": 0, "new": 0, "dup": 0, "iocs": 0, "techniques": 0, "errors": 0}
+        rows = list(
+            (
+                await db.execute(
+                    select(NewsFeed).where(NewsFeed.enabled.is_(True))
+                )
+            ).scalars().all()
+        )
+        if max_feeds is not None:
+            rows = rows[:max_feeds]
+        for f in rows:
+            s = await fetch_and_ingest_feed(db, f, process_bodies=process_bodies)
+            totals["feeds"] += 1
+            for k in ("parsed", "new", "dup", "iocs", "techniques", "errors"):
+                totals[k] += s.get(k, 0)
+            await db.commit()
+
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db,
+        AuditAction.NEWS_FEED_FETCH,
+        user=admin,
+        resource_type="news_feed",
+        resource_id="all",
+        details={"totals": totals, "only_due": only_due},
+        ip_address=ip,
+        user_agent=ua,
+    )
+    return totals
 
 
 async def _score_for_organization(
@@ -606,6 +741,16 @@ class AdvisoryResponse(BaseModel):
     revoked_at: datetime | None
     revoked_reason: str | None
     author_user_id: uuid.UUID | None
+    # Production fields
+    source: str = "manual"
+    external_id: str | None = None
+    cvss3_score: float | None = None
+    epss_score: float | None = None
+    is_kev: bool = False
+    affected_products: list[dict] = []
+    remediation_steps: list[dict] = []
+    triage_state: str = "new"
+    assigned_to_user_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -816,3 +961,390 @@ async def get_advisory(
     if not a:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Advisory not found")
     return a
+
+
+# --- Advisory ingestion + workflow + comments + subscriptions --------
+
+from src.models.news import (
+    AdvisoryComment,
+    AdvisoryIocLink,
+    AdvisorySubscription,
+)
+
+
+@router.post("/advisories/ingest/cisa-kev", response_model=dict)
+async def ingest_cisa_kev_endpoint(
+    request: Request,
+    admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """Pull the CISA KEV catalog and upsert each entry as an Advisory."""
+    from src.intel.advisory_ingest import ingest_cisa_kev
+
+    result = await ingest_cisa_kev(db)
+    ip, ua = _client_meta(request)
+    await audit_log(
+        db,
+        AuditAction.NEWS_FEED_FETCH,
+        user=admin,
+        resource_type="advisory",
+        resource_id="cisa_kev",
+        details=result,
+        ip_address=ip,
+        user_agent=ua,
+    )
+    return result
+
+
+@router.post("/advisories/ingest/msrc", response_model=dict)
+async def ingest_msrc_endpoint(
+    request: Request,
+    admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
+    max_docs: int = 12,
+):
+    from src.intel.advisory_ingest import ingest_msrc
+
+    return await ingest_msrc(db, max_docs=max_docs)
+
+
+@router.post("/advisories/ingest/ghsa", response_model=dict)
+async def ingest_ghsa_endpoint(
+    request: Request,
+    admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
+    first: int = 50,
+):
+    from src.intel.advisory_ingest import ingest_ghsa
+
+    return await ingest_ghsa(db, first=first)
+
+
+@router.post("/advisories/ingest/redhat", response_model=dict)
+async def ingest_redhat_endpoint(
+    request: Request,
+    admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
+    max_docs: int = 100,
+):
+    from src.intel.advisory_ingest import ingest_redhat
+
+    return await ingest_redhat(db, max_docs=max_docs)
+
+
+@router.post("/advisories/ingest/all", response_model=dict)
+async def ingest_all_advisory_sources(
+    request: Request,
+    admin: AdminUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """One-shot: run every advisory ingester. Each is independently
+    idempotent + won't fail the others if one source 5xx's."""
+    from src.intel.advisory_ingest import (
+        ingest_cisa_kev,
+        ingest_ghsa,
+        ingest_msrc,
+        ingest_redhat,
+    )
+
+    out: dict[str, dict] = {}
+    for name, fn, kwargs in (
+        ("cisa_kev", ingest_cisa_kev, {}),
+        ("msrc", ingest_msrc, {"max_docs": 12}),
+        ("ghsa", ingest_ghsa, {"first": 50}),
+        ("redhat", ingest_redhat, {"max_docs": 100}),
+    ):
+        try:
+            out[name] = await fn(db, **kwargs)
+        except Exception as e:  # noqa: BLE001
+            out[name] = {"error": str(e)[:300]}
+    return out
+
+
+@router.get("/advisories/ingest/health", response_model=list[dict])
+async def advisory_ingest_health(
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+    source: str | None = None,
+    limit: int = 20,
+):
+    """Per-source observability — most recent runs with status, schema
+    shape, row counts, and any missing-field histogram. Operators use
+    this instead of grepping logs to detect schema drift."""
+    from src.models.advisory_health import AdvisoryIngestHealth
+
+    q = select(AdvisoryIngestHealth)
+    if source:
+        q = q.where(AdvisoryIngestHealth.source == source)
+    q = q.order_by(AdvisoryIngestHealth.started_at.desc()).limit(limit)
+    rows = (await db.execute(q)).scalars().all()
+    return [
+        {
+            "id": str(r.id),
+            "source": r.source,
+            "started_at": r.started_at.isoformat(),
+            "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+            "status": r.status,
+            "source_url": r.source_url,
+            "http_status": r.http_status,
+            "attempts": r.attempts,
+            "rows_seen": r.rows_seen,
+            "rows_parsed": r.rows_parsed,
+            "rows_inserted": r.rows_inserted,
+            "rows_updated": r.rows_updated,
+            "rows_skipped": r.rows_skipped,
+            "schema_shape": r.schema_shape,
+            "missing_fields": r.missing_fields,
+            "error_message": r.error_message,
+            "raw_sample": (r.raw_sample or "")[:500],
+        }
+        for r in rows
+    ]
+
+
+@router.get("/advisories/ingest/health/summary", response_model=dict)
+async def advisory_ingest_health_summary(
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """One row per source: latest status + counts + freshness."""
+    from src.models.advisory_health import AdvisoryIngestHealth
+    from sqlalchemy import func as _f
+
+    # Per-source: pull the most recent row.
+    sub = (
+        select(
+            AdvisoryIngestHealth.source,
+            _f.max(AdvisoryIngestHealth.started_at).label("max_started"),
+        )
+        .group_by(AdvisoryIngestHealth.source)
+        .subquery()
+    )
+    q = (
+        select(AdvisoryIngestHealth)
+        .join(
+            sub,
+            and_(
+                AdvisoryIngestHealth.source == sub.c.source,
+                AdvisoryIngestHealth.started_at == sub.c.max_started,
+            ),
+        )
+    )
+    rows = (await db.execute(q)).scalars().all()
+    return {
+        "sources": [
+            {
+                "source": r.source,
+                "status": r.status,
+                "started_at": r.started_at.isoformat(),
+                "http_status": r.http_status,
+                "schema_shape": r.schema_shape,
+                "rows_inserted": r.rows_inserted,
+                "rows_updated": r.rows_updated,
+                "rows_skipped": r.rows_skipped,
+                "error_message": r.error_message,
+                "missing_fields": r.missing_fields,
+            }
+            for r in rows
+        ]
+    }
+
+
+class TriageBody(BaseModel):
+    triage_state: str  # new | acknowledged | in_remediation | resolved | dismissed
+    assigned_to_user_id: uuid.UUID | None = None
+
+
+@router.post("/advisories/{advisory_id}/triage", response_model=AdvisoryResponse)
+async def transition_triage(
+    advisory_id: uuid.UUID,
+    body: TriageBody,
+    request: Request,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    valid = {"new", "acknowledged", "in_remediation", "resolved", "dismissed"}
+    if body.triage_state not in valid:
+        raise HTTPException(422, f"triage_state must be one of {sorted(valid)}")
+    adv = await db.get(Advisory, advisory_id)
+    if not adv:
+        raise HTTPException(404, "Advisory not found")
+    adv.triage_state = body.triage_state
+    if body.assigned_to_user_id is not None:
+        adv.assigned_to_user_id = body.assigned_to_user_id
+    await db.commit()
+    await db.refresh(adv)
+    return adv
+
+
+class AdvisoryCommentResponse(BaseModel):
+    id: uuid.UUID
+    advisory_id: uuid.UUID
+    author_user_id: uuid.UUID | None
+    body: str
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class CommentCreate(BaseModel):
+    body: str
+
+
+@router.get("/advisories/{advisory_id}/comments", response_model=list[AdvisoryCommentResponse])
+async def list_advisory_comments(
+    advisory_id: uuid.UUID,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    rows = (
+        await db.execute(
+            select(AdvisoryComment)
+            .where(AdvisoryComment.advisory_id == advisory_id)
+            .order_by(AdvisoryComment.created_at.desc())
+        )
+    ).scalars().all()
+    return list(rows)
+
+
+@router.post("/advisories/{advisory_id}/comments", response_model=AdvisoryCommentResponse, status_code=201)
+async def add_advisory_comment(
+    advisory_id: uuid.UUID,
+    body: CommentCreate,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    text = (body.body or "").strip()
+    if not text:
+        raise HTTPException(422, "body cannot be empty")
+    adv = await db.get(Advisory, advisory_id)
+    if not adv:
+        raise HTTPException(404, "Advisory not found")
+    c = AdvisoryComment(
+        advisory_id=advisory_id,
+        author_user_id=getattr(analyst, "id", None),
+        body=text,
+    )
+    db.add(c)
+    await db.commit()
+    await db.refresh(c)
+    return c
+
+
+# --- Subscriptions -----------------------------------------------------
+
+
+class SubscriptionCreate(BaseModel):
+    organization_id: uuid.UUID
+    name: str = Field(min_length=1, max_length=255)
+    severity_threshold: str = "high"
+    kev_only: bool = False
+    sources: list[str] = []
+    keyword_filters: list[str] = []
+    active: bool = True
+
+
+class SubscriptionResponse(BaseModel):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    user_id: uuid.UUID | None
+    name: str
+    severity_threshold: str
+    kev_only: bool
+    sources: list[str]
+    keyword_filters: list[str]
+    active: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+@router.post("/advisories/subscriptions", response_model=SubscriptionResponse, status_code=201)
+async def create_subscription(
+    body: SubscriptionCreate,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    sub = AdvisorySubscription(
+        organization_id=body.organization_id,
+        user_id=getattr(analyst, "id", None),
+        name=body.name.strip(),
+        severity_threshold=body.severity_threshold,
+        kev_only=body.kev_only,
+        sources=body.sources,
+        keyword_filters=body.keyword_filters,
+        active=body.active,
+    )
+    db.add(sub)
+    await db.commit()
+    await db.refresh(sub)
+    return sub
+
+
+@router.get("/advisories/subscriptions", response_model=list[SubscriptionResponse])
+async def list_subscriptions(
+    organization_id: uuid.UUID,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    rows = (
+        await db.execute(
+            select(AdvisorySubscription)
+            .where(AdvisorySubscription.organization_id == organization_id)
+            .order_by(AdvisorySubscription.created_at.desc())
+        )
+    ).scalars().all()
+    return list(rows)
+
+
+@router.delete("/advisories/subscriptions/{sub_id}", status_code=204)
+async def delete_subscription(
+    sub_id: uuid.UUID,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    sub = await db.get(AdvisorySubscription, sub_id)
+    if not sub:
+        raise HTTPException(404, "Subscription not found")
+    await db.delete(sub)
+    await db.commit()
+
+
+# --- Affected exposures (for the "this CVE is in your env" panel) ----
+
+
+@router.get("/advisories/{advisory_id}/affected")
+async def affected_assets_for_advisory(
+    advisory_id: uuid.UUID,
+    organization_id: uuid.UUID,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """Return ExposureFinding rows whose CVE list overlaps the advisory."""
+    adv = await db.get(Advisory, advisory_id)
+    if not adv or not adv.cve_ids:
+        return []
+    try:
+        from src.models.exposures import ExposureFinding
+    except ImportError:
+        return []
+    rows = list(
+        (
+            await db.execute(
+                select(ExposureFinding).where(
+                    ExposureFinding.organization_id == organization_id,
+                    ExposureFinding.cve_ids.overlap(adv.cve_ids),
+                )
+            )
+        ).scalars().all()
+    )
+    return [
+        {
+            "id": str(r.id),
+            "cve_ids": list(r.cve_ids or []),
+            "severity": getattr(r, "severity", None),
+            "asset_value": getattr(r, "asset_value", None),
+            "title": getattr(r, "title", None),
+        }
+        for r in rows
+    ]

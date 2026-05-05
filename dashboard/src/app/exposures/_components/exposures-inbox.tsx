@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ExternalLink, ShieldAlert } from "lucide-react";
+import { ExternalLink, ShieldAlert, Flame, Sparkles, Clock, Network } from "lucide-react";
 import {
   api,
   type ExposureResponse,
   type ExposureSeverityValue,
   type ExposureStateValue,
+  type RemediationAction,
 } from "@/lib/api";
 import { useToast } from "@/components/shared/toast";
 import {
@@ -75,6 +76,33 @@ const SEV_STRIPE: Record<string, string> = {
 const CVSS_COLOR = (score: number) =>
   score >= 9 ? "#FF5630" : score >= 7 ? "#B71D18" : score >= 4 ? "#B76E00" : "var(--color-body)";
 
+const AGE_TONE = (days: number | null): { color: string; label: string } | null => {
+  if (days === null) return null;
+  if (days >= 180) return { color: "#B71D18", label: `${days}d open` };
+  if (days >= 90) return { color: "#B76E00", label: `${days}d open` };
+  return null;
+};
+
+const SORT_OPTIONS = [
+  { value: "last_seen", label: "Last seen" },
+  { value: "matched", label: "First matched" },
+  { value: "age", label: "Oldest first" },
+  { value: "severity", label: "Severity" },
+  { value: "cvss", label: "CVSS" },
+  { value: "epss", label: "EPSS exploit prob." },
+  { value: "priority", label: "AI priority" },
+] as const;
+type SortKey = (typeof SORT_OPTIONS)[number]["value"];
+
+const REMEDIATION_OPTIONS: { value: RemediationAction; label: string }[] = [
+  { value: "patched", label: "Patched" },
+  { value: "mitigated", label: "Mitigated (compensating control)" },
+  { value: "waived", label: "Waived (risk accepted)" },
+  { value: "blocked", label: "Blocked at WAF/firewall" },
+  { value: "false_positive", label: "False positive" },
+  { value: "other", label: "Other" },
+];
+
 const PAGE_LIMIT = 50;
 
 export function ExposuresInbox() {
@@ -87,6 +115,9 @@ export function ExposuresInbox() {
   const [state, setState] = useState<ExposureStateValue | "all">("all");
   const [search, setSearch] = useState("");
   const [cve, setCve] = useState("");
+  const [kevOnly, setKevOnly] = useState(false);
+  const [sort, setSort] = useState<SortKey>("priority");
+  const [triaging, setTriaging] = useState(false);
   const [loading, setLoading] = useState(true);
   const [transitionTarget, setTransitionTarget] =
     useState<ExposureResponse | null>(null);
@@ -102,6 +133,8 @@ export function ExposuresInbox() {
         state: state === "all" ? undefined : state,
         q: search || undefined,
         cve: cve || undefined,
+        is_kev: kevOnly ? true : undefined,
+        sort,
         limit: PAGE_LIMIT,
         offset,
       });
@@ -115,7 +148,24 @@ export function ExposuresInbox() {
     } finally {
       setLoading(false);
     }
-  }, [orgId, severity, state, search, cve, offset, toast]);
+  }, [orgId, severity, state, search, cve, kevOnly, sort, offset, toast]);
+
+  const triageAll = async () => {
+    if (!orgId || triaging) return;
+    setTriaging(true);
+    try {
+      const r = await api.easm.triageExposures(orgId);
+      toast("success", `AI triaged ${r.triaged_count} exposures`);
+      await load();
+    } catch (e) {
+      toast(
+        "error",
+        e instanceof Error ? e.message : "Triage failed",
+      );
+    } finally {
+      setTriaging(false);
+    }
+  };
 
   useEffect(() => {
     load();
@@ -124,12 +174,22 @@ export function ExposuresInbox() {
   const transition = async (
     target: ExposureResponse,
     to: ExposureStateValue,
-    reason: string,
+    payload: {
+      reason: string;
+      remediation_action?: RemediationAction;
+      remediation_patch_version?: string;
+      remediation_owner?: string;
+      remediation_notes?: string;
+    },
   ) => {
     try {
       await api.easm.transitionExposure(target.id, {
         state: to,
-        reason: reason || undefined,
+        reason: payload.reason || undefined,
+        remediation_action: payload.remediation_action,
+        remediation_patch_version: payload.remediation_patch_version || undefined,
+        remediation_owner: payload.remediation_owner || undefined,
+        remediation_notes: payload.remediation_notes || undefined,
       });
       toast("success", `Exposure → ${STATE_LABEL[to]}`);
       setTransitionTarget(null);
@@ -144,9 +204,14 @@ export function ExposuresInbox() {
 
   const filterCount = useMemo(
     () =>
-      [severity !== "all", state !== "all", search !== "", cve !== ""].filter(Boolean)
-        .length,
-    [severity, state, search, cve],
+      [
+        severity !== "all",
+        state !== "all",
+        search !== "",
+        cve !== "",
+        kevOnly,
+      ].filter(Boolean).length,
+    [severity, state, search, cve, kevOnly],
   );
 
   return (
@@ -198,6 +263,65 @@ export function ExposuresInbox() {
           placeholder="CVE-…"
           style={{ ...inputStyle, width: "140px", fontFamily: "monospace", fontSize: "12px" }}
         />
+        <button
+          onClick={() => {
+            setKevOnly((v) => !v);
+            setOffset(0);
+          }}
+          aria-pressed={kevOnly}
+          title="CISA KEV catalog — actively exploited in the wild"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            height: "40px",
+            padding: "0 12px",
+            borderRadius: "4px",
+            border: kevOnly
+              ? "1px solid #B71D18"
+              : "1px solid var(--color-border)",
+            background: kevOnly ? "rgba(255,86,48,0.1)" : "var(--color-canvas)",
+            color: kevOnly ? "#B71D18" : "var(--color-body)",
+            fontSize: "12px",
+            fontWeight: 700,
+            cursor: "pointer",
+          }}
+        >
+          <Flame style={{ width: "14px", height: "14px" }} />
+          KEV
+        </button>
+        <Select
+          ariaLabel="Sort"
+          value={sort}
+          options={SORT_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
+          onChange={(v) => {
+            setSort(v as SortKey);
+            setOffset(0);
+          }}
+        />
+        <button
+          onClick={triageAll}
+          disabled={triaging || rows.length === 0}
+          title="Run AI triage agent — ranks open exposures by EPSS × CVSS × KEV × asset criticality"
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "6px",
+            height: "40px",
+            padding: "0 12px",
+            borderRadius: "4px",
+            border: "1px solid var(--color-border)",
+            background: "var(--color-canvas)",
+            color: "var(--color-ink)",
+            fontSize: "12px",
+            fontWeight: 700,
+            cursor: triaging ? "wait" : "pointer",
+            opacity: triaging || rows.length === 0 ? 0.6 : 1,
+          }}
+        >
+          <Sparkles style={{ width: "14px", height: "14px" }} />
+          {triaging ? "Triaging…" : "AI triage"}
+        </button>
         {filterCount > 0 ? (
           <button
             onClick={() => {
@@ -205,6 +329,7 @@ export function ExposuresInbox() {
               setState("all");
               setSearch("");
               setCve("");
+              setKevOnly(false);
               setOffset(0);
             }}
             style={{
@@ -250,14 +375,17 @@ export function ExposuresInbox() {
                   </Th>
                   <Th align="left">Title</Th>
                   <Th align="left">Target</Th>
-                  <Th align="left" className="w-[110px]">
-                    Category
+                  <Th align="left" className="w-[88px]">
+                    <span title="CVSS / EPSS exploit probability">Risk</span>
                   </Th>
-                  <Th align="left" className="w-[90px]">
-                    CVSS
+                  <Th align="left" className="w-[110px]">
+                    <span title="KEV / age / blast radius">Signals</span>
                   </Th>
                   <Th align="left" className="w-[140px]">
                     State
+                  </Th>
+                  <Th align="left" className="w-[110px]">
+                    <span title="AI triage priority (0-100)">AI</span>
                   </Th>
                   <Th align="left" className="w-[100px]">
                     Last seen
@@ -302,7 +430,7 @@ export function ExposuresInbox() {
         <ExposureStateModal
           target={transitionTarget}
           onClose={() => setTransitionTarget(null)}
-          onSubmit={(to, reason) => transition(transitionTarget, to, reason)}
+          onSubmit={(to, payload) => transition(transitionTarget, to, payload)}
         />
       )}
     </div>
@@ -356,34 +484,31 @@ function ExposureRow({
         {e.target}
       </td>
       <td className="px-3">
-        <span style={{
-          display: "inline-flex",
-          alignItems: "center",
-          height: "18px",
-          padding: "0 6px",
-          borderRadius: "4px",
-          background: "var(--color-surface-muted)",
-          fontSize: "10.5px",
-          fontWeight: 700,
-          color: "var(--color-body)",
-          letterSpacing: "0.06em",
-        }}>
-          {e.category.replace(/_/g, " ").toUpperCase()}
-        </span>
+        <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+          {e.cvss_score !== null ? (
+            <span style={{
+              fontFamily: "monospace",
+              fontSize: "12px",
+              fontWeight: 700,
+              color: CVSS_COLOR(e.cvss_score),
+            }}>
+              CVSS {e.cvss_score.toFixed(1)}
+            </span>
+          ) : (
+            <span style={{ fontSize: "11.5px", color: "var(--color-muted)" }}>CVSS —</span>
+          )}
+          {e.epss_score !== null ? (
+            <span
+              style={{ fontSize: "10px", color: "var(--color-muted)", fontFamily: "monospace" }}
+              title={`EPSS ${(e.epss_score * 100).toFixed(2)}% (${e.epss_percentile !== null ? `p${(e.epss_percentile * 100).toFixed(0)}` : "—"})`}
+            >
+              EPSS {(e.epss_score * 100).toFixed(0)}%
+            </span>
+          ) : null}
+        </div>
       </td>
       <td className="px-3">
-        {e.cvss_score !== null ? (
-          <span style={{
-            fontFamily: "monospace",
-            fontSize: "12px",
-            fontWeight: 700,
-            color: CVSS_COLOR(e.cvss_score),
-          }}>
-            {e.cvss_score.toFixed(1)}
-          </span>
-        ) : (
-          <span style={{ fontSize: "11.5px", color: "var(--color-muted)" }}>—</span>
-        )}
+        <ExposureSignals e={e} />
       </td>
       <td className="px-3">
         <StatePill
@@ -391,10 +516,148 @@ function ExposureRow({
           tone={STATE_TONE[e.state]}
         />
       </td>
+      <td className="px-3">
+        <AiPriorityCell e={e} />
+      </td>
       <td className="px-3" style={{ fontFamily: "monospace", fontSize: "11.5px", color: "var(--color-muted)" }}>
         {timeAgo(e.last_seen_at)}
       </td>
     </tr>
+  );
+}
+
+function ExposureSignals({ e }: { e: ExposureResponse }) {
+  const ageTone = AGE_TONE(e.age_days);
+  return (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px" }}>
+      {e.is_kev ? (
+        <span
+          title={
+            e.kev_added_at
+              ? `CISA KEV — exploited since ${new Date(e.kev_added_at).toISOString().slice(0, 10)}`
+              : "CISA KEV — exploited in the wild"
+          }
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "3px",
+            height: "18px",
+            padding: "0 5px",
+            borderRadius: "3px",
+            background: "rgba(255,86,48,0.12)",
+            color: "#B71D18",
+            fontSize: "10px",
+            fontWeight: 800,
+            letterSpacing: "0.04em",
+          }}
+        >
+          <Flame style={{ width: "10px", height: "10px" }} />
+          KEV
+        </span>
+      ) : null}
+      {ageTone ? (
+        <span
+          title={`First matched ${e.age_days} days ago — still open`}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "3px",
+            height: "18px",
+            padding: "0 5px",
+            borderRadius: "3px",
+            background: `${ageTone.color}15`,
+            color: ageTone.color,
+            fontSize: "10px",
+            fontWeight: 700,
+            fontFamily: "monospace",
+          }}
+        >
+          <Clock style={{ width: "10px", height: "10px" }} />
+          {ageTone.label}
+        </span>
+      ) : null}
+      {e.blast_radius && e.blast_radius > 0 ? (
+        <span
+          title={`${e.blast_radius} other open exposures share a CVE with this one`}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "3px",
+            height: "18px",
+            padding: "0 5px",
+            borderRadius: "3px",
+            background: "var(--color-surface-muted)",
+            color: "var(--color-body)",
+            fontSize: "10px",
+            fontWeight: 700,
+            fontFamily: "monospace",
+          }}
+        >
+          <Network style={{ width: "10px", height: "10px" }} />×{e.blast_radius}
+        </span>
+      ) : null}
+      {e.ai_suggest_dismiss ? (
+        <span
+          title={e.ai_dismiss_reason || "AI suggests this is a false positive"}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "3px",
+            height: "18px",
+            padding: "0 5px",
+            borderRadius: "3px",
+            background: "rgba(0,184,217,0.1)",
+            color: "#0066CC",
+            fontSize: "10px",
+            fontWeight: 700,
+          }}
+        >
+          AI: dismiss?
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function AiPriorityCell({ e }: { e: ExposureResponse }) {
+  if (e.ai_priority === null || e.ai_priority === undefined) {
+    return <span style={{ fontSize: "11px", color: "var(--color-muted)" }}>—</span>;
+  }
+  const v = Math.round(e.ai_priority);
+  const color = v >= 80 ? "#FF5630" : v >= 60 ? "#B76E00" : v >= 40 ? "#0091FF" : "var(--color-body)";
+  return (
+    <div
+      title={e.ai_rationale || `AI priority score ${v}/100`}
+      style={{ display: "flex", alignItems: "center", gap: "6px" }}
+    >
+      <Sparkles style={{ width: "11px", height: "11px", color }} />
+      <span style={{ fontFamily: "monospace", fontSize: "12px", fontWeight: 700, color }}>
+        {v}
+      </span>
+      <div
+        style={{
+          flex: 1,
+          height: "3px",
+          minWidth: "20px",
+          maxWidth: "40px",
+          background: "var(--color-border)",
+          borderRadius: "2px",
+          position: "relative",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: `${v}%`,
+            background: color,
+          }}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -489,6 +752,9 @@ function ExposureDrawer({
         </div>
 
         <div className="p-6 space-y-5">
+          {/* Top banner row — KEV / age danger / AI dismiss / orphan asset */}
+          <DrawerBanners exposure={exposure} />
+
           <Detail label="Target">
             <a
               href={
@@ -514,6 +780,19 @@ function ExposureDrawer({
               {exposure.target}
               <ExternalLink style={{ width: "12px", height: "12px", color: "var(--color-muted)", flexShrink: 0 }} />
             </a>
+            {exposure.asset_value ? (
+              <div style={{ marginTop: "4px", fontSize: "11.5px", color: "var(--color-muted)" }}>
+                Linked asset:{" "}
+                <span style={{ fontFamily: "monospace", color: "var(--color-body)" }}>
+                  {exposure.asset_value}
+                </span>
+                {exposure.asset_criticality ? (
+                  <span style={{ marginLeft: "6px", textTransform: "uppercase", fontSize: "10px" }}>
+                    · {exposure.asset_criticality}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </Detail>
           {exposure.description ? (
             <Detail label="Description">
@@ -546,18 +825,57 @@ function ExposureDrawer({
               </span>
             </Detail>
             <Detail label="CVSS">
-              <span style={{ fontFamily: "monospace", fontSize: "14px", fontWeight: 700, color: "var(--color-ink)" }}>
+              <span
+                style={{
+                  fontFamily: "monospace",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  color:
+                    exposure.cvss_score !== null
+                      ? CVSS_COLOR(exposure.cvss_score)
+                      : "var(--color-muted)",
+                }}
+              >
                 {exposure.cvss_score?.toFixed(1) ?? "—"}
               </span>
+            </Detail>
+            <Detail label="EPSS exploit probability">
+              {exposure.epss_score !== null ? (
+                <span style={{ fontFamily: "monospace", fontSize: "13px", fontWeight: 700, color: "var(--color-ink)" }}>
+                  {(exposure.epss_score * 100).toFixed(2)}%
+                  {exposure.epss_percentile !== null ? (
+                    <span style={{ marginLeft: "6px", color: "var(--color-muted)", fontWeight: 500 }}>
+                      p{(exposure.epss_percentile * 100).toFixed(0)}
+                    </span>
+                  ) : null}
+                </span>
+              ) : (
+                <span style={{ fontSize: "11.5px", color: "var(--color-muted)" }}>—</span>
+              )}
             </Detail>
             <Detail label="Occurrences">
               <span style={{ fontFamily: "monospace", fontSize: "14px", fontWeight: 700, color: "var(--color-ink)" }}>
                 {exposure.occurrence_count}
               </span>
             </Detail>
+            <Detail label="Blast radius">
+              <span
+                style={{ fontFamily: "monospace", fontSize: "13px", color: "var(--color-body)" }}
+                title="Other open exposures sharing a CVE with this one"
+              >
+                {exposure.blast_radius && exposure.blast_radius > 0
+                  ? `${exposure.blast_radius} related open`
+                  : "isolated"}
+              </span>
+            </Detail>
             <Detail label="First matched">
               <span style={{ fontFamily: "monospace", fontSize: "11.5px", color: "var(--color-body)" }}>
                 {timeAgo(exposure.matched_at)}
+                {exposure.age_days !== null ? (
+                  <span style={{ marginLeft: "6px", color: "var(--color-muted)" }}>
+                    · {exposure.age_days}d
+                  </span>
+                ) : null}
               </span>
             </Detail>
             <Detail label="Last seen">
@@ -656,10 +974,151 @@ function ExposureDrawer({
               </p>
             </Detail>
           ) : null}
+
+          {exposure.remediation_action ? (
+            <Detail label="Remediation">
+              <div style={{ fontSize: "12.5px", color: "var(--color-body)", lineHeight: 1.6 }}>
+                <div>
+                  <strong style={{ color: "var(--color-ink)" }}>Action:</strong>{" "}
+                  {exposure.remediation_action.replace(/_/g, " ")}
+                </div>
+                {exposure.remediation_patch_version ? (
+                  <div>
+                    <strong style={{ color: "var(--color-ink)" }}>Patch version:</strong>{" "}
+                    <span style={{ fontFamily: "monospace" }}>
+                      {exposure.remediation_patch_version}
+                    </span>
+                  </div>
+                ) : null}
+                {exposure.remediation_owner ? (
+                  <div>
+                    <strong style={{ color: "var(--color-ink)" }}>Owner:</strong>{" "}
+                    {exposure.remediation_owner}
+                  </div>
+                ) : null}
+                {exposure.remediation_notes ? (
+                  <div style={{ marginTop: "4px", whiteSpace: "pre-wrap" }}>
+                    {exposure.remediation_notes}
+                  </div>
+                ) : null}
+              </div>
+            </Detail>
+          ) : null}
+
+          {exposure.ai_rationale || exposure.ai_priority !== null ? (
+            <Detail label="AI triage">
+              <div
+                style={{
+                  fontSize: "12.5px",
+                  color: "var(--color-body)",
+                  lineHeight: 1.6,
+                  padding: "10px 12px",
+                  background: "var(--color-surface-muted)",
+                  borderRadius: "4px",
+                  border: "1px solid var(--color-border)",
+                }}
+              >
+                {exposure.ai_priority !== null ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" }}>
+                    <Sparkles style={{ width: "13px", height: "13px", color: "var(--color-accent)" }} />
+                    <strong style={{ color: "var(--color-ink)" }}>Priority {Math.round(exposure.ai_priority)}/100</strong>
+                    {exposure.ai_triaged_at ? (
+                      <span style={{ marginLeft: "auto", fontSize: "10.5px", color: "var(--color-muted)" }}>
+                        {timeAgo(exposure.ai_triaged_at)}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                {exposure.ai_rationale ? (
+                  <div style={{ whiteSpace: "pre-wrap" }}>{exposure.ai_rationale}</div>
+                ) : null}
+                {exposure.ai_suggest_dismiss ? (
+                  <div
+                    style={{
+                      marginTop: "8px",
+                      padding: "6px 8px",
+                      background: "rgba(0,184,217,0.1)",
+                      borderRadius: "3px",
+                      color: "#0066CC",
+                      fontWeight: 600,
+                    }}
+                  >
+                    AI suggests dismissing as a likely false positive
+                    {exposure.ai_dismiss_reason ? `: ${exposure.ai_dismiss_reason}` : "."}
+                  </div>
+                ) : null}
+              </div>
+            </Detail>
+          ) : null}
         </div>
       </div>
     </div>
   );
+}
+
+function DrawerBanners({ exposure }: { exposure: ExposureResponse }) {
+  const banners: React.ReactNode[] = [];
+  if (exposure.is_kev) {
+    banners.push(
+      <div
+        key="kev"
+        style={{
+          padding: "10px 12px",
+          background: "rgba(255,86,48,0.08)",
+          borderLeft: "3px solid #B71D18",
+          borderRadius: "3px",
+          fontSize: "12px",
+          color: "#B71D18",
+          fontWeight: 600,
+        }}
+      >
+        <Flame style={{ display: "inline-block", width: "13px", height: "13px", marginRight: "6px", verticalAlign: "-2px" }} />
+        Listed on the CISA Known Exploited Vulnerabilities catalog
+        {exposure.kev_added_at
+          ? ` since ${new Date(exposure.kev_added_at).toISOString().slice(0, 10)}`
+          : ""}.
+      </div>,
+    );
+  }
+  if (exposure.age_days !== null && exposure.age_days >= 90 && exposure.state === "open") {
+    const tone = exposure.age_days >= 180 ? "#B71D18" : "#B76E00";
+    banners.push(
+      <div
+        key="age"
+        style={{
+          padding: "10px 12px",
+          background: `${tone}10`,
+          borderLeft: `3px solid ${tone}`,
+          borderRadius: "3px",
+          fontSize: "12px",
+          color: tone,
+          fontWeight: 600,
+        }}
+      >
+        <Clock style={{ display: "inline-block", width: "13px", height: "13px", marginRight: "6px", verticalAlign: "-2px" }} />
+        Open for {exposure.age_days} days — {exposure.age_days >= 180 ? "well past SLA" : "approaching SLA"}.
+      </div>,
+    );
+  }
+  if (!exposure.asset_id) {
+    banners.push(
+      <div
+        key="orphan"
+        style={{
+          padding: "10px 12px",
+          background: "var(--color-surface-muted)",
+          borderLeft: "3px solid var(--color-border-strong)",
+          borderRadius: "3px",
+          fontSize: "12px",
+          color: "var(--color-body)",
+        }}
+      >
+        Not linked to an asset in the registry. Use the row actions to link one.
+      </div>,
+    );
+  }
+  if (banners.length === 0) return null;
+  return <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>{banners}</div>;
 }
 
 function ExposureStateModal({
@@ -669,11 +1128,43 @@ function ExposureStateModal({
 }: {
   target: ExposureResponse;
   onClose: () => void;
-  onSubmit: (to: ExposureStateValue, reason: string) => void;
+  onSubmit: (
+    to: ExposureStateValue,
+    payload: {
+      reason: string;
+      remediation_action?: RemediationAction;
+      remediation_patch_version?: string;
+      remediation_owner?: string;
+      remediation_notes?: string;
+    },
+  ) => void;
 }) {
   const targets = STATES.filter((s) => s !== target.state);
   const [next, setNext] = useState<ExposureStateValue>(targets[0]);
   const [reason, setReason] = useState("");
+  const [action, setAction] = useState<RemediationAction | "">("");
+  const [patchVersion, setPatchVersion] = useState("");
+  const [owner, setOwner] = useState("");
+  const [notes, setNotes] = useState("");
+
+  const isTerminal =
+    next === "fixed" || next === "accepted_risk" || next === "false_positive";
+
+  // When user picks false_positive state, default the remediation_action to
+  // false_positive so the two stay aligned (analyst can override).
+  useEffect(() => {
+    if (next === "false_positive" && action !== "false_positive") {
+      setAction("false_positive");
+    } else if (next === "fixed" && !action) {
+      setAction("patched");
+    } else if (next === "accepted_risk" && !action) {
+      setAction("waived");
+    } else if (!isTerminal) {
+      setAction("");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [next]);
+
   return (
     <ModalShell title="Transition exposure" onClose={onClose}>
       <div className="p-6 space-y-5">
@@ -705,7 +1196,7 @@ function ExposureStateModal({
             })}
           </div>
         </Field>
-        <Field label="Reason" hint="Captured on the exposure audit trail.">
+        <Field label="Reason" required={isTerminal} hint="Captured on the exposure audit trail.">
           <textarea
             value={reason}
             onChange={(ev) => setReason(ev.target.value)}
@@ -714,11 +1205,75 @@ function ExposureStateModal({
             placeholder="e.g. Patched with vendor advisory ABC-123, scanned post-deploy."
           />
         </Field>
+
+        {isTerminal ? (
+          <>
+            <Field label="Remediation action" required>
+              <Select
+                ariaLabel="Remediation action"
+                value={action}
+                options={[
+                  { value: "", label: "— select action —" },
+                  ...REMEDIATION_OPTIONS.map((o) => ({
+                    value: o.value,
+                    label: o.label,
+                  })),
+                ]}
+                onChange={(v) => setAction(v as RemediationAction | "")}
+              />
+            </Field>
+            {action === "patched" || action === "mitigated" ? (
+              <Field
+                label="Patch / version"
+                hint="The vendor advisory or version that resolves this exposure."
+              >
+                <input
+                  value={patchVersion}
+                  onChange={(ev) => setPatchVersion(ev.target.value)}
+                  placeholder="e.g. log4j 2.17.1, KB5012170, 1.21.0"
+                  style={{ ...inputStyle, fontFamily: "monospace", fontSize: "12px" }}
+                />
+              </Field>
+            ) : null}
+            <Field
+              label="Owner"
+              hint="Who validated the remediation? Defaults to your account."
+            >
+              <input
+                value={owner}
+                onChange={(ev) => setOwner(ev.target.value)}
+                placeholder="ops@company.com"
+                style={{ ...inputStyle, fontSize: "12.5px" }}
+              />
+            </Field>
+            <Field
+              label="Remediation notes"
+              hint="Validation steps, screenshots, ticket links."
+            >
+              <textarea
+                value={notes}
+                onChange={(ev) => setNotes(ev.target.value)}
+                rows={3}
+                style={{ ...inputStyle, height: "auto", padding: "8px 12px", resize: "none" }}
+                placeholder="e.g. Scanned post-deploy, no longer detected. Linked to JIRA-1234."
+              />
+            </Field>
+          </>
+        ) : null}
       </div>
       <ModalFooter
         onCancel={onClose}
-        onSubmit={() => onSubmit(next, reason)}
+        onSubmit={() =>
+          onSubmit(next, {
+            reason,
+            remediation_action: action || undefined,
+            remediation_patch_version: patchVersion || undefined,
+            remediation_owner: owner || undefined,
+            remediation_notes: notes || undefined,
+          })
+        }
         submitLabel="Transition"
+        disabled={isTerminal && (!reason.trim() || !action)}
       />
     </ModalShell>
   );

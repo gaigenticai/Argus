@@ -43,9 +43,11 @@ from src.config.settings import settings
 from src.core.auth import AnalystUser, audit_log
 from src.models.auth import AuditAction
 from src.models.evidence import EvidenceBlob, EvidenceKind
+from src.models.evidence_audit import EvidenceAuditChain
 from src.models.threat import Asset, Organization
 from src.storage import evidence_store
 from src.storage.database import get_session
+from src.storage.evidence_audit import record_audit, verify_chain
 
 router = APIRouter(prefix="/evidence", tags=["Compliance & DLP"])
 _logger = logging.getLogger(__name__)
@@ -195,6 +197,10 @@ class EvidenceResponse(BaseModel):
     organization_id: uuid.UUID
     asset_id: uuid.UUID | None
     sha256: str
+    md5: str | None = None
+    sha1: str | None = None
+    perceptual_hash: str | None = None
+    ssdeep: str | None = None
     size_bytes: int
     content_type: str
     original_filename: str | None
@@ -205,11 +211,14 @@ class EvidenceResponse(BaseModel):
     deleted_at: datetime | None
     deleted_by_user_id: uuid.UUID | None
     delete_reason: str | None
+    legal_hold: bool = False
     captured_at: datetime
     captured_by_user_id: uuid.UUID | None
     capture_source: str | None
     description: str | None
     extra: dict | None
+    agent_summary: dict | None = None
+    av_scan: dict | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -283,7 +292,7 @@ async def upload_evidence(
             f"upload sniffed as forbidden type {sniffed!r}",
         )
 
-    sha256 = evidence_store.sha256_of(body)
+    md5_hex, sha1_hex, sha256 = evidence_store.triple_hash(body)
     bucket = settings.evidence.bucket
     key = evidence_store.storage_key(str(organization_id), sha256)
 
@@ -306,6 +315,11 @@ async def upload_evidence(
         blob.deleted_at = None
         blob.deleted_by_user_id = None
         blob.delete_reason = None
+        # Backfill triple-hash on legacy rows that only carry SHA-256.
+        if not blob.md5:
+            blob.md5 = md5_hex
+        if not blob.sha1:
+            blob.sha1 = sha1_hex
         # Re-upload bytes in case the retention worker purged them
         evidence_store.ensure_bucket(bucket)
         if not evidence_store.exists(bucket, key):
@@ -321,6 +335,20 @@ async def upload_evidence(
             details={"sha256": sha256, "kind": kind.value},
             ip_address=ip,
             user_agent=ua,
+        )
+        await record_audit(
+            db,
+            organization_id=organization_id,
+            evidence_blob_id=blob.id,
+            actor_user_id=analyst.id,
+            action="evidence.restore_via_reupload",
+            payload={
+                "sha256": sha256,
+                "md5": md5_hex,
+                "sha1": sha1_hex,
+                "kind": kind.value,
+                "ip": ip,
+            },
         )
         await db.commit()
         await db.refresh(blob)
@@ -352,6 +380,8 @@ async def upload_evidence(
         organization_id=organization_id,
         asset_id=asset_id,
         sha256=sha256,
+        md5=md5_hex,
+        sha1=sha1_hex,
         size_bytes=len(body),
         content_type=declared,
         original_filename=file.filename,
@@ -375,6 +405,8 @@ async def upload_evidence(
         resource_id=str(blob.id),
         details={
             "sha256": sha256,
+            "md5": md5_hex,
+            "sha1": sha1_hex,
             "kind": kind.value,
             "size_bytes": len(body),
             "organization_id": str(organization_id),
@@ -382,8 +414,45 @@ async def upload_evidence(
         ip_address=ip,
         user_agent=ua,
     )
+    await record_audit(
+        db,
+        organization_id=organization_id,
+        evidence_blob_id=blob.id,
+        actor_user_id=analyst.id,
+        action="evidence.upload",
+        payload={
+            "sha256": sha256,
+            "md5": md5_hex,
+            "sha1": sha1_hex,
+            "kind": kind.value,
+            "size_bytes": len(body),
+            "content_type": declared,
+            "filename": file.filename,
+            "ip": ip,
+        },
+    )
     await db.commit()
     await db.refresh(blob)
+
+    # Fire-and-forget: kick off the artefact summariser. A queue outage
+    # must NEVER block an upload — the bytes + metadata are already
+    # safely on disk; the summary can be rebuilt later by re-enqueuing.
+    try:
+        from src.llm.agent_queue import enqueue as _enqueue
+
+        await _enqueue(
+            db,
+            kind="evidence_summarise",
+            organization_id=organization_id,
+            dedup_key=f"summarise:{blob.id}",
+            payload={"blob_id": str(blob.id)},
+            priority=5,
+        )
+    except Exception:  # noqa: BLE001 — never bubble queue failures into the upload path
+        _logger.exception(
+            "evidence: failed to enqueue summariser for blob_id=%s", blob.id
+        )
+
     return blob
 
 
@@ -395,6 +464,7 @@ async def list_evidence(
     kind: EvidenceKind | None = None,
     asset_id: uuid.UUID | None = None,
     include_deleted: bool = False,
+    q: Annotated[str | None, Query(max_length=200)] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ):
@@ -411,11 +481,68 @@ async def list_evidence(
         query = query.where(EvidenceBlob.kind == kind.value)
     if asset_id is not None:
         query = query.where(EvidenceBlob.asset_id == asset_id)
+    if q:
+        # Search across hash, filename, description, and OCR-extracted text.
+        from sqlalchemy import or_, func
+        like = f"%{q.strip().lower()}%"
+        query = query.where(
+            or_(
+                func.lower(EvidenceBlob.sha256).like(like),
+                func.lower(EvidenceBlob.md5).like(like) if False else func.lower(func.coalesce(EvidenceBlob.md5, "")).like(like),
+                func.lower(func.coalesce(EvidenceBlob.sha1, "")).like(like),
+                func.lower(func.coalesce(EvidenceBlob.original_filename, "")).like(like),
+                func.lower(func.coalesce(EvidenceBlob.description, "")).like(like),
+                func.lower(func.coalesce(EvidenceBlob.extracted_text, "")).like(like),
+            )
+        )
     query = (
         query.order_by(EvidenceBlob.captured_at.desc()).limit(limit).offset(offset)
     )
     result = await db.execute(query)
     return list(result.scalars().all())
+
+
+class AuditChainEntryResponse(BaseModel):
+    sequence: int
+    organization_id: uuid.UUID | None
+    evidence_blob_id: uuid.UUID | None
+    actor_user_id: uuid.UUID | None
+    action: str
+    payload: dict
+    payload_hash: str
+    prev_chain_hash: str | None
+    chain_hash: str
+    anchor_id: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class AuditChainVerifyResponse(BaseModel):
+    valid: bool
+    broken_at_sequence: int | None
+    total_rows: int
+    head_chain_hash: str | None
+
+
+@router.get("/audit-chain/verify", response_model=AuditChainVerifyResponse)
+async def verify_audit_chain(
+    organization_id: uuid.UUID,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """Walk the org's Merkle audit chain and report tamper status.
+
+    Returns ``{valid, broken_at_sequence, total_rows, head_chain_hash}``.
+    A broken chain is a security incident — the dashboard renders it
+    as a red banner and the verifier exposes the offending sequence so
+    operators can drill into that specific row.
+    """
+    org = await db.get(Organization, organization_id)
+    if not org:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Organization not found")
+    verdict = await verify_chain(db, organization_id=organization_id)
+    return AuditChainVerifyResponse(**verdict)
 
 
 async def _load_org_blob(db: AsyncSession, blob_id: uuid.UUID) -> EvidenceBlob:
@@ -467,6 +594,19 @@ async def download_evidence(
         ip_address=ip,
         user_agent=ua,
     )
+    await record_audit(
+        db,
+        organization_id=blob.organization_id,
+        evidence_blob_id=blob.id,
+        actor_user_id=analyst.id,
+        action="evidence.download_presigned",
+        payload={
+            "sha256": blob.sha256,
+            "ttl": ttl,
+            "method": "presigned",
+            "ip": ip,
+        },
+    )
     await db.commit()
     return PresignedURLResponse(url=url, ttl_seconds=ttl, sha256=blob.sha256)
 
@@ -499,6 +639,19 @@ async def stream_evidence(
         details={"sha256": blob.sha256, "method": "inline"},
         ip_address=ip,
         user_agent=ua,
+    )
+    await record_audit(
+        db,
+        organization_id=blob.organization_id,
+        evidence_blob_id=blob.id,
+        actor_user_id=analyst.id,
+        action="evidence.download_inline",
+        payload={
+            "sha256": blob.sha256,
+            "method": "inline",
+            "size_bytes": len(body),
+            "ip": ip,
+        },
     )
     await db.commit()
 
@@ -557,6 +710,18 @@ async def delete_evidence(
         ip_address=ip,
         user_agent=ua,
     )
+    await record_audit(
+        db,
+        organization_id=blob.organization_id,
+        evidence_blob_id=blob.id,
+        actor_user_id=analyst.id,
+        action="evidence.soft_delete",
+        payload={
+            "sha256": blob.sha256,
+            "reason": body.reason,
+            "ip": ip,
+        },
+    )
     await db.commit()
     await db.refresh(blob)
     return blob
@@ -594,6 +759,169 @@ async def restore_evidence(
         ip_address=ip,
         user_agent=ua,
     )
+    await record_audit(
+        db,
+        organization_id=blob.organization_id,
+        evidence_blob_id=blob.id,
+        actor_user_id=analyst.id,
+        action="evidence.restore",
+        payload={"sha256": blob.sha256, "ip": ip},
+    )
     await db.commit()
     await db.refresh(blob)
     return blob
+
+
+# --- Agentic / chain-of-custody endpoints --------------------------------
+
+
+@router.get(
+    "/{blob_id}/audit-chain",
+    response_model=list[AuditChainEntryResponse],
+)
+async def get_audit_chain(
+    blob_id: uuid.UUID,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """Return every audit-chain row touching this blob, in sequence order."""
+    blob = await _load_org_blob(db, blob_id)
+    rows = await db.execute(
+        select(EvidenceAuditChain)
+        .where(EvidenceAuditChain.evidence_blob_id == blob.id)
+        .order_by(EvidenceAuditChain.sequence.asc())
+    )
+    return list(rows.scalars().all())
+
+
+class CoCNarrativeResponse(BaseModel):
+    blob_id: uuid.UUID
+    narrative: str
+    model_id: str | None
+    rendered_at: datetime
+
+
+@router.post(
+    "/{blob_id}/narrate-coc",
+    response_model=CoCNarrativeResponse,
+)
+async def narrate_chain_of_custody(
+    blob_id: uuid.UUID,
+    request: Request,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+    refresh: Annotated[bool, Query()] = False,
+):
+    """Generate a court-ready chain-of-custody narrative via the
+    Bridge LLM. Cached on the blob row; pass ``refresh=true`` to
+    re-run the agent.
+    """
+    blob = await _load_org_blob(db, blob_id)
+    cached = (blob.agent_summary or {}).get("coc_narrative")
+    cached_at = (blob.agent_summary or {}).get("coc_narrative_at")
+    if cached and not refresh:
+        return CoCNarrativeResponse(
+            blob_id=blob.id,
+            narrative=cached,
+            model_id=(blob.agent_summary or {}).get("coc_model_id"),
+            rendered_at=datetime.fromisoformat(cached_at)
+            if cached_at
+            else datetime.now(timezone.utc),
+        )
+
+    # Run the handler synchronously here — operators expect this
+    # endpoint to return the narrative inline, not wait for a
+    # queue tick. The handler itself is reused by the worker for
+    # batched re-rendering.
+    from src.agents.governance.evidence import render_coc_narrative
+
+    narrative, model_id = await render_coc_narrative(db, blob)
+    summary = dict(blob.agent_summary or {})
+    summary["coc_narrative"] = narrative
+    summary["coc_narrative_at"] = datetime.now(timezone.utc).isoformat()
+    summary["coc_model_id"] = model_id
+    blob.agent_summary = summary
+
+    ip, ua = _client_meta(request)
+    await record_audit(
+        db,
+        organization_id=blob.organization_id,
+        evidence_blob_id=blob.id,
+        actor_user_id=analyst.id,
+        action="evidence.coc_narrative_generated",
+        payload={"sha256": blob.sha256, "model_id": model_id, "ip": ip},
+    )
+    await db.commit()
+    await db.refresh(blob)
+    return CoCNarrativeResponse(
+        blob_id=blob.id,
+        narrative=narrative,
+        model_id=model_id,
+        rendered_at=datetime.now(timezone.utc),
+    )
+
+
+class SimilarHit(BaseModel):
+    id: uuid.UUID
+    sha256: str
+    md5: str | None
+    perceptual_hash: str | None
+    ssdeep: str | None
+    original_filename: str | None
+    content_type: str
+    size_bytes: int
+    distance: int | None
+    method: str
+    captured_at: datetime
+
+
+class SimilarResponse(BaseModel):
+    blob_id: uuid.UUID
+    method: str
+    neighbours: list[SimilarHit]
+    summary: str | None
+    model_id: str | None
+
+
+@router.get("/{blob_id}/similar", response_model=SimilarResponse)
+async def find_similar(
+    blob_id: uuid.UUID,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+):
+    """Return blobs that look like this one.
+
+    Strategy:
+        1. If the blob is an image with a perceptual hash, return
+           Hamming-distance neighbours (lower = more similar).
+        2. If the blob has an ssdeep digest, fall back to ssdeep
+           comparison.
+        3. Otherwise, fall back to SHA-256 prefix match (still useful
+           for detecting near-duplicate uploads).
+
+    Calls the similar-artefact agent on the way in to ensure the
+    perceptual / fuzzy hash is actually populated for *this* blob —
+    otherwise on a fresh upload the search would always return
+    nothing.
+    """
+    blob = await _load_org_blob(db, blob_id)
+    from src.agents.governance.evidence import (
+        ensure_similarity_hashes,
+        find_similar_blobs,
+    )
+
+    await ensure_similarity_hashes(db, blob)
+    await db.commit()
+    await db.refresh(blob)
+
+    method, hits, summary, model_id = await find_similar_blobs(
+        db, blob, limit=limit
+    )
+    return SimilarResponse(
+        blob_id=blob.id,
+        method=method,
+        neighbours=[SimilarHit(**h) for h in hits],
+        summary=summary,
+        model_id=model_id,
+    )

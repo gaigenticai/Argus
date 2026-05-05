@@ -29,6 +29,14 @@ const AuthContext = createContext<AuthContextValue>({
 
 const PUBLIC_PATHS = ["/login"];
 const ONBOARDING_PATH = "/onboarding/oss-tools";
+const WELCOME_PATH = "/welcome";
+
+// Don't bounce these paths through the welcome / OSS gates — they're
+// either part of the onboarding flow itself or escape hatches the
+// operator chose explicitly. Anything under /onboarding/* falls into
+// this set so the operator can finish the deeper wizard if they
+// already started one.
+const ONBOARDING_PREFIXES = ["/onboarding", "/welcome"];
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<UserResponse | null>(null);
@@ -66,22 +74,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       router.replace("/");
       return;
     }
-    // Admin first-login OSS onboarding gate. Only admins see it; the
-    // page itself decides whether to redirect back if the wizard is
-    // already complete (so we don't hit /onboarding/* on every render).
-    if (
-      user &&
-      user.role === "admin" &&
-      !isPublicPath &&
-      pathname !== ONBOARDING_PATH
-    ) {
+    // First-run product gate (precedes the OSS install gate). If
+    // the operator hasn't created an organization of their own yet
+    // AND we're not on a path that's already part of the onboarding
+    // flow, redirect to /welcome so they hit the "see Marsad work in
+    // 2 minutes" path before anything else. Demo-seed users
+    // (admin@argus.demo) skip this — their next_action comes back as
+    // ``welcome_demo`` and they land on / with a one-time banner.
+    const inOnboardingFlow = ONBOARDING_PREFIXES.some((p) => pathname.startsWith(p));
+    if (user && !isPublicPath && !inOnboardingFlow) {
       api
-        .ossOnboardingStatus()
+        .getOnboardingState()
         .then((s) => {
-          if (!s.complete) router.replace(ONBOARDING_PATH);
+          if (s.next_action === "quickstart") {
+            router.replace(WELCOME_PATH);
+            return;
+          }
+          // Admin first-login OSS onboarding gate. Only fires after
+          // the welcome gate clears so we never bounce between the
+          // two pages. ``/onboarding/oss-tools`` itself is in the
+          // onboarding-flow allowlist above.
+          if (user.role === "admin") {
+            api
+              .ossOnboardingStatus()
+              .then((oss) => {
+                if (!oss.complete) router.replace(ONBOARDING_PATH);
+              })
+              .catch(() => {
+                // Endpoint may not exist on older deployments.
+              });
+          }
         })
         .catch(() => {
-          // Endpoint may not exist on older deployments — fall through.
+          // /onboarding/state may not exist on older deployments —
+          // fall through to the OSS gate so behaviour is unchanged.
+          if (user.role === "admin" && pathname !== ONBOARDING_PATH) {
+            api
+              .ossOnboardingStatus()
+              .then((s) => {
+                if (!s.complete) router.replace(ONBOARDING_PATH);
+              })
+              .catch(() => {});
+          }
         });
     }
   }, [user, loading, isPublicPath, pathname, router]);

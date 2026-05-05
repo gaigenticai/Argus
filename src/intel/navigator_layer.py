@@ -171,9 +171,17 @@ async def build_alert_layer(
         )
     )).scalars().all()
 
+    # Same enum-coercion shim as below — SQLAlchemy may return the
+    # raw enum object for ``source`` depending on driver/version, which
+    # would render as ``AttachmentSource.TRIAGE_AGENT`` inside the
+    # f-string. Hoist the helper so both the technique comments and
+    # the layer-level description / metadata use the same coercion.
+    def _enum_value(v: Any) -> str:
+        return getattr(v, "value", None) or str(v)
+
     techniques: list[tuple[str, str]] = []
     for att in attachments:
-        comment = f"{att.source}"
+        comment = _enum_value(att.source)
         if att.note:
             comment += f": {att.note[:120]}"
         techniques.append((att.technique_external_id, comment))
@@ -197,12 +205,16 @@ async def build_alert_layer(
 
     enterprise, ics = _split_by_matrix(techniques)
 
+    cat = _enum_value(alert.category)
+    sev = _enum_value(alert.severity)
+    sta = _enum_value(alert.status)
+
     layer_name = f"Argus alert — {alert.title[:60]}"
     bits = [
         f"Alert {alert.id}",
-        f"category={alert.category}",
-        f"severity={alert.severity}",
-        f"status={alert.status}",
+        f"category={cat}",
+        f"severity={sev}",
+        f"status={sta}",
     ]
     if actors:
         bits.append("actors=" + ", ".join(a.primary_alias for a in actors))
@@ -216,8 +228,8 @@ async def build_alert_layer(
         matrix=matrix,
         metadata={
             "argus_alert_id": str(alert.id),
-            "argus_alert_category": alert.category,
-            "argus_alert_severity": alert.severity,
+            "argus_alert_category": cat,
+            "argus_alert_severity": sev,
             "argus_organization_id": str(alert.organization_id),
         },
     )

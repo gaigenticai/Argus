@@ -76,7 +76,7 @@ class LokinetCrawler(BaseCrawler):
     Site targets are configured per-deployment by the customer.
     """
 
-    name = "lokinet_crawler"
+    name = "lokinet_site"
     source_type = SourceType.LOKINET
 
     def __init__(

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import enum
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     DateTime,
@@ -73,12 +73,85 @@ class IOC(Base, UUIDMixin, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("threat_actors.id", ondelete="SET NULL")
     )
 
+    # Production fields
+    is_allowlisted: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    allowlist_reason: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confidence_half_life_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=365
+    )
+    enrichment_data: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    enrichment_fetched_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    source_feed: Mapped[str | None] = mapped_column(String(50))
+
     __table_args__ = (
         UniqueConstraint("ioc_type", "value", name="uq_ioc_type_value"),
         Index("ix_iocs_type", "ioc_type"),
         Index("ix_iocs_value", "value"),
         Index("ix_iocs_last_seen", "last_seen"),
         Index("ix_iocs_threat_actor", "threat_actor_id"),
+        Index("ix_iocs_allowlist", "is_allowlisted"),
+        Index("ix_iocs_expires", "expires_at"),
+        Index("ix_iocs_source_feed", "source_feed"),
+    )
+
+
+class IocSighting(Base, UUIDMixin):
+    """Per-occurrence audit log for an IOC.
+
+    Created whenever an IOC is observed in a new context (article, alert,
+    feed pull, manual entry). Powers the "where was this seen?" view in
+    the /iocs detail drawer.
+    """
+
+    __tablename__ = "ioc_sightings"
+
+    ioc_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("iocs.id", ondelete="CASCADE"), nullable=False
+    )
+    source: Mapped[str] = mapped_column(String(60), nullable=False)
+    source_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    source_url: Mapped[str | None] = mapped_column(String(2000))
+    seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    context: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        UniqueConstraint("ioc_id", "source", "source_id", "seen_at", name="uq_ioc_sighting"),
+        Index("ix_ioc_sightings_ioc", "ioc_id", "seen_at"),
+    )
+
+
+class IocAudit(Base, UUIDMixin):
+    """CRUD + state-change audit trail for IOCs."""
+
+    __tablename__ = "ioc_audit"
+
+    ioc_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("iocs.id", ondelete="CASCADE"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(String(40), nullable=False)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    before: Mapped[dict | None] = mapped_column(JSONB)
+    after: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    __table_args__ = (
+        Index("ix_ioc_audit_ioc", "ioc_id", "created_at"),
     )
 
 
@@ -101,11 +174,34 @@ class ThreatActor(Base, UUIDMixin, TimestampMixin):
     total_sightings: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     profile_data: Mapped[dict | None] = mapped_column(JSONB)  # extended metadata
 
+    # MITRE ATT&CK Group cross-reference + enriched profile
+    mitre_group_id: Mapped[str | None] = mapped_column(String(20))  # G0096
+    country_codes: Mapped[list] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
+    sectors_targeted: Mapped[list] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
+    regions_targeted: Mapped[list] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
+    malware_families: Mapped[list] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )
+    references: Mapped[list] = mapped_column(JSONB, default=list, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, default=0.7, nullable=False)
+
     iocs = relationship("IOC", backref="threat_actor", foreign_keys=[IOC.threat_actor_id])
 
     __table_args__ = (
         Index("ix_threat_actors_alias", "primary_alias"),
         Index("ix_threat_actors_risk", "risk_score"),
+        Index("ix_threat_actor_mitre_group_id", "mitre_group_id"),
+        Index(
+            "ix_threat_actor_sectors",
+            "sectors_targeted",
+            postgresql_using="gin",
+        ),
     )
 
 
@@ -137,64 +233,6 @@ class ActorSighting(Base, UUIDMixin, TimestampMixin):
 
 
 # --- Crawler Sources (DB-managed, not hardcoded) ---
-
-
-class CrawlerSourceType(str, enum.Enum):
-    TOR_FORUM = "tor_forum"
-    TOR_MARKETPLACE = "tor_marketplace"
-    I2P_EEPSITE = "i2p_eepsite"
-    LOKINET_SITE = "lokinet_site"
-    TELEGRAM_CHANNEL = "telegram_channel"
-    STEALER_MARKET = "stealer_market"
-    RANSOMWARE_LEAK = "ransomware_leak"
-    UNDERGROUND_FORUM = "underground_forum"
-    MATRIX_ROOM = "matrix_room"
-
-
-class SourceHealthStatus(str, enum.Enum):
-    HEALTHY = "healthy"
-    DEGRADED = "degraded"
-    UNREACHABLE = "unreachable"
-    BLOCKED = "blocked"
-    UNKNOWN = "unknown"
-
-
-class CrawlerSource(Base, UUIDMixin, TimestampMixin):
-    __tablename__ = "crawler_sources"
-
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    source_type: Mapped[str] = mapped_column(
-        Enum(CrawlerSourceType, name="crawler_source_type", values_callable=lambda x: [m.value for m in x]),
-        nullable=False,
-    )
-    url: Mapped[str] = mapped_column(String(2048), nullable=False)
-    mirror_urls: Mapped[list | None] = mapped_column(ARRAY(String))
-    selectors: Mapped[dict | None] = mapped_column(JSONB)  # CSS selectors, API config, etc.
-    auth_config: Mapped[dict | None] = mapped_column(JSONB)  # login cookies, session tokens (encrypted at app layer)
-    language: Mapped[str] = mapped_column(String(10), default="en")
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    priority: Mapped[int] = mapped_column(Integer, default=50, nullable=False)  # 0=highest, 100=lowest
-    crawl_interval_minutes: Mapped[int] = mapped_column(Integer, default=30, nullable=False)
-    max_pages: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
-    last_crawled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    health_status: Mapped[str] = mapped_column(
-        Enum(SourceHealthStatus, name="source_health_status", values_callable=lambda x: [m.value for m in x]),
-        default=SourceHealthStatus.UNKNOWN.value,
-        nullable=False,
-    )
-    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    total_items_collected: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    notes: Mapped[str | None] = mapped_column(Text)
-    fallback_selectors: Mapped[dict | None] = mapped_column(JSONB)
-    last_structure_hash: Mapped[str | None] = mapped_column(String(64))
-    structure_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-    __table_args__ = (
-        Index("ix_crawler_sources_type", "source_type"),
-        Index("ix_crawler_sources_enabled", "enabled"),
-        Index("ix_crawler_sources_health", "health_status"),
-    )
 
 
 # --- Triage Feedback (human-in-the-loop) ---
@@ -242,6 +280,14 @@ class RetentionPolicy(Base, UUIDMixin, TimestampMixin):
     redact_pii: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     auto_cleanup_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_cleanup_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Governance: compliance mappings + deletion mode (Phase governance)
+    deletion_mode: Mapped[str] = mapped_column(
+        String(20), default="hard_delete", nullable=False
+    )  # hard_delete | soft_delete | anonymise
+    compliance_mappings: Mapped[list] = mapped_column(
+        ARRAY(String), default=list, nullable=False
+    )  # ["gdpr_art_5_1_e", "ccpa_1798_105", "hipaa_164_530_j", "pci_dss_3_1", ...]
+    description: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
         Index("ix_retention_org", "organization_id"),

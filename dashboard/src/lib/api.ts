@@ -14,6 +14,49 @@ if (!_API_BASE_RAW) {
 const API_BASE = _API_BASE_RAW;
 
 /**
+ * Server-sent-event URL — for ``EventSource`` only.
+ *
+ * Why this exists:
+ *   - Regular REST fetches use ``API_BASE`` which (in dev) is the
+ *     relative ``/api/v1`` path that Next.js rewrites to
+ *     ``http://localhost:8000``. That works fine for normal request /
+ *     response.
+ *   - SSE goes through the same rewrite **but Next.js dev (Turbopack
+ *     16.x) buffers the response body** so events queue up and the
+ *     browser's ``EventSource`` never sees them — the connection
+ *     opens (``onopen`` fires) but ``onmessage`` is silent. Direct
+ *     curl confirms the backend stream is healthy; the dev rewrite
+ *     is the choke point.
+ *
+ * Resolution order:
+ *   1. ``NEXT_PUBLIC_SSE_URL`` env var — operator override for prod
+ *      deployments where API + dashboard are on different origins.
+ *   2. If ``API_BASE`` is already absolute (``http(s)://...``), just
+ *      use it directly — the proxy isn't in the way.
+ *   3. Otherwise compute ``http://<window-host>:8000/api/v1`` at
+ *      runtime. This bypasses the Next dev rewrite cleanly.
+ *
+ * The SSE endpoint (``/activity/stream``) doesn't require auth so
+ * cross-port access doesn't need cookies; the URL is the only thing
+ * that has to differ.
+ */
+function _computeSseBase(): string {
+  const override = process.env.NEXT_PUBLIC_SSE_URL;
+  if (override) return override;
+  if (/^https?:\/\//i.test(API_BASE)) return API_BASE;
+  // API_BASE is path-relative (e.g. ``/api/v1``). In the browser we
+  // can derive the dev backend URL from window.location; on the
+  // server (SSR) we just return the relative path — there's no
+  // EventSource consumer there anyway.
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:8000${API_BASE}`;
+  }
+  return API_BASE;
+}
+
+export const SSE_BASE = _computeSseBase();
+
+/**
  * Audit D20 — flatten the global error envelope into a readable string.
  *
  * The backend wraps every error as ``{detail, request_id}`` (Audit D2).
@@ -347,6 +390,15 @@ export const api = {
       }),
   },
 
+  // Single-tenant current-org helpers — backed by /organizations/current
+  // (admin only PATCH). Used by Settings → Tech Stack.
+  getCurrentOrg: () => request<Org>("/organizations/current"),
+  updateCurrentOrg: (body: Partial<Pick<Org, "name" | "domains" | "keywords" | "industry" | "tech_stack">>) =>
+    request<Org>("/organizations/current", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
   // Alerts
   getAlerts: (params?: AlertParams) => {
     const qs = new URLSearchParams();
@@ -361,6 +413,16 @@ export const api = {
   getAlertStats: (orgId?: string) =>
     request<AlertStats>(`/alerts/stats${orgId ? `?org_id=${orgId}` : ""}`),
   getAlert: (id: string) => request<Alert>(`/alerts/${id}`),
+  getAlertSource: (id: string) =>
+    request<AlertSourceResponse>(`/alerts/${id}/source`),
+  getAlertAttribution: (id: string, limit = 5) =>
+    request<AlertAttributionResponse>(
+      `/alerts/${id}/attribution?limit=${limit}`,
+    ),
+  getAlertRelations: (id: string) =>
+    request<AlertRelationsResponse>(`/alerts/${id}/relations`),
+  getAlertThresholds: (id: string) =>
+    request<AlertThresholdsResponse>(`/alerts/${id}/thresholds`),
   updateAlert: (id: string, data: UpdateAlert) =>
     request<Alert>(`/alerts/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
 
@@ -368,25 +430,6 @@ export const api = {
   getCrawlers: () => request<Crawler[]>("/crawlers/"),
   triggerCrawler: (name: string) =>
     request(`/crawlers/${name}/run`, { method: "POST" }),
-
-  // Sources
-  getSources: (params?: { source_type?: string; enabled?: boolean; health_status?: string }) => {
-    const qs = new URLSearchParams();
-    if (params?.source_type) qs.set("source_type", params.source_type);
-    if (params?.enabled !== undefined) qs.set("enabled", String(params.enabled));
-    if (params?.health_status) qs.set("health_status", params.health_status);
-    return request<Source[]>(`/sources/?${qs.toString()}`);
-  },
-  getSource: (id: string) => request<Source>(`/sources/${id}`),
-  createSource: (data: SourceCreateRequest) =>
-    request<Source>("/sources/", { method: "POST", body: JSON.stringify(data) }),
-  updateSource: (id: string, data: SourceUpdateRequest) =>
-    request<Source>(`/sources/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
-  deleteSource: (id: string) =>
-    request<void>(`/sources/${id}`, { method: "DELETE" }),
-  testSource: (id: string) =>
-    request<SourceTestResult>(`/sources/${id}/test`, { method: "POST" }),
-  getSourceHealth: () => request<SourceHealthSummary>("/sources/health"),
 
   // IOCs
   getIOCs: (params?: IOCParams) => {
@@ -396,6 +439,7 @@ export const api = {
     if (params?.search) qs.set("value_search", params.search);
     if (params?.limit) qs.set("limit", String(params.limit));
     if (params?.offset) qs.set("offset", String(params.offset));
+    if (params?.source_alert_id) qs.set("source_alert_id", params.source_alert_id);
     return request<IOCItem[]>(`/iocs/?${qs.toString()}`);
   },
   getIOC: (id: string) => request<IOCItem>(`/iocs/${id}`),
@@ -404,15 +448,116 @@ export const api = {
     request<BulkSearchResult[]>("/iocs/search", { method: "POST", body: JSON.stringify({ values }) }),
   exportSTIX: () => requestBlob("/iocs/export/stix"),
   exportCSV: () => requestBlob("/iocs/export/csv"),
+  // Production write ops + enrichment + sightings + pivot
+  createIOC: (body: {
+    ioc_type: string;
+    value: string;
+    confidence?: number;
+    tags?: string[];
+    source_feed?: string;
+  }) =>
+    request<IOCItem>("/iocs/", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  editIOC: (
+    id: string,
+    body: {
+      confidence?: number;
+      tags?: string[];
+      is_allowlisted?: boolean;
+      allowlist_reason?: string;
+      expires_at?: string | null;
+      confidence_half_life_days?: number;
+    },
+  ) =>
+    request<IOCItem>(`/iocs/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteIOC: (id: string) =>
+    request<void>(`/iocs/${id}`, { method: "DELETE" }),
+  toggleAllowlist: (id: string, on: boolean, reason?: string) => {
+    const qs = new URLSearchParams({ on: String(on) });
+    if (reason) qs.set("reason", reason);
+    return request<IOCItem>(`/iocs/${id}/allowlist?${qs.toString()}`, {
+      method: "POST",
+    });
+  },
+  enrichIOC: (id: string) =>
+    request<IOCItem>(`/iocs/${id}/enrich`, { method: "POST" }),
+  getIOCSightings: (id: string, limit = 100) =>
+    request<{
+      id: string;
+      ioc_id: string;
+      source: string;
+      source_id: string | null;
+      source_url: string | null;
+      seen_at: string;
+      context: Record<string, unknown>;
+      created_at: string;
+    }[]>(`/iocs/${id}/sightings?limit=${limit}`),
+  getIOCPivot: (id: string) =>
+    request<{
+      ioc_id: string;
+      related_via_articles: IOCItem[];
+      related_via_actor: IOCItem[];
+      articles: { id: string; title: string; url: string }[];
+    }>(`/iocs/${id}/pivot`),
+  getIOCDefanged: (id: string) =>
+    request<{ value: string; defanged: string }>(`/iocs/${id}/defang`),
+  bulkImportIOCs: (rows: Array<{
+    ioc_type: string;
+    value: string;
+    confidence?: number;
+    tags?: string[];
+    source_feed?: string;
+  }>) =>
+    request<{ inserted: number; updated: number; errors: string[] }>(
+      "/iocs/import",
+      { method: "POST", body: JSON.stringify({ rows }) },
+    ),
+  decayIOCs: () => request<{ decayed: number; sunsetted: number; total_evaluated: number }>("/iocs/decay", { method: "POST" }),
+  getIOCAudit: (id: string, limit = 50) =>
+    request<{
+      id: string;
+      action: string;
+      user_id: string | null;
+      before: Record<string, unknown> | null;
+      after: Record<string, unknown> | null;
+      created_at: string;
+    }[]>(`/iocs/${id}/audit?limit=${limit}`),
 
   // Actors
-  getActors: (params?: { limit?: number; offset?: number; search?: string }) => {
+  getActors: (params?: {
+    limit?: number;
+    offset?: number;
+    search?: string;
+    sector?: string;
+    region?: string;
+    country?: string;
+    technique?: string;
+    confidence_min?: number;
+    has_mitre_id?: boolean;
+    risk_score_min?: number;
+  }) => {
     const qs = new URLSearchParams();
     if (params?.limit) qs.set("limit", String(params.limit));
     if (params?.offset) qs.set("offset", String(params.offset));
     if (params?.search) qs.set("search", params.search);
+    if (params?.sector) qs.set("sector", params.sector);
+    if (params?.region) qs.set("region", params.region);
+    if (params?.country) qs.set("country", params.country);
+    if (params?.technique) qs.set("technique", params.technique);
+    if (params?.confidence_min !== undefined) qs.set("confidence_min", String(params.confidence_min));
+    if (params?.has_mitre_id !== undefined) qs.set("has_mitre_id", String(params.has_mitre_id));
+    if (params?.risk_score_min !== undefined) qs.set("risk_score_min", String(params.risk_score_min));
     return request<ThreatActor[]>(`/actors/?${qs.toString()}`);
   },
+  importActorsFromMitre: () =>
+    request<{ written: number }>("/actors/import-from-mitre", { method: "POST" }),
+  exportActorStix: async (id: string): Promise<Record<string, unknown>> =>
+    request<Record<string, unknown>>(`/actors/${id}/stix`),
   getActor: (id: string) => request<ThreatActorDetail>(`/actors/${id}`),
   updateActor: (id: string, data: Partial<ThreatActor>) =>
     request<ThreatActor>(`/actors/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
@@ -605,6 +750,76 @@ export const api = {
   },
   getAssetSchemas: () => request<Record<string, unknown>>("/assets/types/schema"),
 
+  // Domain management on an org (list / add / remove). Each domain
+  // tracks its own verification state — see ``domainVerification``.
+  orgDomains: {
+    list: (orgId: string) =>
+      request<OrgDomainListItem[]>(`/organizations/${orgId}/domains`),
+    add: (orgId: string, domain: string, makePrimary = false) =>
+      request<OrgDomainListItem[]>(`/organizations/${orgId}/domains`, {
+        method: "POST",
+        body: JSON.stringify({ domain, make_primary: makePrimary }),
+      }),
+    remove: (orgId: string, domain: string) =>
+      request<OrgDomainListItem[]>(
+        `/organizations/${orgId}/domains/${encodeURIComponent(domain)}`,
+        { method: "DELETE" },
+      ),
+  },
+
+  // Operator-curated monitoring scope: which Telegram channels to
+  // scrape and which email addresses to look up against breach
+  // corpora. Both are stored on ``Organization.settings`` and read by
+  // the production workers (telegram_monitor + the credential checker).
+  monitoredSources: {
+    get: () =>
+      request<MonitoredSourcesResponse>("/organizations/current/monitored-sources"),
+    update: (body: { telegram_channels: string[]; breach_emails: string[] }) =>
+      request<MonitoredSourcesResponse>("/organizations/current/monitored-sources", {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }),
+  },
+
+  // Domain ownership verification — DNS TXT or HTTP-file challenge.
+  // Backend gates discovery + triage when
+  // ``ARGUS_REQUIRE_DOMAIN_VERIFICATION=true``; frontend always shows
+  // the banner so even on demo deployments operators see how the
+  // proof-of-ownership step would work.
+  domainVerification: {
+    status: (orgId: string, domain: string) =>
+      request<DomainVerificationStatus>(
+        `/organizations/${orgId}/verification?domain=${encodeURIComponent(domain)}`,
+      ),
+    request: (orgId: string, domain: string) =>
+      request<DomainVerificationStatus>(
+        `/organizations/${orgId}/verification/request?domain=${encodeURIComponent(domain)}`,
+        { method: "POST" },
+      ),
+    check: (orgId: string, domain: string) =>
+      request<DomainVerificationCheck>(
+        `/organizations/${orgId}/verification/check?domain=${encodeURIComponent(domain)}`,
+        { method: "POST" },
+      ),
+  },
+
+  // First-run quickstart — minimal "see the AI work in 2 minutes"
+  // path. The 5-step session-based wizard below is the deeper rollout
+  // tool for serious onboarding. Both are reachable via /onboarding,
+  // but a fresh login goes through quickstart first.
+  getOnboardingState: () =>
+    request<OnboardingState>("/onboarding/state"),
+  quickstart: (data: {
+    org_name: string;
+    primary_domain: string;
+    brand_keyword: string;
+    industry?: string;
+  }) =>
+    request<QuickstartResponse>("/onboarding/quickstart", {
+      method: "POST",
+      body: JSON.stringify(data),
+    }),
+
   // Onboarding (Phase 0.2)
   createOnboardingSession: (data: { organization_id?: string; notes?: string }) =>
     request<OnboardingSessionRecord>("/onboarding/sessions", {
@@ -657,7 +872,23 @@ export const api = {
   triggerFeed: (name: string) =>
     request<FeedTriggerResponse>("/feeds/" + name + "/trigger", { method: "POST" }),
   triggerFeedTriage: (hours: number = 6) =>
-    request<{ message: string; status: string }>(`/feeds/triage?hours=${hours}`, { method: "POST" }),
+    request<{ message: string; status: string; previous_run_id: string | null }>(
+      `/feeds/triage?hours=${hours}`,
+      { method: "POST" },
+    ),
+  getLatestTriageRun: () => request<TriageRunSummary | null>("/feeds/triage/latest"),
+  getDashboardExposure: () => request<DashboardExposure>("/dashboard/exposure"),
+  getFeedEntries: (feedName: string, opts?: { limit?: number; severity?: string }) => {
+    const qs = new URLSearchParams();
+    if (opts?.limit) qs.set("limit", String(opts.limit));
+    if (opts?.severity) qs.set("severity", opts.severity);
+    const q = qs.toString();
+    return request<FeedEntriesResponse>(`/feeds/${encodeURIComponent(feedName)}/entries${q ? `?${q}` : ""}`);
+  },
+  getFeedStats: (feedName: string) =>
+    request<FeedStatsResponse>(`/feeds/${encodeURIComponent(feedName)}/stats`),
+  getLayerSummary: (layer: string) =>
+    request<LayerSummaryResponse>(`/feeds/layers/${encodeURIComponent(layer)}/summary`),
   backfillGeolocation: () =>
     request<{ message: string; status: string }>("/feeds/backfill-geo", { method: "POST" }),
 
@@ -695,6 +926,34 @@ export const api = {
         `/investigations/${id}/promote`,
         { method: "POST" },
       ),
+    rerun: (id: string, extra_context?: string) =>
+      request<{ id: string; status: string; alert_id: string }>(
+        `/investigations/${id}/rerun`,
+        {
+          method: "POST",
+          body: JSON.stringify(extra_context ? { extra_context } : {}),
+        },
+      ),
+    approvePlan: (id: string, plan?: InvestigationPlanStep[]) =>
+      request<{ id: string; status: string; alert_id: string }>(
+        `/investigations/${id}/approve-plan`,
+        {
+          method: "POST",
+          body: JSON.stringify(plan ? { plan } : {}),
+        },
+      ),
+    stats: (days = 30) =>
+      request<InvestigationStatsResponse>(
+        `/investigations/stats?days=${days}`,
+      ),
+    compare: (aId: string, bId: string) =>
+      request<InvestigationCompareDiff>(
+        `/investigations/compare?ids=${aId},${bId}`,
+      ),
+    /** Absolute SSE URL — caller passes to EventSource. Routes through
+     *  the same SSE_BASE the activity stream uses so dev rewrites
+     *  don't buffer the response. */
+    streamUrl: (id: string) => `${SSE_BASE}/investigations/${id}/stream`,
   },
 
   agents: {
@@ -714,10 +973,55 @@ export const api = {
       request<HuntListItem[]>(`/threat-hunts${_qs(params)}`),
     get: (id: string) =>
       request<HuntDetail>(`/threat-hunts/${id}`),
-    create: () =>
-      request<{ id: string; status: string }>(`/threat-hunts`, {
+    create: (templateId?: string) =>
+      request<{ id: string; status: string }>(
+        `/threat-hunts${templateId ? `?template_id=${templateId}` : ""}`,
+        { method: "POST" },
+      ),
+    listTemplates: (organizationId?: string) =>
+      request<{
+        id: string;
+        organization_id: string | null;
+        name: string;
+        hypothesis: string;
+        description: string | null;
+        methodology: string;
+        mitre_technique_ids: string[];
+        data_sources: string[];
+        tags: string[];
+        is_global: boolean;
+      }[]>(`/threat-hunts/templates${organizationId ? `?organization_id=${organizationId}` : ""}`),
+    seedTemplates: () =>
+      request<{ inserted: number; updated: number; total: number }>(
+        "/threat-hunts/templates/seed-builtins",
+        { method: "POST" },
+      ),
+    listNotes: (runId: string) =>
+      request<{ id: string; body: string; author_user_id: string | null; created_at: string }[]>(
+        `/threat-hunts/${runId}/notes`,
+      ),
+    addNote: (runId: string, body: string) =>
+      request<{ id: string; body: string }>(`/threat-hunts/${runId}/notes`, {
         method: "POST",
+        body: JSON.stringify({ body }),
       }),
+    transition: (runId: string, next_state: string, reason?: string) =>
+      request<HuntDetail>(`/threat-hunts/${runId}/transition`, {
+        method: "POST",
+        body: JSON.stringify({ next_state, reason }),
+      }),
+    assign: (runId: string, user_id: string | null) =>
+      request<HuntDetail>(`/threat-hunts/${runId}/assign`, {
+        method: "POST",
+        body: JSON.stringify({ user_id }),
+      }),
+    escalate: (runId: string, opts?: { finding_indices?: number[]; case_title?: string }) =>
+      request<{ case_id: string; title: string }>(`/threat-hunts/${runId}/escalate`, {
+        method: "POST",
+        body: JSON.stringify(opts || {}),
+      }),
+    report: (runId: string) =>
+      request<{ markdown: string }>(`/threat-hunts/${runId}/report`),
   },
 
   caseCopilot: {
@@ -737,6 +1041,7 @@ export const api = {
         already_applied: boolean;
         mitre_attached: number;
         comment_added: boolean;
+        playbooks_queued: number;
       }>(`/copilot-runs/${runId}/apply`, { method: "POST" }),
   },
 
@@ -767,6 +1072,31 @@ export const api = {
         method: "POST",
         body: JSON.stringify(body),
       }),
+    rerun: (id: string, extra_context?: string) =>
+      request<{ id: string; status: string; suspect_domain_id: string }>(
+        `/brand-actions/${id}/rerun`,
+        {
+          method: "POST",
+          body: JSON.stringify(extra_context ? { extra_context } : {}),
+        },
+      ),
+    approvePlan: (id: string, plan?: InvestigationPlanStep[]) =>
+      request<{ id: string; status: string; suspect_domain_id: string }>(
+        `/brand-actions/${id}/approve-plan`,
+        {
+          method: "POST",
+          body: JSON.stringify(plan ? { plan } : {}),
+        },
+      ),
+    stats: (days = 30) =>
+      request<BrandActionStatsResponse>(
+        `/brand-actions/stats?days=${days}`,
+      ),
+    compare: (aId: string, bId: string) =>
+      request<BrandActionCompareDiff>(
+        `/brand-actions/compare?ids=${aId},${bId}`,
+      ),
+    streamUrl: (id: string) => `${SSE_BASE}/brand-actions/${id}/stream`,
   },
 
   cases: {
@@ -880,6 +1210,47 @@ export const api = {
           min_similarity: body.min_similarity,
         }),
       }),
+    // -- Subsidiary allowlist (T78) -----------------------------------
+    listAllowlist: (organizationId: string) =>
+      request<BrandAllowlistEntry[]>(
+        `/brand/allowlist?organization_id=${organizationId}`,
+      ),
+    createAllowlist: (body: {
+      organization_id: string;
+      pattern: string;
+      reason?: string;
+    }) =>
+      request<BrandAllowlistEntry>("/brand/allowlist", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    deleteAllowlist: (id: string) =>
+      request<void>(`/brand/allowlist/${id}`, { method: "DELETE" }),
+    sweepAllowlist: (organizationId: string) =>
+      request<BrandAllowlistSweepResponse>(
+        `/brand/allowlist/sweep?organization_id=${organizationId}`,
+        { method: "POST" },
+      ),
+    // -- Re-probe scheduler queue (T80) -------------------------------
+    listScheduledProbes: (
+      organizationId: string,
+      limit = 100,
+    ) =>
+      request<BrandScheduledProbe[]>(
+        `/brand/probes/scheduled?organization_id=${organizationId}&limit=${limit}`,
+      ),
+    /** Lazy WHOIS lookup for a suspect (T91). Cached server-side
+     *  for 24h; pass refresh=true to force a fresh WHOIS. */
+    getSuspectWhois: (suspectId: string, refresh = false) =>
+      request<BrandSuspectWhois>(
+        `/brand/suspects/${suspectId}/whois${refresh ? "?refresh=true" : ""}`,
+      ),
+    /** Campaign clustering — groups open suspects by shared
+     *  nameserver / IP / matched_term (T92). */
+    listSuspectClusters: (organizationId: string, minSize = 2) =>
+      request<{ clusters: BrandSuspectCluster[] }>(
+        `/brand/suspects/clusters?organization_id=${organizationId}&min_size=${minSize}`,
+      ),
   },
 
   easm: {
@@ -910,14 +1281,63 @@ export const api = {
         method: "POST",
         body: JSON.stringify(body),
       }),
+    linkExposureAsset: (id: string, body: ExposureLinkAssetPayload) =>
+      request<ExposureResponse>(`/easm/exposures/${id}/link-asset`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    triageExposures: (orgId: string, body?: ExposureTriagePayload) =>
+      request<ExposureTriageResponse>(
+        `/easm/exposures/triage?organization_id=${orgId}`,
+        { method: "POST", body: JSON.stringify(body || {}) },
+      ),
+  },
+
+  surface: {
+    listAssets: (params: SurfaceAssetsParams) =>
+      request<SurfaceAsset[]>(`/surface/assets${_qs(params)}`),
+    getAsset: (id: string) =>
+      request<SurfaceAssetDetail>(`/surface/assets/${id}`),
+    listAssetExposures: (id: string, state?: string) =>
+      request<SurfaceAssetExposure[]>(
+        `/surface/assets/${id}/exposures${state ? `?state=${state}` : ""}`,
+      ),
+    listChanges: (params: SurfaceChangesParams) =>
+      request<SurfaceChange[]>(`/surface/changes${_qs(params)}`),
+    recomputeRisk: (orgId: string) =>
+      request<{ updated: number; total_assets: number }>(
+        "/surface/recompute-risk",
+        {
+          method: "POST",
+          body: JSON.stringify({ organization_id: orgId }),
+        },
+      ),
+    classify: (
+      orgId: string,
+      opts?: {
+        use_llm?: boolean;
+        only_unclassified?: boolean;
+        asset_ids?: string[];
+      },
+    ) =>
+      request<SurfaceClassifyResponse>("/surface/classify", {
+        method: "POST",
+        body: JSON.stringify({ organization_id: orgId, ...(opts || {}) }),
+      }),
+    stats: (orgId: string) =>
+      request<SurfaceStats>(`/surface/stats?organization_id=${orgId}`),
   },
 
   tprm: {
-    seedTemplates: () =>
-      request<TprmTemplateResponse[]>("/tprm/templates/seed-builtins", {
-        method: "POST",
-      }),
-    listTemplates: () => request<TprmTemplateResponse[]>("/tprm/templates"),
+    seedTemplates: (orgId: string) =>
+      request<TprmTemplateResponse[]>(
+        `/tprm/templates/seed-builtins?organization_id=${orgId}`,
+        { method: "POST" },
+      ),
+    listTemplates: (orgId?: string) =>
+      request<TprmTemplateResponse[]>(
+        orgId ? `/tprm/templates?organization_id=${orgId}` : "/tprm/templates",
+      ),
     getTemplate: (id: string) =>
       request<TprmTemplateResponse>(`/tprm/templates/${id}`),
     createTemplate: (body: TprmTemplateCreatePayload) =>
@@ -957,6 +1377,84 @@ export const api = {
         `/tprm/onboarding/${workflowId}/transition`,
         { method: "POST", body: JSON.stringify(body) },
       ),
+    // --- TPRM full-audit additions --------------------------------
+    collectPosture: (orgId: string, vendorAssetId: string) =>
+      request<Record<string, { score: number; evidence: unknown }>>(
+        "/tprm/posture/collect",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            organization_id: orgId,
+            vendor_asset_id: vendorAssetId,
+          }),
+        },
+      ),
+    listPosture: (vendorAssetId: string) =>
+      request<VendorPostureSignal[]>(`/tprm/posture/${vendorAssetId}`),
+    snapshots: (vendorAssetId: string, days = 180) =>
+      request<VendorScorecardSnapshotsResponse>(
+        `/tprm/scorecards/${vendorAssetId}/snapshots?days=${days}`,
+      ),
+    percentile: (vendorAssetId: string) =>
+      request<VendorPercentileResponse>(
+        `/tprm/scorecards/${vendorAssetId}/percentile`,
+      ),
+    execDashboard: (orgId: string) =>
+      request<TprmExecDashboard>(
+        `/tprm/exec-dashboard?organization_id=${orgId}`,
+      ),
+    listEvidence: (vendorAssetId: string) =>
+      request<VendorEvidenceFileResponse[]>(`/tprm/evidence/${vendorAssetId}`),
+    listContracts: (vendorAssetId: string) =>
+      request<VendorContractResponse[]>(`/tprm/contracts/${vendorAssetId}`),
+    autofillQuestionnaire: (instanceId: string, useLlm = true) =>
+      request<{ filled: number; skipped: number; total_questions: number; posture: unknown }>(
+        "/tprm/questionnaires/autofill",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            questionnaire_instance_id: instanceId,
+            use_llm: useLlm,
+          }),
+        },
+      ),
+    brief: (vendorAssetId: string, useLlm = true) =>
+      request<VendorBriefResponse>("/tprm/agents/brief", {
+        method: "POST",
+        body: JSON.stringify({
+          vendor_asset_id: vendorAssetId,
+          use_llm: useLlm,
+        }),
+      }),
+    playbook: (
+      vendorAssetId: string,
+      failingPillar: string,
+      useLlm = true,
+    ) =>
+      request<VendorPlaybookResponse>("/tprm/agents/playbook", {
+        method: "POST",
+        body: JSON.stringify({
+          vendor_asset_id: vendorAssetId,
+          failing_pillar: failingPillar,
+          use_llm: useLlm,
+        }),
+      }),
+    quarterlyHealthCheck: (orgId: string, dropThreshold = 20) =>
+      request<{
+        vendors_total: number;
+        computed: number;
+        drops_detected: Array<Record<string, unknown>>;
+      }>("/tprm/agents/quarterly-health-check", {
+        method: "POST",
+        body: JSON.stringify({
+          organization_id: orgId,
+          drop_threshold: dropThreshold,
+        }),
+      }),
+    portalToken: (instanceId: string) =>
+      request<{ instance_id: string; token: string }>(
+        `/tprm/portal/${instanceId}/token`,
+      ),
   },
 
   takedown: {
@@ -981,6 +1479,10 @@ export const api = {
       request<TakedownTicketResponse>(`/takedown/tickets/${id}/sync`, {
         method: "POST",
       }),
+    getTicketHistory: (id: string) =>
+      request<TakedownTicketHistoryResponse>(
+        `/takedown/tickets/${id}/history`
+      ),
   },
 
   exec: {
@@ -991,6 +1493,78 @@ export const api = {
     // board-meeting export.
     downloadPdf: (params: { organization_id: string; days?: number }) =>
       requestBlob(`/exec-summary${_qs(params)}`),
+    // CIO-grade enrichment endpoints — see src/api/routes/exec_briefing.py.
+    briefing: (params: { organization_id: string; force_refresh?: boolean }) =>
+      request<ExecBriefingResponse>(`/exec/briefing${_qs(params)}`, {
+        method: "POST",
+      }),
+    topRisks: (params: { organization_id: string; limit?: number }) =>
+      request<ExecTopRisksResponse>(`/exec/top-risks${_qs(params)}`),
+    changes: (params: { organization_id: string; window_days?: number }) =>
+      request<ExecChangesResponse>(`/exec/changes${_qs(params)}`),
+    compliance: (params: { organization_id: string }) =>
+      request<ExecComplianceResponse>(`/exec/compliance${_qs(params)}`),
+    suggestedActions: (params: { organization_id: string }) =>
+      request<ExecSuggestedActionsResponse>(`/exec/suggested-actions${_qs(params)}`),
+
+    // ── Playbook execution layer ─────────────────────────────────
+    playbookCatalog: (params: {
+      organization_id: string;
+      /** ``all`` (default) merges global + investigation; pass
+       *  ``global`` or ``investigation`` to filter to one surface. */
+      scope?: "global" | "investigation" | "all";
+    }) =>
+      request<PlaybookCatalogResponse>(`/exec/playbook-catalog${_qs(params)}`),
+    playbookPreview: (body: PlaybookPreviewPayload) =>
+      request<PlaybookPreviewResponse>("/exec/playbook-preview", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    playbookExecute: (body: PlaybookExecutePayload) =>
+      request<PlaybookExecutionResponse>("/exec/playbook-execute", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    playbookApprove: (body: { execution_id: string; note?: string }) =>
+      request<PlaybookExecutionResponse>("/exec/playbook-approve", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    playbookDeny: (body: { execution_id: string; reason: string }) =>
+      request<PlaybookExecutionResponse>("/exec/playbook-deny", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    playbookStepAdvance: (body: { execution_id: string }) =>
+      request<PlaybookExecutionResponse>("/exec/playbook-step-advance", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    playbookCancel: (body: { execution_id: string; reason?: string }) =>
+      request<PlaybookExecutionResponse>("/exec/playbook-cancel", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    playbookHistory: (params: {
+      organization_id: string;
+      status?: PlaybookStatus;
+      playbook_id?: string;
+      case_id?: string;
+      copilot_run_id?: string;
+      limit?: number;
+      offset?: number;
+    }) => request<PlaybookHistoryResponse>(`/exec/playbook-history${_qs(params)}`),
+    playbookPendingApprovals: (params: {
+      organization_id: string;
+      limit?: number;
+    }) =>
+      request<PlaybookHistoryResponse>(
+        `/exec/playbook-pending-approvals${_qs(params)}`,
+      ),
+    playbookExecution: (executionId: string) =>
+      request<PlaybookExecutionResponse>(
+        `/exec/playbook-execution/${executionId}`,
+      ),
   },
 
   leakage: {
@@ -1014,7 +1588,9 @@ export const api = {
     ) =>
       request<CardLeakageResponse>(`/leakage/cards/${id}/state`, {
         method: "POST",
-        body: JSON.stringify(body),
+        // Backend expects ``to_state`` (the column name); accept either
+        // shape from callers and normalise here.
+        body: JSON.stringify({ to_state: body.state, reason: body.reason }),
       }),
     listDlpPolicies: (organizationId: string) =>
       request<DlpPolicyResponse[]>(
@@ -1045,8 +1621,38 @@ export const api = {
     ) =>
       request<DlpFindingResponse>(`/leakage/dlp/${id}/state`, {
         method: "POST",
-        body: JSON.stringify(body),
+        body: JSON.stringify({ to_state: body.state, reason: body.reason }),
       }),
+    draftTakedownDlp: (id: string) =>
+      request<TakedownDraftResponse>(`/leakage/dlp/${id}/draft-takedown`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+    draftTakedownCard: (id: string) =>
+      request<TakedownDraftResponse>(`/leakage/cards/${id}/draft-takedown`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+    findingAgentSummary: (id: string, kind?: "dlp" | "card") =>
+      request<AgentSummaryResponse>(
+        `/leakage/findings/${id}/agent-summary${
+          kind ? `?kind=${kind}` : ""
+        }`,
+      ),
+    runPolicyTune: (organizationId: string) =>
+      request<PolicyTuneResponse>("/leakage/policies/tune", {
+        method: "POST",
+        body: JSON.stringify({ organization_id: organizationId }),
+      }),
+    importBins: (organizationId: string | undefined, file: File) => {
+      const fd = new FormData();
+      if (organizationId) fd.append("organization_id", organizationId);
+      fd.append("file", file);
+      return requestMultipart<BinImportResponse>(
+        "/leakage/bins/import",
+        fd,
+      );
+    },
   },
 
   notifications: {
@@ -1094,6 +1700,45 @@ export const api = {
       requestPaginated<NotificationDeliveryResponse[]>(
         `/notifications/deliveries${_qs(params)}`
       ),
+    listInbox: (params?: { unread_only?: boolean; include_archived?: boolean; limit?: number }) =>
+      request<NotificationInboxItemResponse[]>(
+        `/notifications/inbox${_qs(params || {})}`,
+      ),
+    inboxUnreadCount: () => request<{ unread: number }>("/notifications/inbox/unread-count"),
+    markInboxRead: (id: string, unread = false) =>
+      request<NotificationInboxItemResponse>(
+        `/notifications/inbox/${id}/read${unread ? "?unread=true" : ""}`,
+        { method: "POST" },
+      ),
+    markAllInboxRead: () =>
+      request<{ updated: number }>("/notifications/inbox/read-all", { method: "POST" }),
+    archiveInbox: (id: string, unarchive = false) =>
+      request<NotificationInboxItemResponse>(
+        `/notifications/inbox/${id}/archive${unarchive ? "?unarchive=true" : ""}`,
+        { method: "POST" },
+      ),
+    getMyPreferences: () =>
+      request<NotificationPreferences>("/notifications/preferences/me"),
+    putMyPreferences: (body: NotificationPreferences) =>
+      request<NotificationPreferences>("/notifications/preferences/me", {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }),
+    dispatch: (body: {
+      organization_id: string;
+      kind: string;
+      severity: string;
+      title: string;
+      summary: string;
+      dedup_key?: string;
+      tags?: string[];
+      extra?: Record<string, unknown>;
+      dry_run?: boolean;
+    }) =>
+      request<NotificationDeliveryResponse[]>("/notifications/dispatch", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
   },
 
   intel: {
@@ -1162,19 +1807,221 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ reason }),
       }),
+    ingestCisaKev: () =>
+      request<{ inserted: number; updated: number; total: number }>(
+        "/news/advisories/ingest/cisa-kev",
+        { method: "POST" },
+      ),
+    triageAdvisory: (id: string, triage_state: string, assigned_to_user_id?: string) =>
+      request<AdvisoryResponse>(`/news/advisories/${id}/triage`, {
+        method: "POST",
+        body: JSON.stringify({ triage_state, assigned_to_user_id }),
+      }),
+    listAdvisoryComments: (id: string) =>
+      request<{ id: string; body: string; author_user_id: string | null; created_at: string }[]>(
+        `/news/advisories/${id}/comments`,
+      ),
+    addAdvisoryComment: (id: string, body: string) =>
+      request<{ id: string; body: string; created_at: string }>(
+        `/news/advisories/${id}/comments`,
+        { method: "POST", body: JSON.stringify({ body }) },
+      ),
+    listSubscriptions: (organizationId: string) =>
+      request<{
+        id: string;
+        organization_id: string;
+        user_id: string | null;
+        name: string;
+        severity_threshold: string;
+        kev_only: boolean;
+        sources: string[];
+        keyword_filters: string[];
+        active: boolean;
+      }[]>(`/news/advisories/subscriptions?organization_id=${organizationId}`),
+    createSubscription: (body: {
+      organization_id: string;
+      name: string;
+      severity_threshold?: string;
+      kev_only?: boolean;
+      sources?: string[];
+      keyword_filters?: string[];
+      active?: boolean;
+    }) =>
+      request<Record<string, unknown>>("/news/advisories/subscriptions", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    deleteSubscription: (id: string) =>
+      request<void>(`/news/advisories/subscriptions/${id}`, { method: "DELETE" }),
+    affectedAssets: (advisoryId: string, organizationId: string) =>
+      request<{ id: string; cve_ids: string[]; severity: string | null; asset_value: string | null; title: string | null }[]>(
+        `/news/advisories/${advisoryId}/affected?organization_id=${organizationId}`,
+      ),
+    seedFeedCatalog: () =>
+      request<{ inserted: number; updated: number; total: number }>("/news/feeds/seed-catalog", { method: "POST" }),
+    syncAllFeeds: (opts?: { only_due?: boolean; max_feeds?: number; process_bodies?: boolean }) => {
+      const qs = new URLSearchParams();
+      if (opts?.only_due !== undefined) qs.set("only_due", String(opts.only_due));
+      if (opts?.max_feeds) qs.set("max_feeds", String(opts.max_feeds));
+      if (opts?.process_bodies !== undefined) qs.set("process_bodies", String(opts.process_bodies));
+      return request<{ feeds: number; parsed: number; new: number; dup: number; iocs: number; techniques: number; errors: number }>(
+        `/news/feeds/sync-all?${qs.toString()}`,
+        { method: "POST" },
+      );
+    },
   },
 
   mitre: {
-    sync: () =>
-      request<MitreSyncReport>("/mitre/sync", { method: "POST" }),
+    sync: (matrix: "enterprise" | "mobile" | "ics" = "enterprise") =>
+      request<MitreSyncReport>("/mitre/sync", {
+        method: "POST",
+        body: JSON.stringify({ matrix }),
+      }),
     listSyncs: () => request<MitreSyncRow[]>("/mitre/syncs"),
     listTactics: () => request<MitreTacticResponse[]>("/mitre/tactics"),
-    listTechniques: (params?: { tactic?: string }) =>
+    listTechniques: (params?: {
+      tactic?: string;
+      matrix?: string;
+      include_subtechniques?: boolean;
+      q?: string;
+      limit?: number;
+    }) =>
       request<MitreTechniqueResponse[]>(`/mitre/techniques${_qs(params)}`),
     getTechnique: (externalId: string) =>
       request<MitreTechniqueResponse>(`/mitre/techniques/${externalId}`),
     listMitigations: () =>
       request<MitreMitigationResponse[]>("/mitre/mitigations"),
+    listGroups: (params?: { matrix?: string; sector?: string; country?: string; q?: string; limit?: number }) =>
+      request<{
+        id: string;
+        matrix: string;
+        external_id: string;
+        name: string;
+        aliases: string[];
+        description: string | null;
+        country_codes: string[];
+        sectors_targeted: string[];
+        regions_targeted: string[];
+        references: { source_name?: string; url: string; description?: string }[];
+        url: string | null;
+      }[]>(`/mitre/groups${_qs(params)}`),
+    getGroup: (externalId: string) =>
+      request<{
+        group: Record<string, unknown>;
+        techniques: string[];
+        software: string[];
+        campaigns: string[];
+      }>(`/mitre/groups/${externalId}`),
+    listSoftware: (params?: { matrix?: string; software_type?: "malware" | "tool"; q?: string; limit?: number }) =>
+      request<{
+        id: string;
+        matrix: string;
+        external_id: string;
+        name: string;
+        aliases: string[];
+        software_type: string;
+        description: string | null;
+        platforms: string[];
+        references: { source_name?: string; url: string }[];
+        url: string | null;
+      }[]>(`/mitre/software${_qs(params)}`),
+    listDataSources: (params?: { matrix?: string }) =>
+      request<{
+        id: string;
+        matrix: string;
+        external_id: string;
+        name: string;
+        description: string | null;
+        platforms: string[];
+        collection_layers: string[];
+        data_components: { name: string; description: string }[];
+        url: string | null;
+      }[]>(`/mitre/data-sources${_qs(params)}`),
+    listCampaigns: (params?: { matrix?: string }) =>
+      request<{
+        id: string;
+        matrix: string;
+        external_id: string;
+        name: string;
+        aliases: string[];
+        description: string | null;
+        first_seen: string | null;
+        last_seen: string | null;
+        url: string | null;
+      }[]>(`/mitre/campaigns${_qs(params)}`),
+    techniqueGroups: (externalId: string, matrix?: string) =>
+      request<{
+        id: string;
+        external_id: string;
+        name: string;
+        aliases: string[];
+        description: string | null;
+        country_codes: string[];
+      }[]>(`/mitre/techniques/${externalId}/groups${matrix ? `?matrix=${matrix}` : ""}`),
+    importActorsFromGroups: (organizationId: string) =>
+      request<{ written: number }>(`/mitre/import-actors?organization_id=${organizationId}`, {
+        method: "POST",
+      }),
+    listLayers: (organizationId: string) =>
+      request<{
+        id: string;
+        organization_id: string;
+        name: string;
+        description: string | null;
+        matrix: string;
+        technique_scores: Record<string, number>;
+        color_palette: Record<string, string>;
+        created_at: string;
+        updated_at: string;
+      }[]>(`/mitre/layers?organization_id=${organizationId}`),
+    createLayer: (body: {
+      organization_id: string;
+      name: string;
+      description?: string;
+      matrix?: string;
+      technique_scores: Record<string, number>;
+    }) =>
+      request<Record<string, unknown>>("/mitre/layers", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    updateLayer: (
+      id: string,
+      body: {
+        organization_id: string;
+        name: string;
+        description?: string;
+        matrix?: string;
+        technique_scores: Record<string, number>;
+      },
+    ) =>
+      request<Record<string, unknown>>(`/mitre/layers/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(body),
+      }),
+    deleteLayer: (id: string) =>
+      request<void>(`/mitre/layers/${id}`, { method: "DELETE" }),
+    exportNavigatorJson: (id: string) =>
+      request<Record<string, unknown>>(`/mitre/layers/${id}/navigator`),
+    listCoverage: (organizationId: string, matrix?: string) =>
+      request<{
+        id: string;
+        matrix: string;
+        technique_external_id: string;
+        score: number;
+        covered_by: string[];
+        notes: string | null;
+        updated_at: string;
+      }[]>(`/mitre/coverage?organization_id=${organizationId}${matrix ? `&matrix=${matrix}` : ""}`),
+    bulkUpsertCoverage: (body: {
+      organization_id: string;
+      matrix?: string;
+      entries: { technique_external_id: string; score: number; covered_by: string[]; notes?: string }[];
+    }) =>
+      request<{ upserted: number }>("/mitre/coverage/bulk", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
   },
 
   ratings: {
@@ -1269,6 +2116,21 @@ export const api = {
       request<EvidenceBlobResponse>(`/evidence/${id}/restore`, {
         method: "POST",
       }),
+    auditChain: (id: string) =>
+      request<EvidenceAuditChainEntry[]>(`/evidence/${id}/audit-chain`),
+    verifyChain: (organizationId: string) =>
+      request<EvidenceAuditChainVerify>(
+        `/evidence/audit-chain/verify${_qs({ organization_id: organizationId })}`,
+      ),
+    narrateCoc: (id: string, refresh: boolean = false) =>
+      request<EvidenceCoCNarrative>(
+        `/evidence/${id}/narrate-coc${_qs({ refresh: refresh ? "true" : undefined })}`,
+        { method: "POST" },
+      ),
+    similar: (id: string, limit: number = 10) =>
+      request<EvidenceSimilarResponse>(
+        `/evidence/${id}/similar${_qs({ limit })}`,
+      ),
   },
 
   retention: {
@@ -1286,16 +2148,80 @@ export const api = {
       }),
     deletePolicy: (id: string) =>
       request<void>(`/retention/${id}`, { method: "DELETE" }),
-    runCleanup: () =>
-      request<RetentionCleanupResult[]>("/retention/cleanup", {
-        method: "POST",
-      }),
+    runCleanup: (dryRun: boolean = false) =>
+      request<RetentionCleanupResult[]>(
+        `/retention/cleanup?dry_run=${dryRun ? "true" : "false"}`,
+        { method: "POST" },
+      ),
     stats: () => request<RetentionStats>("/retention/stats"),
     setLegalHold: (body: LegalHoldPayload) =>
       request<void>("/retention/legal-hold", {
         method: "POST",
         body: JSON.stringify(body),
       }),
+    listFrameworks: () =>
+      request<RetentionComplianceFramework[]>(
+        "/retention/compliance-frameworks",
+      ),
+    translateRegulation: (body: {
+      regulation_text: string;
+      organization_id?: string;
+    }) =>
+      request<RetentionRegulationSuggestion>(
+        "/retention/translate-regulation",
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+    listDsar: (params?: {
+      organization_id?: string;
+      status?: string;
+      limit?: number;
+    }) =>
+      request<DsarRequestResponse[]>(`/retention/dsar${_qs(params || {})}`),
+    getDsar: (id: string) =>
+      request<DsarRequestResponse>(`/retention/dsar/${id}`),
+    createDsar: (body: DsarCreatePayload) =>
+      request<DsarRequestResponse>("/retention/dsar", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    scanDsar: (id: string) =>
+      request<DsarRequestResponse>(`/retention/dsar/${id}/scan`, {
+        method: "POST",
+      }),
+    draftDsarResponse: (id: string) =>
+      request<DsarRequestResponse>(`/retention/dsar/${id}/draft-response`, {
+        method: "POST",
+      }),
+    updateDsarDraft: (id: string, draft: string) =>
+      request<DsarRequestResponse>(`/retention/dsar/${id}/draft`, {
+        method: "PATCH",
+        body: JSON.stringify({ draft_response: draft }),
+      }),
+    closeDsar: (
+      id: string,
+      body: { closed_reason: string; final_response?: string },
+    ) =>
+      request<DsarRequestResponse>(`/retention/dsar/${id}/close`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    generateAttestation: (params?: {
+      organization_id?: string;
+      period_days?: number;
+    }) =>
+      request<{
+        queued: boolean;
+        task_id: string;
+        status: string;
+        period_days: number;
+      }>(`/retention/attestation${_qs(params || {})}`, { method: "POST" }),
+    listAttestations: (params?: {
+      organization_id?: string;
+      limit?: number;
+    }) =>
+      request<RetentionAttestationResponse[]>(
+        `/retention/attestations${_qs(params || {})}`,
+      ),
   },
 
   social: {
@@ -1337,6 +2263,14 @@ export const api = {
       request<DmarcReportResponse>(`/dmarc/reports/${id}`),
     listRecords: (id: string) =>
       request<DmarcRecordResponse[]>(`/dmarc/reports/${id}/records`),
+    listForensic: (params: {
+      organization_id: string;
+      domain?: string;
+      limit?: number;
+    }) =>
+      request<DmarcForensicResponse[]>(`/dmarc/forensic${_qs(params)}`),
+    getForensic: (id: string) =>
+      request<DmarcForensicResponse>(`/dmarc/forensic/${id}`),
     runWizard: (
       domain: string,
       body: {
@@ -1351,6 +2285,34 @@ export const api = {
         method: "POST",
         body: JSON.stringify(body),
       }),
+    dnsCheck: (domain: string) =>
+      request<DmarcDnsCheckResponse>(
+        `/dmarc/check?domain=${encodeURIComponent(domain)}`,
+      ),
+    posture: (orgId: string) =>
+      request<DmarcPostureEntry[]>(`/dmarc/posture/${orgId}`),
+    trends: (
+      domain: string,
+      params: { organization_id: string; days?: number },
+    ) =>
+      request<DmarcTrendPoint[]>(
+        `/dmarc/trends/${encodeURIComponent(domain)}${_qs(params)}`,
+      ),
+    planRollout: (params: { organization_id: string; domain: string }) =>
+      request<DmarcPlanRolloutResponse>(`/dmarc/plan-rollout${_qs(params)}`, {
+        method: "POST",
+      }),
+    listMailboxConfigs: (organization_id?: string) =>
+      request<DmarcMailboxConfigResponse[]>(
+        `/dmarc/mailbox-config${organization_id ? `?organization_id=${organization_id}` : ""}`,
+      ),
+    upsertMailboxConfig: (body: DmarcMailboxConfigCreate) =>
+      request<DmarcMailboxConfigResponse>(`/dmarc/mailbox-config`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    deleteMailboxConfig: (id: string) =>
+      request<void>(`/dmarc/mailbox-config/${id}`, { method: "DELETE" }),
   },
 
   /* ─────────────────── Admin runtime configuration ─────────────────── */
@@ -1402,6 +2364,22 @@ export const api = {
 
     listFeedHealth: () =>
       request<FeedHealthEntry[]>("/admin/feed-health"),
+
+    platformReadiness: () =>
+      request<PlatformReadinessResponse>("/admin/platform-readiness"),
+
+    listIntegrations: () =>
+      request<IntegrationDef[]>("/admin/integrations"),
+
+    serviceInventory: () =>
+      request<ServiceInventoryResponse>("/admin/service-inventory"),
+
+    servicesForPage: (pageKey: string) =>
+      request<ServicesForPageResponse>(
+        `/admin/service-inventory/page/${encodeURIComponent(pageKey)}`,
+      ),
+    serviceCoverage: () =>
+      request<ServiceCoverageResponse>("/admin/service-coverage"),
     feedHealthHistory: (feedName: string, limit = 100) =>
       request<FeedHealthEntry[]>(
         `/admin/feed-health/${encodeURIComponent(feedName)}?limit=${limit}`,
@@ -1452,7 +2430,7 @@ export const api = {
 
 export type AppSettingValueType = "string" | "integer" | "float" | "boolean" | "json";
 export type AppSettingCategory =
-  | "fraud" | "impersonation" | "brand" | "rating" | "auto_case" | "crawler" | "general";
+  | "fraud" | "impersonation" | "brand" | "rating" | "auto_case" | "crawler" | "general" | "integrations";
 
 export interface AppSettingResponse {
   id: string;
@@ -1479,7 +2457,11 @@ export interface AppSettingUpsert {
 export type CrawlerKind =
   | "tor_forum" | "tor_marketplace" | "i2p_eepsite" | "lokinet_site"
   | "telegram_channel" | "matrix_room" | "forum"
-  | "ransomware_leak_group" | "stealer_marketplace";
+  | "ransomware_leak_group" | "stealer_marketplace"
+  // Generic operator-configured poller (RSS / JSON / HTML-CSS).
+  // No new Python class needed; configuration lives in the
+  // CrawlerTarget.config JSON.
+  | "custom_http";
 
 export interface CrawlerTargetResponse {
   id: string;
@@ -1512,6 +2494,113 @@ export interface CrawlerTargetUpdate {
 export type FeedHealthStatus =
   | "ok" | "unconfigured" | "auth_error" | "network_error"
   | "rate_limited" | "parse_error" | "disabled";
+
+export interface ServiceKeyField {
+  key: string;
+  env_var: string;
+  label: string;
+  source: "db" | "env" | "unset";
+  masked_value: string | null;
+}
+
+// 3-state taxonomy — every row in Settings → Services lands in one
+// of these. Engineering sub-reasons (auth_failed, schema_changed,
+// daemon_not_detected, ...) live in `sub_reason` and surface in the
+// evidence line, never as a separate pill.
+export type ServiceStatusValue = "ok" | "needs_key" | "not_installed";
+
+export interface ServiceInventoryEntry {
+  name: string;
+  category: string;
+  description: string;
+  requires: string[];
+  produces: string[];
+  produces_pages: string[];
+  key_fields: ServiceKeyField[];
+  no_oss_substitute: boolean;
+  legacy_only: boolean;
+  self_hosted: boolean;
+  self_host_install_hint: string | null;
+  // When set, this self-hosted entry can be installed via the
+  // /oss-tools/install endpoint. The merged Services tab uses this
+  // to render an inline Install button driven by ossStates.
+  oss_install_name: string | null;
+  source_file: string;
+  docs_url: string | null;
+  status: ServiceStatusValue;
+  sub_reason: string | null;
+  evidence: string;
+  last_observed_at: string | null;
+  last_rows_ingested: number | null;
+}
+
+export interface ServiceInventoryResponse {
+  categories: string[];
+  services: ServiceInventoryEntry[];
+  summary: Record<string, number>;
+  total: number;
+}
+
+// Coverage map — drives UI auto-hide. The dashboard sidebar and any
+// page that depends on a single data type checks `pages[<slug>]` to
+// decide whether to render. Reactive: as soon as the operator pastes
+// a key in Settings → Services, the corresponding entries flip true
+// and surfaces appear on the next refresh.
+export interface ServiceCoverageResponse {
+  pages: Record<string, boolean>;
+  categories: Record<string, boolean>;
+  ok_count: number;
+  total: number;
+}
+
+export interface ServicesForPageResponse {
+  page_key: string;
+  services: ServiceInventoryEntry[];
+  summary: Record<string, number>;
+  total: number;
+}
+
+export interface IntegrationField {
+  key: string;
+  env_var: string;
+  label: string;
+  type: "password" | "text";
+  source: "db" | "env" | "unset";
+  masked_value: string | null;
+}
+
+export interface IntegrationDef {
+  name: string;
+  label: string;
+  purpose: string;
+  cost_note: string | null;
+  help_url: string | null;
+  fields: IntegrationField[];
+  is_configured: boolean;
+}
+
+export interface PlatformReadinessItem {
+  severity: "blocker" | "warning" | "info";
+  category: string;
+  title: string;
+  detail: string;
+  href: string | null;
+}
+
+export interface PlatformReadinessCategory {
+  key: string;
+  label: string;
+  score: number;
+  summary: string;
+  items: PlatformReadinessItem[];
+}
+
+export interface PlatformReadinessResponse {
+  overall_score: number;
+  categories: PlatformReadinessCategory[];
+  blockers: PlatformReadinessItem[];
+  generated_at: string;
+}
 
 export interface FeedHealthEntry {
   id: string;
@@ -1557,6 +2646,9 @@ export interface DmarcReportResponse {
   quarantine_count: number;
   reject_count: number;
   parsed: Record<string, unknown>;
+  posture_score: Record<string, unknown> | null;
+  rca: Record<string, unknown> | null;
+  agent_summary: Record<string, unknown> | null;
   raw_xml_sha256: string | null;
   created_at: string;
   updated_at: string;
@@ -1585,6 +2677,88 @@ export interface DmarcWizardResponse {
   rua_endpoint: string;
   ruf_endpoint: string | null;
   rationale: string;
+}
+
+export interface DmarcForensicResponse {
+  id: string;
+  organization_id: string;
+  domain: string;
+  feedback_type: string | null;
+  arrival_date: string | null;
+  source_ip: string | null;
+  reported_domain: string | null;
+  original_envelope_from: string | null;
+  original_envelope_to: string | null;
+  original_mail_from: string | null;
+  original_rcpt_to: string | null;
+  auth_failure: string | null;
+  delivery_result: string | null;
+  dkim_domain: string | null;
+  dkim_selector: string | null;
+  spf_domain: string | null;
+  raw_headers: string | null;
+  extras: Record<string, unknown>;
+  agent_summary: Record<string, unknown> | null;
+  received_at: string;
+}
+
+export interface DmarcDnsCheckResponse {
+  domain: string;
+  record_present: boolean;
+  raw_record: string | null;
+  parsed_tags: Record<string, string>;
+  warnings: string[];
+  bimi_present: boolean;
+  mta_sts_present: boolean;
+  tls_rpt_present: boolean;
+  age_unknown_or_seconds: number | null;
+  recommendations: string[];
+}
+
+export interface DmarcPostureEntry {
+  domain: string;
+  score: number;
+  components: Record<string, number | string>;
+  computed_at: string;
+}
+
+export interface DmarcTrendPoint {
+  day: string;
+  total: number;
+  passed: number;
+  pass_pct: number;
+}
+
+export interface DmarcPlanRolloutResponse {
+  task_id: string;
+  status: string;
+  markdown: string | null;
+  alignment_pct: number | null;
+  current_policy: string | null;
+  ruf_count: number | null;
+}
+
+export interface DmarcMailboxConfigResponse {
+  id: string;
+  organization_id: string;
+  host: string;
+  port: number;
+  username: string;
+  folder: string;
+  enabled: boolean;
+  last_seen_uid: number | null;
+  last_polled_at: string | null;
+  last_error: string | null;
+}
+
+export interface DmarcMailboxConfigCreate {
+  organization_id: string;
+  host: string;
+  port?: number;
+  username: string;
+  password: string;
+  folder?: string;
+  enabled?: boolean;
 }
 
 // Auth Types
@@ -1681,79 +2855,6 @@ export interface AuditStatsResponse {
   actions_breakdown: Record<string, number>;
 }
 
-// Source Types
-export interface Source {
-  id: string;
-  name: string;
-  source_type: string;
-  url: string;
-  mirror_urls: string[] | null;
-  selectors: Record<string, unknown> | null;
-  auth_config: Record<string, unknown> | null;
-  language: string;
-  enabled: boolean;
-  priority: number;
-  crawl_interval_minutes: number;
-  max_pages: number;
-  last_crawled_at: string | null;
-  last_success_at: string | null;
-  health_status: string;
-  consecutive_failures: number;
-  total_items_collected: number;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface SourceCreateRequest {
-  name: string;
-  source_type: string;
-  url: string;
-  mirror_urls?: string[];
-  selectors?: Record<string, unknown>;
-  auth_config?: Record<string, unknown>;
-  language?: string;
-  enabled?: boolean;
-  priority?: number;
-  crawl_interval_minutes?: number;
-  max_pages?: number;
-  notes?: string;
-}
-
-export interface SourceUpdateRequest {
-  name?: string;
-  url?: string;
-  mirror_urls?: string[];
-  selectors?: Record<string, unknown>;
-  auth_config?: Record<string, unknown>;
-  language?: string;
-  enabled?: boolean;
-  priority?: number;
-  crawl_interval_minutes?: number;
-  max_pages?: number;
-  notes?: string;
-}
-
-export interface SourceTestResult {
-  reachable: boolean;
-  status_code: number | null;
-  response_time_ms: number | null;
-  content_preview: string | null;
-  error: string | null;
-  blocked: boolean;
-}
-
-export interface SourceHealthSummary {
-  total: number;
-  healthy: number;
-  degraded: number;
-  unreachable: number;
-  blocked: number;
-  unknown: number;
-  enabled: number;
-  disabled: number;
-}
-
 // IOC Types
 export interface IOCItem {
   id: string;
@@ -1768,6 +2869,13 @@ export interface IOCItem {
   source_alert_id: string | null;
   source_raw_intel_id: string | null;
   threat_actor_id: string | null;
+  is_allowlisted?: boolean;
+  allowlist_reason?: string | null;
+  expires_at?: string | null;
+  confidence_half_life_days?: number;
+  enrichment_data?: Record<string, unknown>;
+  enrichment_fetched_at?: string | null;
+  source_feed?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -1778,6 +2886,7 @@ export interface IOCParams {
   search?: string;
   limit?: number;
   offset?: number;
+  source_alert_id?: string;
 }
 
 export interface BulkSearchResult {
@@ -1807,6 +2916,13 @@ export interface ThreatActor {
   last_seen: string;
   total_sightings: number;
   profile_data: Record<string, unknown> | null;
+  mitre_group_id?: string | null;
+  country_codes?: string[];
+  sectors_targeted?: string[];
+  regions_targeted?: string[];
+  malware_families?: string[];
+  references?: { source_name?: string; url: string; description?: string; external_id?: string }[];
+  confidence?: number;
   created_at: string;
 }
 
@@ -1840,7 +2956,11 @@ export interface Org {
   domains: string[];
   keywords: string[];
   industry: string | null;
-  tech_stack: Record<string, unknown> | null;
+  // tech_stack is a JSONB column; in practice every category maps
+  // to a list of vendor/product strings (see
+  // src/core/industry_defaults.py). Other shapes are tolerated by
+  // the backend but the dashboard only edits the string-list shape.
+  tech_stack: Record<string, string[]> | null;
 }
 
 export interface CreateOrg {
@@ -1912,6 +3032,92 @@ export interface AlertStats {
 export interface UpdateAlert {
   status?: string;
   analyst_notes?: string;
+  /** Analyst override — write the canonical wire string (e.g.
+   *  "exploit") for category and ("high"/"critical"/...) for
+   *  severity. Backend validates against the live enums and 422s
+   *  unknown values. ``override_reason`` is required server-side
+   *  whenever severity or category is set. */
+  severity?: string;
+  category?: string;
+  override_reason?: string;
+}
+
+export interface AttributionFactor {
+  name: string;
+  weight: number;
+  raw: number;
+  contribution: number;
+  detail: string | null;
+}
+
+export interface AttributionScore {
+  actor_id: string;
+  primary_alias: string;
+  aliases: string[];
+  confidence: number;
+  factors: AttributionFactor[];
+}
+
+export interface AlertAttributionResponse {
+  scores: AttributionScore[];
+}
+
+export interface RelatedCase {
+  id: string;
+  title: string;
+  state: string;
+  severity: string;
+  is_primary: boolean;
+  linked_at: string;
+}
+
+export interface RelatedTakedown {
+  id: string;
+  state: string;
+  partner: string;
+  target_kind: string;
+  target_identifier: string;
+  submitted_at: string;
+}
+
+export interface RelatedSighting {
+  id: string;
+  threat_actor_id: string;
+  actor_alias: string;
+  source_platform: string;
+  alias_used: string;
+  seen_at: string;
+}
+
+/** Triage confidence thresholds for the alert's org. Drives the
+ *  confidence-bar tier colours so the bar reflects the org's actual
+ *  configured cutoffs (org.settings.confidence_threshold) instead of
+ *  hardcoded magic numbers. */
+export interface AlertThresholdsResponse {
+  needs_review_below: number;
+  high_above: number;
+}
+
+/** Cross-table linkage for one alert. Drives the "Related" section
+ *  on the detail page. Empty arrays mean "nothing linked yet". */
+export interface AlertRelationsResponse {
+  cases: RelatedCase[];
+  takedowns: RelatedTakedown[];
+  sightings: RelatedSighting[];
+}
+
+/** Provenance for an alert — the raw intel item that produced it.
+ *  Returned by GET /alerts/{id}/source. 404s if the alert has no
+ *  raw_intel_id (legacy/synthetic) or if the source row was purged. */
+export interface AlertSourceResponse {
+  raw_intel_id: string;
+  source_type: string;
+  source_name: string | null;
+  source_url: string | null;
+  title: string | null;
+  author: string | null;
+  published_at: string | null;
+  collected_at: string;
 }
 
 export interface Crawler {
@@ -1919,6 +3125,19 @@ export interface Crawler {
   crawler_name: string;
   interval_seconds: number;
   last_run: string | null;
+  // Per-tick result from feed_health: ok / unconfigured /
+  // network_error / auth_error / etc. Null when the worker has
+  // never recorded a tick for this kind.
+  last_status: string | null;
+  last_detail: string | null;
+  /** Items collected — number of fresh ``RawIntel`` rows persisted
+   *  on the most recent tick. Decoupled from alerts_created. */
+  last_rows_ingested: number;
+  /** Alerts created — number of org-scoped alerts the triage step
+   *  emitted on top of those items. May be 0 even when items > 0,
+   *  e.g. a Telegram channel pulled 50 messages but none matched
+   *  any org's brand terms. */
+  last_alerts_created: number;
 }
 
 export interface Report {
@@ -1970,6 +3189,111 @@ export interface ThreatMapEntryDetail extends ThreatMapEntry {
   asn: string | null;
   feed_metadata: Record<string, unknown> | null;
   expires_at: string | null;
+}
+
+export interface FeedEntryRow {
+  id: string;
+  entry_type: string;
+  value: string;
+  label: string | null;
+  severity: string;
+  confidence: number;
+  country_code: string | null;
+  asn: string | null;
+  first_seen: string;
+  last_seen: string;
+  expires_at: string | null;
+}
+
+export interface FeedEntriesResponse {
+  feed_name: string;
+  layer: string;
+  total_returned: number;
+  entries: FeedEntryRow[];
+}
+
+export interface TypeCount {
+  entry_type: string;
+  count: number;
+}
+
+export interface CountryCount {
+  country_code: string;
+  count: number;
+}
+
+export interface FetchHealthRow {
+  status: string;          // ok | unconfigured | auth_error | network_error | rate_limited | parse_error | disabled
+  detail: string | null;
+  rows_ingested: number;
+  duration_ms: number | null;
+  observed_at: string;
+}
+
+export interface FeedStatsResponse {
+  feed_name: string;
+  layer: string;
+  total_entries: number;
+  active_entries: number;
+  by_type: TypeCount[];
+  by_country: CountryCount[];
+  iocs_promoted: number;
+  alerts_referencing: number;
+  latest_entry_at: string | null;
+  last_fetch: FetchHealthRow | null;
+  recent_fetches: FetchHealthRow[];
+}
+
+export interface FeedInLayer {
+  feed_name: string;
+  active_entry_count: number;
+  total_entry_count: number;
+  latest_entry_at: string | null;
+  enabled: boolean;
+}
+
+export interface LayerSummaryResponse {
+  layer: string;
+  display_name: string;
+  description: string | null;
+  color: string;
+  icon: string;
+  total_entries: number;
+  active_entries: number;
+  by_severity: TypeCount[];
+  by_country: CountryCount[];
+  feeds: FeedInLayer[];
+  latest_entry_at: string | null;
+}
+
+export interface CVEPreview {
+  cve_id: string | null;
+  title: string | null;
+  severity: string | null;
+  matched_terms: string[];
+}
+
+export interface DashboardExposure {
+  org_id: string;
+  org_name: string;
+  declared_components: number;
+  cves_affecting_you: number;
+  cves_sample: CVEPreview[];
+  open_alerts: number;
+  tracked_iocs: number;
+}
+
+export interface TriageRunSummary {
+  id: string;
+  status: string;          // running | completed | error
+  trigger: string;         // manual | scheduled | post_feed
+  hours_window: number;
+  entries_processed: number;
+  iocs_created: number;
+  alerts_generated: number;
+  duration_seconds: number;
+  error_message: string | null;
+  created_at: string;
 }
 
 export interface GlobalThreatStats {
@@ -2188,6 +3512,99 @@ export type OnboardingStepKey =
 
 export type OnboardingStateName = "draft" | "completed" | "abandoned";
 
+export type OnboardingNextAction =
+  | "ready"
+  | "welcome_demo"
+  | "quickstart"
+  | "trigger_triage"
+  | "review_alerts";
+
+export interface OnboardingState {
+  current_user_email: string;
+  is_demo_user: boolean;
+  seed_mode: string;
+  user_org_count: number;
+  seed_org_count: number;
+  seed_org_names: string[];
+  has_user_created_org: boolean;
+  has_recent_triage: boolean;
+  has_alerts: boolean;
+  next_action: OnboardingNextAction;
+}
+
+export interface QuickstartResponse {
+  organization_id: string;
+  asset_id: string;
+  brand_term_ids: string[];
+}
+
+export interface TelegramChannelCatalogEntry {
+  handle: string;
+  cluster: string;
+  language: string;
+  rationale: string;
+  actor_link: string | null;
+  status: "active" | "defunct" | "private";
+  region_focus: string[];
+}
+
+export interface MonitoredSourcesResponse {
+  telegram_channels: string[];
+  breach_emails: string[];
+  catalog: {
+    telegram_channels: TelegramChannelCatalogEntry[];
+    suggested_emails: string[];
+  };
+}
+
+export interface OrgDomainListItem {
+  domain: string;
+  is_primary: boolean;
+  verification_status: "unverified" | "pending" | "verified" | "expired";
+  verified_at: string | null;
+  expires_at: string | null;
+}
+
+export interface DomainVerificationStatus {
+  domain: string;
+  status: "unverified" | "pending" | "verified" | "expired";
+  token: string | null;
+  requested_at: string | null;
+  expires_at: string | null;
+  expires_in_hours: number | null;
+  ttl_hours: number;
+  verified_at: string | null;
+  last_checked_at: string | null;
+  last_error: string | null;
+  gate_required: boolean;
+  dns: {
+    record_type: string;
+    record_name: string;
+    record_value: string;
+    instructions: string;
+  } | null;
+  resolvers: string[];
+  quorum_required: number;
+  last_check_report: {
+    quorum_required: number;
+    resolvers_consulted: number;
+    matches: number;
+    votes: { resolver: string; matched: boolean; error: string | null }[];
+  } | null;
+}
+
+export interface DomainVerificationCheck {
+  domain: string;
+  verified: boolean;
+  status: "unverified" | "pending" | "verified" | "expired";
+  matches: number;
+  quorum_required: number;
+  resolvers_consulted: number;
+  votes: { resolver: string; matched: boolean; error: string | null }[];
+  last_checked_at: string | null;
+  last_error: string | null;
+}
+
 export interface OnboardingSessionRecord {
   id: string;
   organization_id: string | null;
@@ -2279,7 +3696,19 @@ export interface CaseListParams {
 
 // ---- Agentic investigations ----------------------------------------
 
-export type InvestigationStatus = "queued" | "running" | "completed" | "failed";
+export type InvestigationStatus =
+  | "queued"
+  | "running"
+  | "awaiting_plan_approval"
+  | "completed"
+  | "failed";
+
+export type InvestigationStopReason =
+  | "high_confidence"
+  | "max_iterations"
+  | "no_new_evidence"
+  | "llm_error"
+  | "user_aborted";
 
 export interface InvestigationListItem {
   id: string;
@@ -2292,6 +3721,16 @@ export interface InvestigationListItem {
   created_at: string;
   finished_at: string | null;
   case_id: string | null;
+  /** Why the agent stopped — null on legacy rows or in-flight runs. */
+  stop_reason: InvestigationStopReason | null;
+  /** Agent's self-reported confidence in the verdict (0..1). */
+  final_confidence: number | null;
+  /** Deduped, ordered list of tool names the agent invoked. */
+  tools_used: string[] | null;
+  /** Joined alert metadata so list rows can show a title instead of a uuid. */
+  alert_title: string | null;
+  alert_severity: string | null;
+  alert_category: string | null;
 }
 
 export interface InvestigationTraceStep {
@@ -2300,6 +3739,20 @@ export interface InvestigationTraceStep {
   tool: string | null;
   args: Record<string, unknown> | null;
   result: unknown;
+  /** ISO timestamp at which the iteration started. New runs only. */
+  started_at?: string | null;
+  /** Wall-clock duration of the iteration in ms. New runs only. */
+  duration_ms?: number | null;
+}
+
+export interface InvestigationPlanStep {
+  /** Plan items emitted by the plan-then-act gate. ``rationale`` is the
+   *  agent's one-liner explaining why this tool, in this position. */
+  tool?: string;
+  rationale?: string;
+  /** Used by /rerun's extra_context shape — distinct from a tool step. */
+  kind?: "extra_context";
+  text?: string;
 }
 
 export interface InvestigationDetail extends InvestigationListItem {
@@ -2311,6 +3764,48 @@ export interface InvestigationDetail extends InvestigationListItem {
   error_message: string | null;
   started_at: string | null;
   case_id: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  /** Populated when the org has plan-then-act gating enabled and the
+   *  agent has emitted a plan awaiting operator review. Also carries
+   *  rerun extra_context shape. */
+  plan: InvestigationPlanStep[] | null;
+}
+
+// Per-investigation stats response (T52 analytics page).
+export interface InvestigationStatsResponse {
+  total: number;
+  by_status: Record<string, number>;
+  success_rate: number;
+  avg_iterations: number;
+  avg_duration_ms: number | null;
+  avg_final_confidence: number | null;
+  top_tools: Array<{ tool: string; count: number }>;
+  top_actors: Array<{ actor: string; count: number }>;
+  stop_reasons: Array<{ stop_reason: string; count: number }>;
+  daily: Array<{ date: string; total: number; completed: number; failed: number }>;
+}
+
+// Compare two investigations (T54).
+export interface InvestigationCompareDiff {
+  a_id: string;
+  b_id: string;
+  same_alert: boolean;
+  iteration_delta: number;
+  duration_delta_ms: number | null;
+  confidence_delta: number | null;
+  severity_a: string | null;
+  severity_b: string | null;
+  assessment_a: string | null;
+  assessment_b: string | null;
+  iocs_added: string[];
+  iocs_removed: string[];
+  actors_added: string[];
+  actors_removed: string[];
+  actions_added: string[];
+  actions_removed: string[];
+  tools_added: string[];
+  tools_removed: string[];
 }
 
 // ---- Agent admin (posture + settings + cross-agent feed) -----------
@@ -2319,6 +3814,7 @@ export interface AgentPosture {
   human_in_loop_required: boolean;
   features: Record<string, boolean>;
   env_vars: Record<string, string>;
+  llm: { provider: string; model: string; label: string };
 }
 
 export interface AgentSettings {
@@ -2331,6 +3827,13 @@ export interface AgentSettings {
   auto_promote_critical: boolean;
   auto_takedown_high_confidence: boolean;
   threat_hunt_interval_seconds: number | null;
+  /** Plan-then-act gate for the Investigation agent. */
+  investigation_plan_approval?: boolean;
+  /** Min suspect-domain similarity for auto-queueing the Brand
+   *  Defender. T77 — replaces the legacy hardcoded 0.80 constant. */
+  brand_defence_min_similarity?: number;
+  /** Plan-then-act gate for the Brand Defender. */
+  brand_defence_plan_approval?: boolean;
 }
 
 export type AgentKind =
@@ -2411,11 +3914,22 @@ export interface CopilotTimelineEvent {
   text: string;
 }
 
+/** One LLM-picked investigation playbook on a copilot run. The
+ *  apply_suggestions endpoint materialises each entry as a real
+ *  PlaybookExecution row linked to the case (see /exec/playbook-history
+ *  with `case_id` filter). */
+export interface CopilotSuggestedPlaybook {
+  playbook_id: string;
+  params: Record<string, unknown>;
+  rationale: string;
+}
+
 export interface CopilotRunDetail extends CopilotRunListItem {
   summary: string | null;
   timeline_events: CopilotTimelineEvent[] | null;
   suggested_mitre_ids: string[] | null;
   draft_next_steps: string[] | null;
+  suggested_playbooks: CopilotSuggestedPlaybook[] | null;
   similar_case_ids: string[] | null;
   trace: InvestigationTraceStep[] | null;
   error_message: string | null;
@@ -2424,7 +3938,12 @@ export interface CopilotRunDetail extends CopilotRunListItem {
 
 // ---- Agentic brand defence -----------------------------------------
 
-export type BrandActionStatus = "queued" | "running" | "completed" | "failed";
+export type BrandActionStatus =
+  | "queued"
+  | "running"
+  | "awaiting_plan_approval"
+  | "completed"
+  | "failed";
 export type BrandActionRecommendation =
   | "takedown_now"
   | "takedown_after_review"
@@ -2446,6 +3965,11 @@ export interface BrandActionListItem {
   created_at: string;
   finished_at: string | null;
   takedown_ticket_id: string | null;
+  /** Suspect-domain metadata joined inline so the activity panel
+   *  can render meaningful rows without a per-action fetch. */
+  suspect_domain: string | null;
+  suspect_similarity: number | null;
+  suspect_state: string | null;
 }
 
 export interface BrandActionDetail extends BrandActionListItem {
@@ -2453,6 +3977,94 @@ export interface BrandActionDetail extends BrandActionListItem {
   trace: InvestigationTraceStep[] | null;
   error_message: string | null;
   started_at: string | null;
+  /** Plan-then-act gate output OR rerun extra_context. */
+  plan: InvestigationPlanStep[] | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+}
+
+export interface BrandActionStatsResponse {
+  total: number;
+  by_status: Record<string, number>;
+  by_recommendation: Record<string, number>;
+  avg_confidence: number | null;
+  avg_iterations: number;
+  avg_duration_ms: number | null;
+  top_risk_signals: Array<{ risk_signal: string; count: number }>;
+  defence_to_takedown_rate: number;
+  daily: Array<{
+    date: string;
+    total: number;
+    completed: number;
+    failed: number;
+    takedown_now: number;
+  }>;
+}
+
+export interface BrandActionCompareDiff {
+  a_id: string;
+  b_id: string;
+  same_suspect: boolean;
+  iteration_delta: number;
+  duration_delta_ms: number | null;
+  confidence_delta: number | null;
+  recommendation_a: string | null;
+  recommendation_b: string | null;
+  risk_signals_added: string[];
+  risk_signals_removed: string[];
+  tools_added: string[];
+  tools_removed: string[];
+}
+
+export interface BrandAllowlistEntry {
+  id: string;
+  organization_id: string;
+  pattern: string;
+  reason: string | null;
+  created_by_user_id: string | null;
+  created_at: string;
+}
+
+export interface BrandAllowlistSweepResponse {
+  org_id: string;
+  swept: number;
+  dismissed: number;
+}
+
+export interface BrandScheduledProbe {
+  suspect_id: string;
+  domain: string;
+  last_probed_at: string | null;
+  last_verdict: string | null;
+  similarity: number;
+  due_at: string;
+  reason: string;
+}
+
+export interface BrandSuspectWhois {
+  suspect_id: string;
+  domain: string;
+  fetched_at: string;
+  cached: boolean;
+  registrar: string | null;
+  registrant_email: string | null;
+  registrant_name: string | null;
+  registrant_org: string | null;
+  registrant_country: string | null;
+  abuse_email: string | null;
+  registered_at: string | null;
+  updated_at: string | null;
+  expires_at: string | null;
+  raw_excerpt: string | null;
+}
+
+export interface BrandSuspectCluster {
+  signal_kind: "nameserver" | "ip" | "matched_term";
+  signal_value: string;
+  count: number;
+  max_similarity: number;
+  sample_domains: string[];
+  sample_suspect_ids: string[];
 }
 
 export interface CaseResponse {
@@ -2478,7 +4090,13 @@ export interface CaseResponse {
 
 export interface CaseFindingResponse {
   id: string;
-  alert_id: string;
+  /** Nullable since the D12 audit. Polymorphic findings (mobile_app,
+   *  suspect_domain, exposure, fraud, impersonation, card_leakage,
+   *  dlp, logo_match, live_probe) link via ``finding_type`` +
+   *  ``finding_id`` instead of going through the Alert table. */
+  alert_id: string | null;
+  finding_type: string | null;
+  finding_id: string | null;
   is_primary: boolean;
   linked_by_user_id: string | null;
   link_reason: string | null;
@@ -2593,6 +4211,8 @@ export interface SuspectListParams {
   state?: SuspectStateValue;
   source?: SuspectSourceValue;
   is_resolvable?: boolean;
+  /** Backend search across domain + matched_term_value (T79). */
+  q?: string;
   limit?: number;
   offset?: number;
 }
@@ -2963,15 +4583,27 @@ export interface ExposureListParams {
   source?: string;
   asset_id?: string;
   cve?: string;
+  is_kev?: boolean;
   q?: string;
+  sort?: "last_seen" | "matched" | "severity" | "cvss" | "epss" | "priority" | "age";
   limit?: number;
   offset?: number;
 }
+
+export type RemediationAction =
+  | "patched"
+  | "mitigated"
+  | "waived"
+  | "blocked"
+  | "false_positive"
+  | "other";
 
 export interface ExposureResponse {
   id: string;
   organization_id: string;
   asset_id: string | null;
+  asset_value: string | null;
+  asset_criticality: string | null;
   discovery_job_id: string | null;
   severity: ExposureSeverityValue;
   category: string;
@@ -2992,6 +4624,25 @@ export interface ExposureResponse {
   state_changed_by_user_id: string | null;
   state_changed_at: string | null;
   state_reason: string | null;
+  // NVD/EPSS/KEV enrichment.
+  epss_score: number | null;
+  epss_percentile: number | null;
+  is_kev: boolean;
+  kev_added_at: string | null;
+  // Structured remediation.
+  remediation_action: RemediationAction | null;
+  remediation_patch_version: string | null;
+  remediation_owner: string | null;
+  remediation_notes: string | null;
+  // AI agent outputs.
+  ai_priority: number | null;
+  ai_rationale: string | null;
+  ai_triaged_at: string | null;
+  ai_suggest_dismiss: boolean;
+  ai_dismiss_reason: string | null;
+  // Computed at read time.
+  age_days: number | null;
+  blast_radius: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -2999,6 +4650,154 @@ export interface ExposureResponse {
 export interface ExposureStatePayload {
   state: ExposureStateValue;
   reason?: string;
+  remediation_action?: RemediationAction;
+  remediation_patch_version?: string;
+  remediation_owner?: string;
+  remediation_notes?: string;
+}
+
+export interface ExposureLinkAssetPayload {
+  asset_id: string;
+}
+
+export interface SurfaceAssetsParams {
+  organization_id: string;
+  asset_type?: string;
+  parent_asset_id?: string;
+  has_open_exposures?: boolean;
+  has_kev?: boolean;
+  accessible_only?: boolean;
+  weak_tls_only?: boolean;
+  q?: string;
+  sort?: "risk" | "last_seen" | "discovered" | "value" | "criticality" | "exposures";
+  limit?: number;
+  offset?: number;
+}
+
+export interface SurfaceAssetClassification {
+  environment: string;
+  role: string;
+  tags: string[];
+  confidence: number;
+  rationale: string;
+  source: "heuristic" | "llm";
+}
+
+export interface SurfaceAsset {
+  id: string;
+  organization_id: string;
+  asset_type: string;
+  value: string;
+  criticality: string;
+  parent_asset_id: string | null;
+  discovery_method: string;
+  discovered_at: string | null;
+  last_scanned_at: string | null;
+  last_change_at: string | null;
+  is_active: boolean;
+  monitoring_enabled: boolean;
+  http_status_code: number | null;
+  http_title: string | null;
+  http_tech: string[];
+  ips: string[];
+  ports: Array<{ port: number; protocol: string }>;
+  tls_grade: string | null;
+  tls_issue_counts: Record<string, number> | null;
+  has_screenshot: boolean;
+  risk_score: number | null;
+  risk_score_updated_at: string | null;
+  ai_classification: SurfaceAssetClassification | null;
+  ai_classified_at: string | null;
+  open_exposures: number;
+  kev_exposures: number;
+  children_count: number;
+  tags: string[];
+}
+
+export interface SurfaceAssetDetail extends SurfaceAsset {
+  details: Record<string, unknown> | null;
+  parent_value: string | null;
+}
+
+export interface SurfaceAssetExposure {
+  id: string;
+  title: string;
+  severity: string;
+  state: string;
+  rule_id: string;
+  category: string;
+  cve_ids: string[];
+  is_kev: boolean;
+  epss_score: number | null;
+  cvss_score: number | null;
+  ai_priority: number | null;
+  last_seen_at: string | null;
+  matched_at: string | null;
+}
+
+export interface SurfaceChangesParams {
+  organization_id: string;
+  asset_id?: string;
+  kind?: string;
+  severity?: string;
+  since_days?: number;
+  limit?: number;
+  offset?: number;
+}
+
+export interface SurfaceChange {
+  id: string;
+  organization_id: string;
+  asset_id: string | null;
+  asset_value: string | null;
+  discovery_job_id: string | null;
+  kind: string;
+  severity: string;
+  summary: string;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+  detected_at: string;
+  created_at: string;
+}
+
+export interface SurfaceClassifyResponse {
+  classified: number;
+  llm_used: number;
+  llm_failed: number;
+  total_assets: number;
+}
+
+export interface SurfaceStats {
+  organization_id: string;
+  total_assets: number;
+  by_type: Record<string, number>;
+  by_criticality: Record<string, number>;
+  accessible_count: number;
+  auth_gated_count: number;
+  weak_tls_count: number;
+  open_exposures: number;
+  kev_exposures: number;
+  avg_risk_score: number | null;
+  top_risk_score: number | null;
+}
+
+export interface ExposureTriagePayload {
+  exposure_ids?: string[];
+  use_llm?: boolean;
+}
+
+export interface ExposureTriageResponse {
+  triaged_count: number;
+  suppressed_count: number;
+  llm_used: boolean;
+  llm_failures: number;
+  results: Array<{
+    exposure_id: string;
+    ai_priority: number;
+    ai_rationale: string;
+    ai_suggest_dismiss: boolean;
+    ai_dismiss_reason: string | null;
+  }>;
 }
 
 // ---- TPRM ------------------------------------------------------------
@@ -3036,10 +4835,132 @@ export type VendorOnboardingStage =
   | "invited"
   | "questionnaire_sent"
   | "questionnaire_received"
-  | "under_review"
+  | "analyst_review"
   | "approved"
   | "rejected"
   | "on_hold";
+
+export type VendorTier = "tier_1" | "tier_2" | "tier_3";
+export type VendorCategory =
+  | "payment_processor"
+  | "cloud_provider"
+  | "security_vendor"
+  | "hr_payroll"
+  | "telecom"
+  | "legal"
+  | "auditor"
+  | "marketing_saas"
+  | "data_broker"
+  | "other";
+
+export interface VendorPostureSignal {
+  id: string;
+  kind: string;
+  severity: string;
+  score: number | null;
+  summary: string | null;
+  evidence: Record<string, unknown> | null;
+  collected_at: string | null;
+}
+
+export interface VendorScorecardSnapshot {
+  score: number;
+  grade: string;
+  pillar_scores: Record<string, number>;
+  snapshot_at: string;
+}
+
+export interface VendorScorecardSnapshotsResponse {
+  vendor_id: string;
+  snapshots: VendorScorecardSnapshot[];
+  drop_alert:
+    | {
+        from: number;
+        to: number;
+        delta: number;
+        from_at: string;
+        to_at: string;
+      }
+    | null;
+}
+
+export interface VendorPercentileResponse {
+  vendor_id: string;
+  score: number;
+  grade: string;
+  global: { percentile: number; cohort_size: number; label: string };
+  category: {
+    percentile: number;
+    cohort_size: number;
+    category: string;
+    label: string;
+  };
+}
+
+export interface TprmExecDashboard {
+  organization_id: string;
+  vendors_total: number;
+  by_grade: Record<string, number>;
+  by_tier: Record<string, number>;
+  by_category: Record<string, number>;
+  avg_score: number | null;
+  below_threshold_count: number;
+  top_risk: Array<{
+    vendor_id: string;
+    vendor_value: string;
+    tier: string;
+    category: string;
+    score: number;
+    grade: string;
+    pillar_scores: Record<string, number>;
+  }>;
+  compliant_pct: number;
+}
+
+export interface VendorEvidenceFileResponse {
+  id: string;
+  file_name: string;
+  file_size: number;
+  mime_type: string | null;
+  sha256: string;
+  questionnaire_instance_id: string | null;
+  question_id: string | null;
+  extracted: Record<string, unknown> | null;
+  uploaded_by_user_id: string | null;
+  created_at: string | null;
+}
+
+export interface VendorContractResponse {
+  id: string;
+  title: string;
+  contract_kind: string | null;
+  file_name: string;
+  file_size: number;
+  sha256: string;
+  effective_date: string | null;
+  expiration_date: string | null;
+  extracted_clauses: Record<string, unknown> | null;
+  created_at: string | null;
+}
+
+export interface VendorBriefResponse {
+  vendor_value: string;
+  vendor_id: string;
+  current_score: number | null;
+  current_grade: string | null;
+  drop_alert: Record<string, unknown> | null;
+  narrative: string;
+  llm_used: boolean;
+  baseline: string;
+}
+
+export interface VendorPlaybookResponse {
+  vendor_value: string;
+  pillar: string;
+  actions: string[];
+  current_score: number | null;
+  llm_used: boolean;
+}
 
 export interface TprmOnboardingResponse {
   id: string;
@@ -3096,7 +5017,10 @@ export type TakedownPartnerValue =
   | "phishlabs"
   | "group_ib"
   | "internal_legal"
-  | "manual";
+  | "manual"
+  | "urlhaus"
+  | "threatfox"
+  | "direct_registrar";
 
 export type TakedownTargetKindValue =
   | "suspect_domain"
@@ -3105,8 +5029,15 @@ export type TakedownTargetKindValue =
   | "fraud"
   | "other";
 
+export interface TakedownPartnerEntry {
+  name: TakedownPartnerValue;
+  label: string;
+  is_configured: boolean;
+  config_hint: string | null;
+}
+
 export interface TakedownPartnerInfo {
-  partners: TakedownPartnerValue[];
+  partners: TakedownPartnerEntry[];
 }
 
 export interface TakedownListParams {
@@ -3128,6 +5059,7 @@ export interface TakedownTicketResponse {
   source_finding_id: string | null;
   partner_reference: string | null;
   partner_url: string | null;
+  submitted_by_user_id: string | null;
   submitted_at: string;
   acknowledged_at: string | null;
   succeeded_at: string | null;
@@ -3136,6 +5068,32 @@ export interface TakedownTicketResponse {
   notes: string | null;
   created_at: string;
   updated_at: string;
+  /** State machine: states the analyst can move this ticket into.
+   *  Computed server-side from _ALLOWED_TRANSITIONS so the
+   *  TransitionModal never shows an option that would 422. Empty
+   *  list = terminal state. */
+  allowed_next: TakedownStateValue[];
+  /** Set when the partner returned a state the heuristic mapper
+   *  didn't recognise. Dashboard surfaces a yellow badge until the
+   *  next sync clears it. */
+  needs_review: boolean;
+  last_partner_state: string | null;
+  /** Raw partner-submit response payload — surfaced as collapsible
+   *  JSON in the detail drawer. May be absent on legacy tickets. */
+  raw?: Record<string, unknown> | null;
+}
+
+export interface TakedownTicketHistoryEntry {
+  id: string;
+  timestamp: string;
+  action: string;
+  actor_user_id: string | null;
+  actor_email: string | null;
+  details: Record<string, unknown> | null;
+}
+
+export interface TakedownTicketHistoryResponse {
+  entries: TakedownTicketHistoryEntry[];
 }
 
 export interface TakedownTicketCreatePayload {
@@ -3189,6 +5147,41 @@ export interface BinImportResult {
   errors: Array<{ index?: number; error: string }>;
 }
 
+export interface FindingClassification {
+  category: string;
+  impact_level: string;
+  compliance: string[];
+  confidence: number;
+  rationale: string;
+  classified_at?: string;
+  model_id?: string | null;
+}
+
+export interface FindingCorrelation {
+  match_key?: string;
+  matches?: Array<{
+    id: string;
+    kind: string;
+    organization_id: string;
+    source_url?: string | null;
+    detected_at?: string | null;
+  }>;
+  distinct_orgs?: number;
+  actor_inference?: {
+    probable_source: string;
+    confidence: number;
+    recommended_action: string;
+    supply_chain_likelihood: string;
+  } | null;
+  checked_at?: string;
+}
+
+export interface BreachCorrelations {
+  emails: Record<string, string[]>;
+  checked_at?: string;
+  reason?: string;
+}
+
 export interface CardLeakageResponse {
   id: string;
   organization_id: string;
@@ -3209,6 +5202,10 @@ export interface CardLeakageResponse {
   detected_at: string;
   created_at: string;
   updated_at: string;
+  classification?: FindingClassification | null;
+  correlated_findings?: FindingCorrelation | null;
+  breach_correlations?: BreachCorrelations | null;
+  takedown_draft?: string | null;
 }
 
 export interface CardScanPayload {
@@ -3221,10 +5218,15 @@ export interface CardScanPayload {
 
 export interface CardScanResponse {
   candidates: number;
-  validated: number;
-  bin_matched: number;
   new_findings: number;
-  duplicates: number;
+  /** Backend returns ``seen_again`` (existing finding hit again). */
+  seen_again?: number;
+  /** @deprecated retained so older renderers continue to typecheck */
+  duplicates?: number;
+  /** @deprecated retained so older renderers continue to typecheck */
+  validated?: number;
+  /** @deprecated retained so older renderers continue to typecheck */
+  bin_matched?: number;
 }
 
 export interface DlpPolicyResponse {
@@ -3293,6 +5295,42 @@ export interface DlpFindingResponse {
   detected_at: string;
   created_at: string;
   updated_at: string;
+  classification?: FindingClassification | null;
+  correlated_findings?: FindingCorrelation | null;
+  breach_correlations?: BreachCorrelations | null;
+  takedown_draft?: string | null;
+}
+
+export interface TakedownDraftResponse {
+  finding_id: string;
+  kind: string;
+  status: "queued" | "ready";
+  draft: string | null;
+  queued_task_id: string | null;
+}
+
+export interface AgentSummaryResponse {
+  finding_id: string;
+  kind: string;
+  severity: string;
+  state: string;
+  classification: FindingClassification | null;
+  correlated_findings: FindingCorrelation | null;
+  breach_correlations: BreachCorrelations | null;
+  agent_summary: Record<string, unknown> | null;
+  takedown_draft: string | null;
+}
+
+export interface PolicyTuneResponse {
+  organization_id: string;
+  queued_task_id: string;
+  status: string;
+}
+
+export interface BinImportResponse {
+  inserted: number;
+  skipped_duplicates: number;
+  errors: Array<{ index?: number; error: string }>;
 }
 
 // ---- Notifications --------------------------------------------------
@@ -3304,8 +5342,8 @@ export type NotificationChannelKind =
   | "webhook"
   | "pagerduty"
   | "opsgenie"
-  | "sms"
-  | "jasmin";
+  | "apprise"
+  | "jasmin_sms";
 
 export interface NotificationAdapterInfo {
   kind: NotificationChannelKind;
@@ -3345,6 +5383,13 @@ export interface NotificationChannelUpdatePayload {
   enabled?: boolean;
 }
 
+export interface NotificationQuietHours {
+  start: string; // "22:00"
+  end: string;   // "07:00"
+  tz: string;    // "Asia/Dubai" / "UTC"
+  except_severity?: string | null; // e.g. "critical" — bypasses the quiet window
+}
+
 export interface NotificationRuleResponse {
   id: string;
   organization_id: string;
@@ -3357,6 +5402,8 @@ export interface NotificationRuleResponse {
   asset_types: string[];
   tags_any: string[];
   dedup_window_seconds: number;
+  description?: string | null;
+  quiet_hours?: NotificationQuietHours | null;
   created_at: string;
   updated_at: string;
 }
@@ -3372,6 +5419,8 @@ export interface NotificationRuleCreatePayload {
   tags_any?: string[];
   dedup_window_seconds?: number;
   enabled?: boolean;
+  description?: string | null;
+  quiet_hours?: NotificationQuietHours | null;
 }
 
 export interface NotificationRuleUpdatePayload {
@@ -3384,11 +5433,15 @@ export interface NotificationRuleUpdatePayload {
   tags_any?: string[];
   dedup_window_seconds?: number;
   enabled?: boolean;
+  description?: string | null;
+  quiet_hours?: NotificationQuietHours | null;
 }
 
 export interface NotificationDeliveryListParams {
   organization_id: string;
   channel_id?: string;
+  rule_id?: string;
+  event_kind?: string;
   status?: string;
   limit?: number;
   offset?: number;
@@ -3402,6 +5455,7 @@ export interface NotificationDeliveryResponse {
   event_kind: string;
   event_severity: string;
   event_dedup_key: string | null;
+  event_payload?: Record<string, unknown>;
   status: string;
   attempts: number;
   response_status: number | null;
@@ -3409,7 +5463,35 @@ export interface NotificationDeliveryResponse {
   error_message: string | null;
   latency_ms: number | null;
   delivered_at: string | null;
+  rendered_payload?: Record<string, unknown> | null;
+  cluster_count?: number | null;
+  cluster_dedup_key?: string | null;
   created_at: string;
+}
+
+export interface NotificationInboxItemResponse {
+  id: string;
+  organization_id: string;
+  user_id: string | null;
+  rule_id: string | null;
+  delivery_id: string | null;
+  event_kind: string;
+  severity: string;
+  title: string;
+  summary: string | null;
+  link_path: string | null;
+  payload: Record<string, unknown>;
+  read_at: string | null;
+  archived_at: string | null;
+  created_at: string;
+}
+
+export interface NotificationPreferences {
+  opt_out_channels: string[];
+  max_per_rule_per_hour: number;
+  escalation_after_min: number;
+  do_not_disturb: boolean;
+  dnd_until: string | null;
 }
 
 // ---- Intel (CVE / EPSS / KEV / actor playbooks) ---------------------
@@ -3533,6 +5615,15 @@ export interface AdvisoryResponse {
   revoked_at: string | null;
   revoked_reason: string | null;
   author_user_id: string | null;
+  source?: string;
+  external_id?: string | null;
+  cvss3_score?: number | null;
+  epss_score?: number | null;
+  is_kev?: boolean;
+  affected_products?: { vendor?: string; product?: string }[];
+  remediation_steps?: { action?: string; due_date?: string }[];
+  triage_state?: string;
+  assigned_to_user_id?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -3679,6 +5770,224 @@ export interface SlaEvaluateResponse {
   }>;
 }
 
+// ── CIO Executive Briefing ─────────────────────────────────────────
+// Backed by src/api/routes/exec_briefing.py — schemas mirror the
+// Pydantic response models there. The briefing is LLM-generated and
+// cached 1h; everything else is deterministic per-call aggregation.
+
+export interface ExecBriefingActionItem {
+  /**
+   * Stable id of a Playbook in the catalogue
+   * (src/core/exec_playbooks). The dashboard opens an in-context
+   * drawer keyed on this id rather than navigating to a generic
+   * /path the LLM hallucinated. Defensive — still nullable in case a
+   * cached pre-v2 briefing slips through.
+   */
+  playbook_id: string;
+  title: string;
+  rationale: string;
+  /**
+   * LLM-seeded params for the playbook (only when the playbook
+   * declares input_schema). Operator can edit before clicking
+   * Execute.
+   */
+  params?: Record<string, unknown>;
+}
+
+// ── Playbook execution layer (src/api/routes/playbooks.py) ─────────
+
+export interface PlaybookStepDescriptor {
+  step_id: string;
+  title: string;
+  description: string;
+}
+
+export interface PlaybookDescriptor {
+  id: string;
+  title: string;
+  category: "brand" | "email" | "asset" | "intel";
+  description: string;
+  cta_label?: string | null;
+  requires_approval: boolean;
+  requires_input: boolean;
+  permission: "analyst" | "admin";
+  input_schema?: Record<string, unknown> | null;
+  total_steps: number;
+  steps: PlaybookStepDescriptor[];
+}
+
+export interface PlaybookCatalogResponse {
+  items: PlaybookDescriptor[];
+}
+
+export interface PlaybookAffectedItem {
+  id: string;
+  label: string;
+  sub_label?: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface PlaybookPreviewResponse {
+  summary: string;
+  affected_items: PlaybookAffectedItem[];
+  warnings: string[];
+  can_execute: boolean;
+  blocker_reason?: string | null;
+  instructions: string[];
+  step_index: number;
+  step_id: string;
+  step_title: string;
+  total_steps: number;
+}
+
+export type PlaybookStatus =
+  | "pending_approval"
+  | "approved"
+  | "in_progress"
+  | "step_complete"
+  | "completed"
+  | "failed"
+  | "denied"
+  | "cancelled";
+
+export type PlaybookTrigger = "exec_briefing" | "manual" | "case_copilot";
+
+export interface PlaybookStepResult {
+  step: number;
+  step_id: string;
+  ok: boolean;
+  summary: string;
+  items: Array<Record<string, unknown>>;
+  error?: string | null;
+  completed_at: string;
+}
+
+export interface PlaybookExecutionResponse {
+  id: string;
+  organization_id: string;
+  playbook_id: string;
+  status: PlaybookStatus;
+  params: Record<string, unknown>;
+  current_step_index: number;
+  total_steps: number;
+  step_results: PlaybookStepResult[];
+  requested_by_user_id?: string | null;
+  approver_user_id?: string | null;
+  approval_note?: string | null;
+  denial_reason?: string | null;
+  error_message?: string | null;
+  triggered_from: PlaybookTrigger;
+  briefing_action_index?: number | null;
+  /** Set when the execution was queued by Case Copilot's Apply, or
+   *  by an operator opening the drawer from inside a case. */
+  case_id?: string | null;
+  copilot_run_id?: string | null;
+  created_at: string;
+  approved_at?: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+  failed_at?: string | null;
+}
+
+export interface PlaybookHistoryResponse {
+  items: PlaybookExecutionResponse[];
+  total: number;
+}
+
+export interface PlaybookPreviewPayload {
+  playbook_id: string;
+  organization_id: string;
+  params?: Record<string, unknown>;
+  step_index?: number;
+  execution_id?: string;
+}
+
+export interface PlaybookExecutePayload {
+  playbook_id: string;
+  organization_id: string;
+  params?: Record<string, unknown>;
+  idempotency_key: string;
+  briefing_action_index?: number | null;
+  triggered_from?: PlaybookTrigger;
+}
+
+export interface ExecBriefingResponse {
+  headline: string;
+  narrative: string;
+  posture_change: "improving" | "stable" | "deteriorating";
+  top_actions: ExecBriefingActionItem[];
+  confidence: number;
+  generated_at: string;
+  cached: boolean;
+  rubric_grade?: string | null;
+  rubric_score?: number | null;
+}
+
+export interface ExecTopRiskItem {
+  kind: "case" | "exposure" | "suspect_domain" | "kev_match";
+  id: string;
+  title: string;
+  severity: string | null;
+  score: number;
+  age_days: number;
+  evidence: string;
+  link: string;
+}
+
+export interface ExecTopRisksResponse {
+  items: ExecTopRiskItem[];
+  generated_at: string;
+}
+
+export interface ExecDeltaMetric {
+  label: string;
+  current: number;
+  previous: number;
+  delta: number;
+  direction: "up" | "down" | "flat";
+  interpretation: "good" | "bad" | "neutral";
+  note?: string | null;
+}
+
+export interface ExecChangesResponse {
+  window_days: number;
+  metrics: ExecDeltaMetric[];
+  generated_at: string;
+}
+
+export interface ExecComplianceMetric {
+  key: string;
+  label: string;
+  value: number | string;
+  target?: number | string | null;
+  status: "ok" | "warn" | "fail" | "unknown";
+  note?: string | null;
+}
+
+export interface ExecComplianceResponse {
+  metrics: ExecComplianceMetric[];
+  generated_at: string;
+}
+
+export interface ExecSuggestedAction {
+  priority: "high" | "medium" | "low";
+  title: string;
+  detail: string;
+  link?: string | null;
+  /**
+   * When set, the dashboard opens the in-page ActionDrawer keyed on
+   * this playbook id instead of navigating via ``link``. Mirrors
+   * the AI Briefing pattern.
+   */
+  playbook_id?: string | null;
+  params?: Record<string, unknown>;
+}
+
+export interface ExecSuggestedActionsResponse {
+  actions: ExecSuggestedAction[];
+  generated_at: string;
+}
+
 export interface SlaBreachResponse {
   id: string;
   organization_id: string;
@@ -3785,6 +6094,10 @@ export interface EvidenceBlobResponse {
   organization_id: string;
   asset_id: string | null;
   sha256: string;
+  md5: string | null;
+  sha1: string | null;
+  perceptual_hash: string | null;
+  ssdeep: string | null;
   size_bytes: number;
   content_type: string;
   original_filename: string | null;
@@ -3795,16 +6108,74 @@ export interface EvidenceBlobResponse {
   deleted_at: string | null;
   deleted_by_user_id: string | null;
   delete_reason: string | null;
+  legal_hold?: boolean;
   captured_at: string;
   captured_by_user_id: string | null;
   capture_source: string | null;
   description: string | null;
   extra: Record<string, unknown> | null;
+  agent_summary: Record<string, unknown> | null;
+  av_scan: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
 
+export interface EvidenceAuditChainEntry {
+  sequence: number;
+  organization_id: string | null;
+  evidence_blob_id: string | null;
+  actor_user_id: string | null;
+  action: string;
+  payload: Record<string, unknown>;
+  payload_hash: string;
+  prev_chain_hash: string | null;
+  chain_hash: string;
+  anchor_id: string | null;
+  created_at: string;
+}
+
+export interface EvidenceAuditChainVerify {
+  valid: boolean;
+  broken_at_sequence: number | null;
+  total_rows: number;
+  head_chain_hash: string | null;
+}
+
+export interface EvidenceCoCNarrative {
+  blob_id: string;
+  narrative: string;
+  model_id: string | null;
+  rendered_at: string;
+}
+
+export interface EvidenceSimilarHit {
+  id: string;
+  sha256: string;
+  md5: string | null;
+  perceptual_hash: string | null;
+  ssdeep: string | null;
+  original_filename: string | null;
+  content_type: string;
+  size_bytes: number;
+  distance: number | null;
+  method: string;
+  captured_at: string;
+}
+
+export interface EvidenceSimilarResponse {
+  blob_id: string;
+  method: string;
+  neighbours: EvidenceSimilarHit[];
+  summary: string | null;
+  model_id: string | null;
+}
+
 // ---- Retention ------------------------------------------------------
+
+export type RetentionDeletionMode =
+  | "hard_delete"
+  | "soft_delete"
+  | "anonymise";
 
 export interface RetentionPolicyResponse {
   id: string;
@@ -3815,6 +6186,9 @@ export interface RetentionPolicyResponse {
   iocs_days: number;
   redact_pii: boolean;
   auto_cleanup_enabled: boolean;
+  deletion_mode: RetentionDeletionMode;
+  compliance_mappings: string[];
+  description: string | null;
   last_cleanup_at: string | null;
   created_at: string;
   updated_at: string;
@@ -3828,6 +6202,9 @@ export interface RetentionPolicyCreatePayload {
   iocs_days?: number;
   redact_pii?: boolean;
   auto_cleanup_enabled?: boolean;
+  deletion_mode?: RetentionDeletionMode;
+  compliance_mappings?: string[];
+  description?: string | null;
 }
 
 export interface RetentionPolicyUpdatePayload {
@@ -3837,6 +6214,90 @@ export interface RetentionPolicyUpdatePayload {
   iocs_days?: number;
   redact_pii?: boolean;
   auto_cleanup_enabled?: boolean;
+  deletion_mode?: RetentionDeletionMode;
+  compliance_mappings?: string[];
+  description?: string | null;
+}
+
+export interface RetentionComplianceFramework {
+  id: string;
+  name: string;
+  full_text: string;
+  default_retention_days: number;
+  citation_url: string;
+}
+
+export interface RetentionRegulationSuggestion {
+  alerts_days: number;
+  audit_logs_days: number;
+  raw_intel_days: number;
+  iocs_days: number;
+  deletion_mode: RetentionDeletionMode;
+  compliance_mappings: string[];
+  rationale_per_class: Record<string, string>;
+  model_id: string | null;
+  raw_response: string;
+}
+
+export type DsarRequestType =
+  | "access"
+  | "erasure"
+  | "portability"
+  | "rectification"
+  | "restriction";
+
+export type DsarStatus =
+  | "received"
+  | "scanning"
+  | "ready_for_review"
+  | "exported"
+  | "closed"
+  | "denied";
+
+export interface DsarRequestResponse {
+  id: string;
+  organization_id: string;
+  requested_by_user_id: string | null;
+  subject_email: string | null;
+  subject_name: string | null;
+  subject_phone: string | null;
+  subject_id_other: string | null;
+  request_type: DsarRequestType;
+  regulation: string | null;
+  status: DsarStatus;
+  deadline_at: string | null;
+  matched_tables: string[];
+  match_summary: Record<string, { count: number; sample_ids?: string[]; matched_columns?: string[] }>;
+  matched_row_count: number;
+  draft_response: string | null;
+  final_response: string | null;
+  notes: string | null;
+  closed_reason: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DsarCreatePayload {
+  organization_id: string;
+  subject_email?: string | null;
+  subject_name?: string | null;
+  subject_phone?: string | null;
+  subject_id_other?: string | null;
+  request_type: DsarRequestType;
+  regulation?: string | null;
+  notes?: string | null;
+  deadline_days?: number;
+}
+
+export interface RetentionAttestationResponse {
+  id: string;
+  organization_id: string | null;
+  summary_md: string;
+  rows_summarised: number;
+  window_start: string | null;
+  window_end: string | null;
+  model_id: string | null;
+  created_at: string;
 }
 
 export interface RetentionCleanupResult {
@@ -3853,6 +6314,7 @@ export interface RetentionCleanupResult {
   total_deleted: number;
   policy_id: string;
   cleanup_at: string;
+  dry_run?: boolean;
 }
 
 export interface RetentionStats {

@@ -153,6 +153,22 @@ class Asset(Base, UUIDMixin, TimestampMixin):
         Boolean, default=True, nullable=False
     )
 
+    # Phase 1.3 — composite risk score (exploitability × accessibility ×
+    # age × criticality). Computed by ``src/easm/risk_scoring.py``;
+    # nullable when no scan data yet exists.
+    risk_score: Mapped[float | None] = mapped_column(Float)
+    risk_score_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+
+    # Phase 1.3 — auto-classification by the surface-classifier agent.
+    # Shape: ``{"environment": "prod"|"staging"|..., "role": "admin"|...,
+    #         "tags": [...], "confidence": 0..1, "rationale": "..."}``
+    ai_classification: Mapped[dict | None] = mapped_column(JSONB)
+    ai_classified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+
     organization = relationship("Organization", back_populates="assets")
     parent = relationship(
         "Asset",

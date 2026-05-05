@@ -353,6 +353,31 @@ async def send_questionnaire(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "template not visible to this organization",
         )
+    # Immutable template snapshot for compliance reproducibility — once
+    # we send, the instance pins the exact question list + a content
+    # hash so a later edit to the template doesn't rewrite history.
+    import hashlib as _hashlib
+    import json as _json
+
+    questions_snapshot = list(tpl.questions or [])
+    # Augment with category-specific additions when the vendor has one.
+    try:
+        from src.tprm.category_templates import merge_with_base
+
+        category = (vendor.details or {}).get("category")
+        questions_snapshot = merge_with_base(questions_snapshot, category)
+    except Exception:  # noqa: BLE001
+        pass
+    snapshot_payload = {
+        "name": tpl.name,
+        "kind": tpl.kind,
+        "questions": questions_snapshot,
+    }
+    snapshot_bytes = _json.dumps(snapshot_payload, sort_keys=True).encode("utf-8")
+    template_hash = _hashlib.sha256(snapshot_bytes).hexdigest()
+    template_version = int(
+        (tpl.updated_at or datetime.now(timezone.utc)).timestamp()
+    )
     inst = QuestionnaireInstance(
         organization_id=body.organization_id,
         template_id=tpl.id,
@@ -360,6 +385,9 @@ async def send_questionnaire(
         state=QuestionnaireState.SENT.value,
         sent_at=datetime.now(timezone.utc),
         due_at=body.due_at,
+        template_version=template_version,
+        template_hash=template_hash,
+        template_snapshot=snapshot_payload,
     )
     db.add(inst)
     await db.flush()

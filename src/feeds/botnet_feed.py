@@ -11,14 +11,13 @@ from src.feeds.base import BaseFeed, FeedEntry
 
 logger = logging.getLogger(__name__)
 
-# montysecurity/C2-Tracker sources: mapping of framework name → raw file URL
-C2_TRACKER_SOURCES: dict[str, str] = {
-    "Cobalt Strike": "https://raw.githubusercontent.com/montysecurity/C2-Tracker/main/data/Cobalt%20Strike_IPs.txt",
-    "Metasploit": "https://raw.githubusercontent.com/montysecurity/C2-Tracker/main/data/Metasploit_IPs.txt",
-    "Havoc": "https://raw.githubusercontent.com/montysecurity/C2-Tracker/main/data/Havoc_IPs.txt",
-    "Sliver": "https://raw.githubusercontent.com/montysecurity/C2-Tracker/main/data/Sliver_IPs.txt",
-    "Brute Ratel": "https://raw.githubusercontent.com/montysecurity/C2-Tracker/main/data/BruteRatel_IPs.txt",
-}
+# montysecurity/C2-Tracker restructured in 2025 — the static
+# ``data/*.txt`` lists this feed used to ingest were deleted upstream
+# (the repo now ships only a ``tracker.py`` script + an OpenCTI
+# connector, no public IP files). Keeping the dict empty preserves the
+# loop without producing 5x 404s every tick. If the project republishes
+# the lists later, repopulate this dict.
+C2_TRACKER_SOURCES: dict[str, str] = {}
 
 
 def _is_valid_ip(value: str) -> bool:

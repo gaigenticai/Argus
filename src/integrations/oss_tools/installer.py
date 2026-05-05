@@ -54,12 +54,18 @@ _DOCKER_TIMEOUT_SECONDS = 600     # docker pulls can be slow
 
 
 def installer_enabled() -> bool:
-    """Master gate. Off by default — operator must explicitly opt in
-    by flipping ``ARGUS_OSS_INSTALLER_ENABLED=true`` in .env, which
-    also requires that they've mounted /var/run/docker.sock + the
-    host project dir into the api container."""
+    """Master gate. Defaults to ON so the onboarding wizard works out of
+    the box; an operator who wants the page hidden can explicitly set
+    ``ARGUS_OSS_INSTALLER_ENABLED=false`` in .env. The remaining
+    preflight checks (docker.sock mount, host project mount) still
+    have to pass before the installer will spawn a subprocess, so
+    flipping this default to ON does not bypass any actual safety
+    boundary — it just removes a noisy warning from the wizard for
+    the common ``./start.sh`` case where both mounts are present."""
     val = (os.environ.get("ARGUS_OSS_INSTALLER_ENABLED") or "") \
         .strip().lower()
+    if val == "":
+        return True
     return val in {"true", "1", "yes", "on"}
 
 
@@ -81,14 +87,30 @@ def env_file_path() -> Path:
 def preflight_status() -> dict[str, object]:
     """What the dashboard renders on the onboarding screen so the admin
     can see why the installer is or isn't ready before they hit
-    Install."""
+    Install. Anything in ``issues`` greys out the Install button."""
+    import shutil
+
     proj = host_project_path()
     docker_sock = Path("/var/run/docker.sock")
+    docker_cli = shutil.which("docker")
     issues: list[str] = []
     if not installer_enabled():
         issues.append(
             "ARGUS_OSS_INSTALLER_ENABLED=true is not set; the installer "
             "will refuse to start subprocesses until it is."
+        )
+    if docker_cli is None:
+        # Mac / local-dev case: API container has no docker CLI baked in,
+        # so even with the socket mounted the installer can't shell to
+        # `docker compose`. Surface this clearly so the operator either
+        # rebuilds the image with the docker CLI or runs the daemon
+        # themselves out-of-band.
+        issues.append(
+            "`docker` CLI not on PATH inside the api container — "
+            "without it the installer can't drive `docker compose`. "
+            "Either rebuild the api image with docker-cli installed, "
+            "or run the OSS daemon out-of-band and paste its URL into "
+            "the row's CONFIGURE form below."
         )
     if not docker_sock.exists():
         issues.append(
@@ -111,6 +133,8 @@ def preflight_status() -> dict[str, object]:
         "host_project": str(proj),
         "host_project_mounted": proj.exists(),
         "docker_sock_mounted": docker_sock.exists(),
+        "docker_cli_present": docker_cli is not None,
+        "docker_cli_path": docker_cli,
         "ready": not issues,
         "issues": issues,
     }
@@ -333,8 +357,50 @@ async def install_selected(
 
     # Phase 2 — drive docker compose for every profile in one shot so
     # multi-tool installs share a single image-pull pipeline.
+    #
+    # Wrap the subprocess call: if Python can't even spawn the docker
+    # binary (FileNotFoundError on Mac/local-dev where the api container
+    # was built without docker-cli), the exception used to bubble up
+    # as an unhandled 500 AND leave the per-tool rows stuck in
+    # state=INSTALLING forever. Catch every exception path here so the
+    # operator sees a clean FAILED row + actionable error_message
+    # instead of a hung "installing…" pill.
     profiles = [t.compose_profile for t in selected_tools]
-    rc, stdout, stderr = await _run_compose(profiles)
+    try:
+        rc, stdout, stderr = await _run_compose(profiles)
+    except FileNotFoundError as exc:
+        # docker CLI missing in the api container.
+        async with session_factory() as session:
+            for t in selected_tools:
+                await upsert_state(
+                    session, t,
+                    state=OssToolState.FAILED,
+                    error_message=(
+                        f"docker CLI not available inside the api "
+                        f"container ({exc!r}). Either rebuild the image "
+                        f"with `docker-cli` installed and the host "
+                        f"docker socket mounted, or run {t.label} "
+                        f"out-of-band and paste its URL into the row's "
+                        f"CONFIGURE form below."
+                    ),
+                )
+            await session.commit()
+        return await _final_states(session_factory, tool_names)
+    except Exception as exc:  # noqa: BLE001
+        # Catch-all for any other subprocess / OS errors (PermissionError
+        # on the docker socket, OSError on the host project dir, ...).
+        async with session_factory() as session:
+            for t in selected_tools:
+                await upsert_state(
+                    session, t,
+                    state=OssToolState.FAILED,
+                    error_message=(
+                        f"OSS installer crashed before docker compose "
+                        f"could complete: {type(exc).__name__}: {exc}"
+                    )[:500],
+                )
+            await session.commit()
+        return await _final_states(session_factory, tool_names)
 
     # Phase 3 — record per-tool result. We don't have per-profile rc
     # from a single ``up -d`` command, so any failure marks every

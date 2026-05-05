@@ -161,7 +161,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libmagic1 libpcap0.8 ca-certificates curl nmap bubblewrap \
         bsdmainutils bind9-dnsutils procps openssl \
         fonts-noto-core fonts-noto-cjk \
+        git \
+        yara \
+        whois \
     && rm -rf /var/lib/apt/lists/*
+
+# Volatility 3 — memory forensics CLI used by /cases evidence
+# enrichment. ``volatility3`` ships on PyPI as a pure-python package;
+# its symbol files are downloaded on first use.
+RUN pip install --no-cache-dir volatility3 \
+    && ln -sf /usr/local/bin/vol /usr/local/bin/volatility
 
 # Install pre-built wheels from the builder stage. No compiler in
 # this layer.
@@ -169,6 +178,12 @@ COPY --from=builder /wheels /wheels
 COPY requirements.txt .
 RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
     && rm -rf /wheels
+
+# theHarvester — passive OSINT recon (emails, subdomains, hosts).
+# Not reliably on PyPI; install from the upstream master branch.
+# When stable, pin to a verified commit hash for reproducibility.
+RUN pip install --no-cache-dir \
+    "theHarvester @ git+https://github.com/laramies/theHarvester.git@master"
 
 # EASM binaries from the builder.
 COPY --from=builder /usr/local/bin/nuclei /usr/local/bin/nuclei

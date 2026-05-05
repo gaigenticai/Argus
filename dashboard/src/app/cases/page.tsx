@@ -34,6 +34,7 @@ import {
 } from "@/lib/api";
 import { useToast } from "@/components/shared/toast";
 import { timeAgo } from "@/lib/utils";
+import { CoverageGate } from "@/components/shared/coverage-gate";
 
 const SEVERITIES: CaseSeverityValue[] = [
   "critical",
@@ -351,6 +352,7 @@ export default function CasesPage() {
   };
 
   return (
+    <CoverageGate pageSlug="cases" pageLabel="Cases">
     <div className="space-y-7">
       {/* ─── Header ──────────────────────────────────────────────── */}
       <div className="flex items-start justify-between gap-6 flex-wrap">
@@ -625,6 +627,7 @@ export default function CasesPage() {
         />
       )}
     </div>
+      </CoverageGate>
   );
 }
 

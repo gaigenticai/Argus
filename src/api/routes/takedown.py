@@ -23,12 +23,13 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import AnalystUser, audit_log
-from src.models.auth import AuditAction
+from src.models.auth import AuditAction, AuditLog, User
 from src.models.takedown import (
     TakedownPartner,
     TakedownState,
     TakedownTargetKind,
     TakedownTicket,
+    allowed_next_states,
     is_takedown_transition_allowed,
 )
 from src.models.threat import Organization
@@ -76,6 +77,7 @@ class TakedownResponse(BaseModel):
     source_finding_id: uuid.UUID | None
     partner_reference: str | None
     partner_url: str | None
+    submitted_by_user_id: uuid.UUID | None
     submitted_at: datetime
     acknowledged_at: datetime | None
     succeeded_at: datetime | None
@@ -84,6 +86,23 @@ class TakedownResponse(BaseModel):
     notes: str | None
     created_at: datetime
     updated_at: datetime
+    # States the analyst can move this ticket into without the backend
+    # rejecting with 422. Computed from _ALLOWED_TRANSITIONS so the
+    # dashboard TransitionModal renders only legal options. Empty
+    # list = terminal state (succeeded). The list is sorted for
+    # stable UI ordering.
+    allowed_next: list[str] = Field(default_factory=list)
+    # True when the partner returned a state the sync mapper didn't
+    # recognise — the analyst should open the partner UI and resolve
+    # manually before the ticket can be advanced. last_partner_state
+    # captures the raw string so they have something to grep for.
+    needs_review: bool = False
+    last_partner_state: str | None = None
+    # Raw partner-submit response payload. Surfaced on the detail
+    # drawer (collapsible JSON) so analysts can see exactly what the
+    # adapter returned — useful when a Manual ticket has no portal
+    # URL but the operator still wants to confirm what was recorded.
+    raw: dict | None = None
 
     model_config = {"from_attributes": True}
 
@@ -94,12 +113,88 @@ class StateChange(BaseModel):
     proof_evidence_sha256: str | None = None
 
 
+def _to_response(ticket: TakedownTicket) -> TakedownResponse:
+    """Build the API DTO with derived fields the ORM doesn't carry.
+
+    ``allowed_next`` reflects the live state-machine rules so the
+    frontend never offers an option that would 422 server-side.
+    ``needs_review`` + ``last_partner_state`` come from the row
+    itself (post-migration b8c9d0e1f2a3).
+    """
+    return TakedownResponse(
+        id=ticket.id,
+        organization_id=ticket.organization_id,
+        partner=ticket.partner,
+        state=ticket.state,
+        target_kind=ticket.target_kind,
+        target_identifier=ticket.target_identifier,
+        source_finding_id=ticket.source_finding_id,
+        partner_reference=ticket.partner_reference,
+        partner_url=ticket.partner_url,
+        submitted_by_user_id=ticket.submitted_by_user_id,
+        submitted_at=ticket.submitted_at,
+        acknowledged_at=ticket.acknowledged_at,
+        succeeded_at=ticket.succeeded_at,
+        failed_at=ticket.failed_at,
+        proof_evidence_sha256=ticket.proof_evidence_sha256,
+        notes=ticket.notes,
+        created_at=ticket.created_at,
+        updated_at=ticket.updated_at,
+        allowed_next=allowed_next_states(ticket.state),
+        needs_review=bool(getattr(ticket, "needs_review", False)),
+        last_partner_state=getattr(ticket, "last_partner_state", None),
+        raw=ticket.raw if isinstance(ticket.raw, dict) else None,
+    )
+
+
 # --- Endpoints --------------------------------------------------------
 
 
-@router.get("/partners")
+class PartnerInfo(BaseModel):
+    """Per-partner readiness — drives the Submit form's dropdown.
+
+    The dashboard uses ``is_configured`` to disable / annotate
+    options the operator hasn't wired up, and ``config_hint`` to
+    tell them exactly which env vars to set.
+    """
+    name: str
+    label: str
+    is_configured: bool
+    config_hint: str | None = None
+
+
+class PartnersResponse(BaseModel):
+    partners: list[PartnerInfo]
+
+
+@router.get("/partners", response_model=PartnersResponse)
 async def list_partners(analyst: AnalystUser):
-    return {"partners": [p.value for p in TakedownPartner]}
+    """List takedown partners with per-partner readiness status.
+
+    Schema upgraded from the legacy ``{partners: ["netcraft", ...]}``
+    string list to ``{partners: [{name, label, is_configured,
+    config_hint}, ...]}`` so the dashboard's Submit form can
+    surface "Netcraft (not configured — set
+    ARGUS_TAKEDOWN_NETCRAFT_API_KEY)" inline instead of letting the
+    operator pick a partner that will then fail at submit time.
+    Order matches ``TakedownPartner`` enum so the UI renders a
+    stable list.
+    """
+    items: list[PartnerInfo] = []
+    for p in TakedownPartner:
+        try:
+            adapter = get_adapter(p.value)
+        except ValueError:
+            continue
+        items.append(
+            PartnerInfo(
+                name=p.value,
+                label=getattr(adapter, "display_label", None) or p.value,
+                is_configured=adapter.is_configured(),
+                config_hint=adapter.config_hint(),
+            )
+        )
+    return PartnersResponse(partners=items)
 
 
 @router.post("/tickets", response_model=TakedownResponse, status_code=201)
@@ -173,7 +268,7 @@ async def submit_takedown(
     )
     await db.commit()
     await db.refresh(ticket)
-    return ticket
+    return _to_response(ticket)
 
 
 @router.get("/tickets", response_model=list[TakedownResponse])
@@ -196,7 +291,8 @@ async def list_tickets(
     if target_kind is not None:
         q = q.where(TakedownTicket.target_kind == target_kind.value)
     q = q.order_by(TakedownTicket.submitted_at.desc()).limit(limit)
-    return list((await db.execute(q)).scalars().all())
+    rows = list((await db.execute(q)).scalars().all())
+    return [_to_response(r) for r in rows]
 
 
 @router.get("/tickets/{ticket_id}", response_model=TakedownResponse)
@@ -208,11 +304,16 @@ async def get_ticket(
     t = await db.get(TakedownTicket, ticket_id)
     if not t:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found")
-    return t
+    return _to_response(t)
 
 
 @router.post(
     "/tickets/{ticket_id}/state", response_model=TakedownResponse
+)
+@router.post(
+    "/tickets/{ticket_id}/transitions",
+    response_model=TakedownResponse,
+    include_in_schema=False,
 )
 async def change_state(
     ticket_id: uuid.UUID,
@@ -274,7 +375,7 @@ async def change_state(
     )
     await db.commit()
     await db.refresh(t)
-    return t
+    return _to_response(t)
 
 
 @router.post("/tickets/{ticket_id}/sync", response_model=TakedownResponse)
@@ -297,25 +398,39 @@ async def sync_with_partner(
     if not res.success:
         t.notes = (t.notes or "") + f"\n[sync] error: {res.error_message}"
     else:
-        # Map partner-state to our state heuristically
-        ps = (res.partner_state or "").lower()
+        # Map partner-state to our state heuristically.
+        ps = (res.partner_state or "").strip()
+        ps_lower = ps.lower()
+        t.last_partner_state = ps or None
         mapped = None
-        if ps in ("succeeded", "removed", "complete"):
+        if ps_lower in ("succeeded", "removed", "complete", "completed", "resolved"):
             mapped = TakedownState.SUCCEEDED.value
             t.succeeded_at = datetime.now(timezone.utc)
-        elif ps in ("rejected", "denied"):
+        elif ps_lower in ("rejected", "denied", "declined"):
             mapped = TakedownState.REJECTED.value
             t.failed_at = datetime.now(timezone.utc)
-        elif ps in ("in_progress", "investigating", "pending"):
+        elif ps_lower in ("in_progress", "investigating", "pending", "open"):
             mapped = TakedownState.IN_PROGRESS.value
-        elif ps in ("acknowledged", "received"):
+        elif ps_lower in ("acknowledged", "received", "ack"):
             mapped = TakedownState.ACKNOWLEDGED.value
             t.acknowledged_at = datetime.now(timezone.utc)
         if mapped and mapped != t.state and is_takedown_transition_allowed(t.state, mapped):
             t.state = mapped
+            # If the ticket was previously stuck on an unrecognised
+            # state and the partner has now moved to one we know,
+            # clear needs_review so it stops looking suspicious.
+            t.needs_review = False
+        elif ps and not mapped:
+            # Partner returned a state we don't recognise. Don't
+            # silently stall; flip needs_review so the dashboard
+            # surfaces a yellow badge and the analyst knows to open
+            # the partner UI.
+            t.needs_review = True
         t.notes = (t.notes or "") + (
             "\n" if t.notes else ""
-        ) + f"[sync] partner_state={res.partner_state}"
+        ) + f"[sync] partner_state={res.partner_state}" + (
+            " (UNRECOGNISED — needs review)" if t.needs_review and not mapped else ""
+        )
 
     ip, ua = _client_meta(request)
     await audit_log(
@@ -324,10 +439,85 @@ async def sync_with_partner(
         user=analyst,
         resource_type="takedown_ticket",
         resource_id=str(t.id),
-        details={"action": "sync", "success": res.success, "state": t.state},
+        details={
+            "action": "sync",
+            "success": res.success,
+            "state": t.state,
+            "partner_state": getattr(res, "partner_state", None),
+            "needs_review": t.needs_review,
+        },
         ip_address=ip,
         user_agent=ua,
     )
     await db.commit()
     await db.refresh(t)
-    return t
+    return _to_response(t)
+
+
+# --- Per-ticket history -------------------------------------------------
+
+
+class TicketHistoryEntry(BaseModel):
+    """One row in the per-ticket audit timeline.
+
+    Powers the detail-drawer timeline on /takedowns. Scoped strictly
+    to ``resource_type='takedown_ticket'`` + the requested ticket
+    id, so analysts can read the history of any ticket they can
+    already see — no need to grant the broader admin-only audit
+    log access.
+    """
+    id: uuid.UUID
+    timestamp: datetime
+    action: str
+    actor_user_id: uuid.UUID | None
+    actor_email: str | None
+    details: dict | None
+
+
+class TicketHistoryResponse(BaseModel):
+    entries: list[TicketHistoryEntry]
+
+
+@router.get(
+    "/tickets/{ticket_id}/history", response_model=TicketHistoryResponse
+)
+async def get_ticket_history(
+    ticket_id: uuid.UUID,
+    analyst: AnalystUser,
+    db: AsyncSession = Depends(get_session),
+):
+    """Audit timeline for one takedown ticket (analyst-accessible).
+
+    Returns audit_log rows where ``resource_type='takedown_ticket'``
+    and ``resource_id=ticket_id``, oldest-first so the drawer can
+    render top-to-bottom. Joined to ``users`` to surface the actor
+    email — the user_id alone is meaningless to a human reader.
+    """
+    t = await db.get(TakedownTicket, ticket_id)
+    if not t:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Ticket not found")
+
+    q = (
+        select(AuditLog, User.email)
+        .outerjoin(User, AuditLog.user_id == User.id)
+        .where(
+            and_(
+                AuditLog.resource_type == "takedown_ticket",
+                AuditLog.resource_id == str(ticket_id),
+            )
+        )
+        .order_by(AuditLog.timestamp.asc())
+    )
+    rows = (await db.execute(q)).all()
+    entries = [
+        TicketHistoryEntry(
+            id=log.id,
+            timestamp=log.timestamp,
+            action=log.action,
+            actor_user_id=log.user_id,
+            actor_email=email,
+            details=log.details,
+        )
+        for log, email in rows
+    ]
+    return TicketHistoryResponse(entries=entries)

@@ -68,7 +68,6 @@ async def seed_extra(
         IOC,
         ThreatActor,
         ActorSighting,
-        CrawlerSource,
         TriageRun,
         TriageFeedback,
         RetentionPolicy,
@@ -180,12 +179,12 @@ async def seed_extra(
     counts: dict[str, int] = {}
     now = datetime.now(timezone.utc)
 
-    # Top-level idempotency: ``crawler_sources`` is unique to this
+    # Top-level idempotency: ``threat_layers`` is unique to this
     # module. If at least one row exists, an earlier run already
     # populated the long-tail fixtures and we'd just be racing unique
     # constraints on the per-org sections below — bail out.
-    from src.models.intel import CrawlerSource as _CrawlerSourceMarker
-    if await _has_rows(session, _CrawlerSourceMarker):
+    from src.models.feeds import ThreatLayer as _ThreatLayerMarker
+    if await _has_rows(session, _ThreatLayerMarker):
         return {"already_seeded": 1}
 
     # Make sure the social_platforms lookup table is populated and the
@@ -438,48 +437,7 @@ async def seed_extra(
         counts["actor_sightings"] = sightings_count
 
     # ------------------------------------------------------------------
-    # 2. CRAWLER SOURCES (global) — only seed_extra populates these
-    # ------------------------------------------------------------------
-    if await _has_rows(session, CrawlerSource):
-        counts["crawler_sources"] = 0
-    else:
-        crawler_sources_data = [
-            ("BreachForums", "tor_forum", "http://breachforums27l532gqj4r2pz3rhx2zudwz5tjuzqyxpvpazjbz.onion", "healthy", 8472),
-            ("XSS.is", "underground_forum", "https://xss.is", "healthy", 5219),
-            ("Exploit.in", "underground_forum", "https://exploit.in", "degraded", 3104),
-            ("LockBit Leak Site", "ransomware_leak", "http://lockbitsupportasa.onion", "healthy", 1287),
-            ("Dread", "tor_forum", "http://dread.onion", "blocked", 422),
-            ("Russian Market", "stealer_market", "http://russianmarket.onion", "healthy", 12048),
-            ("Genesis Market 2", "stealer_market", "http://genesis2.onion", "unreachable", 0),
-            ("PhishKits", "telegram_channel", "https://t.me/phishkits", "healthy", 642),
-            ("Helios Leaks", "i2p_eepsite", "http://helios-leaks.i2p", "healthy", 342),
-            ("Doxbin Ops", "matrix_room", "matrix:r/doxbin-ops:matrix.org", "degraded", 187),
-        ]
-        for name, kind, url, health, items in crawler_sources_data:
-            session.add(
-                CrawlerSource(
-                    name=name,
-                    source_type=kind,
-                    url=url,
-                    language="en",
-                    enabled=health != "unreachable",
-                    priority=random.randint(10, 90),
-                    crawl_interval_minutes=random.choice([15, 30, 60, 120]),
-                    max_pages=random.choice([5, 10, 20]),
-                    last_crawled_at=_now_minus(hours=random.randint(0, 24)) if health != "unreachable" else None,
-                    last_success_at=_now_minus(hours=random.randint(0, 48)) if health == "healthy" else _now_minus(days=random.randint(2, 14)),
-                    health_status=health,
-                    consecutive_failures=0 if health == "healthy" else random.randint(1, 8),
-                    total_items_collected=items,
-                    notes=f"Production crawler for {name}",
-                    selectors={"thread": ".thread-list .thread", "title": "h2.thread-title"},
-                )
-            )
-        await session.flush()
-        counts["crawler_sources"] = len(crawler_sources_data)
-
-    # ------------------------------------------------------------------
-    # 3. THREAT FEEDS / LAYERS / GLOBAL STATUS (global)
+    # 2. THREAT FEEDS / LAYERS / GLOBAL STATUS (global)
     # ------------------------------------------------------------------
     layers_data = [
         ("ransomware", "Ransomware Victims", "Skull", "#FF5630", ["lockbit", "blackcat", "play"], 3600, "Active ransomware victim postings worldwide"),

@@ -58,7 +58,7 @@ export default function LoginPage() {
               className="text-[16px] font-semibold tracking-[-0.02em]"
               style={{ color: "var(--color-on-dark)" }}
             >
-              Argus
+              Marsad
             </span>
             <p
               className="text-[9px] tracking-[1.2px] uppercase mt-0.5 font-semibold"
@@ -135,7 +135,7 @@ export default function LoginPage() {
               className="text-[18px] font-semibold tracking-[-0.02em]"
               style={{ color: "var(--color-ink)" }}
             >
-              Argus
+              Marsad
             </span>
           </div>
 

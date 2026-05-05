@@ -107,6 +107,21 @@ class EvidenceBlob(Base, UUIDMixin, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text)
     extra: Mapped[dict | None] = mapped_column(JSONB)
 
+    # Forensic triple-hash. SHA-256 is the load-bearing identity hash;
+    # MD5 + SHA1 are kept for legacy court-admissibility (NIST SP 800-86).
+    md5: Mapped[str | None] = mapped_column(String(32))
+    sha1: Mapped[str | None] = mapped_column(String(40))
+    # Fuzzy hashes for similarity search (ssdeep for malware, dhash/phash
+    # for screenshots).
+    ssdeep: Mapped[str | None] = mapped_column(String(255))
+    perceptual_hash: Mapped[str | None] = mapped_column(String(64))
+    # OCR / Tika text extraction populated by Artefact Summariser agent.
+    extracted_text: Mapped[str | None] = mapped_column(Text)
+    # Bridge LLM structured summary (5-bullet description, IOCs, PII flags).
+    agent_summary: Mapped[dict | None] = mapped_column(JSONB)
+    # Antivirus verdict (ClamAV / VirusTotal). {scanner, verdict, signature, scanned_at}
+    av_scan: Mapped[dict | None] = mapped_column(JSONB)
+
     __table_args__ = (
         # SHA-256 must be 64 hex chars
         CheckConstraint(
